@@ -7515,7 +7515,7 @@ class TestMajorVersionPublicTruth:
             for finding in payload["findings"]
         )
 
-    def test_real_repository_product_version_is_current_3_0_1_candidate(self):
+    def test_real_repository_product_version_is_current_3_0_1_release(self):
         repo_root = Path(__file__).resolve().parent.parent
 
         version, issue = cc_docs._read_project_version(repo_root / "pyproject.toml")
@@ -7523,7 +7523,7 @@ class TestMajorVersionPublicTruth:
         assert version == "3.0.1"
         assert issue == ""
 
-    def test_real_candidate_docs_distinguish_candidate_from_historical_tag(self):
+    def test_real_release_docs_describe_published_clean_history(self):
         repo_root = Path(__file__).resolve().parent.parent
         readme = (repo_root / "README.md").read_text(encoding="utf-8")
         changelog = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -7531,14 +7531,18 @@ class TestMajorVersionPublicTruth:
             encoding="utf-8"
         )
 
-        assert "ControlCoding V1/Core `3.0.1` is the current candidate" in readme
-        assert "It is not a published release" in " ".join(readme.split())
+        combined = " ".join((readme + "\n" + changelog + "\n" + release_model).split())
+
+        assert "ControlCoding V1/Core `3.0.1` is the current public release" in readme
         assert (
-            "`3.0.1` is a release candidate and is not yet published" in changelog
+            "`3.0.1` is the first release published from the clean public-source "
+            "repository" in " ".join(changelog.split())
         )
-        assert "not a published release" in release_model
-        assert "future `v3.0.1` tag" in release_model
-        assert "`v3.0.0` tag remains immutable as a historical reference" in readme
+        assert "current published V1/Core release" in release_model
+        assert "clean public repository begins at `3.0.1`" in release_model
+        assert "not a published release" not in combined
+        assert "future `v3.0.1` tag" not in combined
+        assert "earlier private development commits and tags" in readme.lower()
         assert "stage identity regression test" in readme
         assert "did not modify production code" in readme
 
@@ -7552,10 +7556,10 @@ class TestMajorVersionPublicTruth:
         expected_unreleased = changelog.split("## Unreleased", 1)[1].split(
             "## 3.0.1", 1
         )[0]
-        expected_candidate = changelog.split("## 3.0.1", 1)[1].split(
+        expected_release = changelog.split("## 3.0.1", 1)[1].split(
             "## 3.0.0", 1
         )[0]
-        assert sections == [expected_unreleased, expected_candidate]
+        assert sections == [expected_unreleased, expected_release]
         assert "## 3.0.0" in changelog
 
     def test_production_cli_registry_and_parser_routes_are_structurally_recognized(self):

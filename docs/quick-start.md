@@ -352,7 +352,7 @@ only when you want:
 
 ## Migrating From v2.5.2
 
-Preview and verify adapter ownership before applying the `3.0.1` candidate:
+Preview and verify adapter ownership before applying the `3.0.1` release:
 
 ```bash
 python /path/to/ControlCoding/scripts/cc.py context sync --host <host> --preview-only --project-root .

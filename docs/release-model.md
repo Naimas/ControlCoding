@@ -1,7 +1,7 @@
 # ControlCoding Release Model
 
 This page defines the public package boundary for the current ControlCoding
-V1/Core candidate.
+V1/Core release.
 
 ## Current Package
 
@@ -18,39 +18,40 @@ Core includes:
 - package, pytest, fitness, release, verification, and invariant contracts;
 - three explicitly allowlisted curated benchmark summaries.
 
-## 3.0.1 Candidate Position
+## 3.0.1 Release Position
 
-ControlCoding `3.0.1` is the current V1/Core candidate, not a published release.
-It is a major release candidate because the public CLI is incompatible with
-the stable `v2.5.2` line in four ways: `cc replace start/status/complete` was
+ControlCoding `3.0.1` is the current published V1/Core release. It belongs to
+the Version 3 major release line because the public CLI is incompatible with the
+stable `v2.5.2` line in four ways: `cc replace start/status/complete` was
 removed, `cc benchmark` changed its interface and default output names,
 `cc organize` became preview-only unless `--apply` is supplied, and `cc resume`
 became a provider-neutral print-only command.
 
-The `v3.0.0` tag remains an immutable historical reference. Candidate `3.0.1`
-supersedes it as the recommended release after a deterministic correction to
-the stage identity regression test. That correction did not modify production
-behavior.
+The clean public repository begins at `3.0.1`. The `3.0.0` material retained in
+the changelog provides migration context rather than an earlier public-repository
+tag. Release `3.0.1` includes a deterministic correction to the stage identity
+regression test. That correction did not modify production behavior.
 
 Migration guidance is documented in the [Quick Start](./quick-start.md),
 [installation guide](./install-controlcoding-on-your-project.md),
 [cross-tool guide](./cross-tool-guide.md), and
 [CLI tools reference](./ccdocs/tools-reference.md).
 
-Promotion remains curated. Level C validation, release preparation, commit,
-the future `v3.0.1` tag, push, and publication are separate gates. Candidate
-metadata does not authorize or attest any of those actions.
+Publication remains curated. Level C validation, a reviewed commit, an annotated
+tag, a controlled push, CI verification, and the GitHub Release record are
+separate gates. Version metadata alone does not authorize or attest those
+actions.
 
 ## Explicit Exclusions
 
 | Surface | V1/Core status |
 |---|---|
-| Desktop Studio/gateway UI under `ui/` | Not shipped in this candidate. |
-| UI runtime and surface smoke tests | Not shipped in this candidate. |
-| Auditor skill packs and auditor-specific tests | Not shipped in this candidate. |
-| Raw L3/L5 benchmark packages and benchmark setup tests | Not shipped in this candidate. |
-| Local dogfooding evidence, issue registers, comparison work notes, and benchmark plans | Not shipped in this candidate. |
-| Audit reports, improvement backlogs, workspace context, and obsolete release or memory plans | Not shipped in this candidate. |
+| Desktop Studio/gateway UI under `ui/` | Not shipped in this release. |
+| UI runtime and surface smoke tests | Not shipped in this release. |
+| Auditor skill packs and auditor-specific tests | Not shipped in this release. |
+| Raw L3/L5 benchmark packages and benchmark setup tests | Not shipped in this release. |
+| Local dogfooding evidence, issue registers, comparison work notes, and benchmark plans | Not shipped in this release. |
+| Audit reports, improvement backlogs, workspace context, and obsolete release or memory plans | Not shipped in this release. |
 | Initialized `.controlcoding/` or `.controlwork/` state | Never part of the clean source package. |
 
 The absence of these files is intentional. Their historical presence in a
@@ -67,12 +68,12 @@ paths are optional components. They do not imply hidden routing, background
 backend execution, or autonomous recursive agent loops.
 
 Auditor packs are a separate development surface and are excluded from this
-candidate.
+release.
 
 ## Agents And Studio
 
 `Agents` and `Studio` describe possible additive product layers, not packages
-shipped by this candidate.
+shipped by this release.
 
 - An Agents release would require an explicit manifest, documented runtime
   boundary, consent configuration, and verification evidence.

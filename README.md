@@ -2,19 +2,72 @@
 
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue) ![License Source Available NC](https://img.shields.io/badge/License-Source--Available%20Noncommercial-yellow)
 
-**A structural methodology for AI-assisted complex software development with host-aware guardrails.**
+**Repository governance for AI-assisted development in complex, long-lived codebases.**
 
-## 3.0.1 Release Candidate
+ControlCoding is a source-available reference implementation and toolkit for
+keeping AI-assisted changes inside explicit architectural, authorization, and
+verification boundaries.
 
-ControlCoding V1/Core `3.0.1` is the current candidate. It is not a published
-release. The `v3.0.0` tag remains immutable as a historical reference.
-Candidate `3.0.1` is the recommended successor for publication because it
-incorporates a deterministic correction to the stage identity regression test.
-That correction did not modify production code. Level C validation, commit,
-the future `v3.0.1` tag, push, and publication remain separate gates.
+## Who It Is For
 
-This is a major-version candidate because four public behaviors differ from
-the stable `v2.5.2` line:
+| Use ControlCoding when | The full framework is usually unnecessary when |
+|---|---|
+| The codebase is long-lived, modular, or governed by domain invariants | The project is a disposable prototype, small CRUD app, or familiar one-off build |
+| AI work spans multiple sessions, contributors, or coding hosts | One short session and ordinary tests provide enough control |
+| Some files or behaviors require protected boundaries and auditable release evidence | The cost of a structural mistake is lower than the governance overhead |
+
+Start with the smallest useful maturity level. Adopt stronger gates only when
+the project risk justifies them.
+
+## Three Differentiators
+
+1. **One canonical project contract.** `CONTROLCODING.md` is the source for
+   host-native views such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and
+   `.clinerules`.
+2. **Honest enforcement boundaries.** Every protection is classified as
+   mechanical, conditional, advisory, or unavailable instead of being presented
+   as stronger than the host can enforce.
+3. **Evidence before release claims.** Repository checks, invariants,
+   verification contracts, and receipts connect public claims to inspectable
+   results.
+
+## Quick Example
+
+```bash
+cd /path/to/your-project
+python /path/to/ControlCoding/scripts/cc.py setup --project-root .
+python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
+python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+```
+
+The result is a canonical project context, matching host adapters, local
+configuration, and a `doctor` report showing which protections are real for the
+selected host.
+
+## Evidence
+
+Maintainer-run case studies cover two AI-assisted projects: a C++20/OpenGL
+codebase used continuously for six months and a Python scoring pipeline used
+intensively for one week. They demonstrate applied use, not independent or
+universal validation. See the [anonymized evidence report](docs/evidence.md) for
+metrics, adoption patterns, costs, and limitations.
+
+Start with the [installation guide](docs/install-controlcoding-on-your-project.md)
+or [Quick Start](docs/quick-start.md). For scope and licensing boundaries, see
+the [Release Model](docs/release-model.md) and [LICENSE](LICENSE).
+
+## 3.0.1 Public Release
+
+ControlCoding V1/Core `3.0.1` is the current public release. It incorporates a
+deterministic correction to the stage identity regression test. That correction
+did not modify production code.
+
+The clean public repository begins with the verified `3.0.1` source snapshot.
+Earlier private development commits and tags remain outside the public
+repository.
+
+Version 3 is a major release line because four public behaviors differ from the
+stable `v2.5.2` line:
 
 - `cc replace start/status/complete` is no longer a public command surface.
 - `cc benchmark compare` uses positional baseline and current inputs, while
@@ -27,46 +80,12 @@ the stable `v2.5.2` line:
 
 Migration details, including the explicit adoption path for historical host
 adapters, are in the [Quick Start](docs/quick-start.md),
-[installation guide](docs/install-controlcoding-on-your-project.md),
 [cross-tool guide](docs/cross-tool-guide.md), and
 [CLI reference](docs/ccdocs/tools-reference.md).
 
-Primary onboarding:
+## What Setup Creates
 
-- [Install ControlCoding On Your Project](docs/install-controlcoding-on-your-project.md)
-- [Quick Start](docs/quick-start.md)
-- [Release Model](docs/release-model.md)
-- [Project Memory Engine](docs/project-memory-engine.md)
-- [Ecosystem Quick Start](docs/ecosystem-quickstart.md)
-
-Copy/paste install on your project:
-
-```bash
-cd /path/to/your-project
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
-```
-
-## First Five Minutes
-
-Use ControlCoding when you want AI coding to follow a project structure instead
-of improvising across the whole repository.
-
-If you are applying ControlCoding to another project, the first useful outcome is
-not a dashboard or a complex agent flow. It is a coherent `CONTROLCODING.md`,
-matching host adapter files, and a `doctor` result that tells you which gates are
-real for your chosen host.
-
-The first three commands are:
-
-```bash
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
-```
-
-After those commands, inspect:
+After running the quick example, inspect:
 
 - `CONTROLCODING.md` as the canonical project rules
 - the generated host adapter for your tool, such as `AGENTS.md`, `CLAUDE.md`,
@@ -199,8 +218,8 @@ ControlCoding's public packaging is:
 | Tier | What it includes | Typical use |
 |---|---|---|
 | **Core** | The V1 source package: public contract, hooks, CLI/setup, memory, tests, and verification | Default baseline for teams or solo developers |
-| **Agents** | A possible additive helper layer with separate consent and verification requirements | Not a package shipped by this candidate |
-| **Studio** | A possible desktop UI layer | Not shipped by this candidate |
+| **Agents** | A possible additive helper layer with separate consent and verification requirements | Not a package shipped by this release |
+| **Studio** | A possible desktop UI layer | Not shipped by this release |
 
 Current implementation note:
 
@@ -358,7 +377,7 @@ If you run `setup-project`, CC can also scaffold the first engineering documents
 
 CC working documents stay local-only in the public install path. The base setup no longer asks the adopter to decide that.
 
-No bundled graphical installer is included in this candidate. Project framing
+No bundled graphical installer is included in this release. Project framing
 and kickoff docs remain a separate `setup-project` step after installation.
 
 `cc.py setup --engagement` opens the tier/runtime wizard. It asks for:
@@ -663,7 +682,7 @@ The stronger novelty claim is the combination and the target problem:
 
 See [docs/ccdocs/methodology.md](docs/ccdocs/methodology.md) for the complete list of contributions including promotion paths, delegation boundaries, commit ceremony, and cross-session persistence.
 
-## Evidence
+## Detailed Evidence
 
 Validated on 2 real projects (6 months continuous + 1 intensive week) of AI-assisted development:
 

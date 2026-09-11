@@ -18,15 +18,16 @@ All notable changes to ControlCoding are documented in this file.
 
 ## 3.0.1
 
-`3.0.1` is a release candidate and is not yet published. The stage identity
-regression test was made deterministic by keeping the original file alive while
-creating its replacement. Production behavior did not change.
+`3.0.1` is the first release published from the clean public-source repository.
+The stage identity regression test was made deterministic by keeping the
+original file alive while creating its replacement. Production behavior did
+not change.
 
 ## 3.0.0
 
-The `v3.0.0` tag remains an immutable historical reference. It is superseded as
-the recommended release by candidate `3.0.1` after the deterministic test
-correction. The major-release history follows.
+The `3.0.0` section is retained for migration context. The clean public
+repository begins at `3.0.1` and does not contain earlier private-repository
+tags. Release `3.0.1` supersedes `3.0.0`; the major-release history follows.
 
 ### Changed - Major Public CLI Alignment
 - Removed the public `cc replace start/status/complete` routes. There is no
