@@ -18,9 +18,9 @@ Core includes:
 - package, pytest, fitness, release, verification, and invariant contracts;
 - three explicitly allowlisted curated benchmark summaries.
 
-## 3.0.1 Release Position
+## 3.0.2 Release Position
 
-ControlCoding `3.0.1` is the current published V1/Core release. It belongs to
+ControlCoding `3.0.2` is the current published V1/Core release. It belongs to
 the Version 3 major release line because the public CLI is incompatible with the
 stable `v2.5.2` line in four ways: `cc replace start/status/complete` was
 removed, `cc benchmark` changed its interface and default output names,
@@ -29,8 +29,10 @@ became a provider-neutral print-only command.
 
 The clean public repository begins at `3.0.1`. The `3.0.0` material retained in
 the changelog provides migration context rather than an earlier public-repository
-tag. Release `3.0.1` includes a deterministic correction to the stage identity
-regression test. That correction did not modify production behavior.
+tag. Release `3.0.2` applies PolyForm Shield consistently to current
+ControlCoding and embedded ControlWork material. It retains the deterministic
+stage identity regression test introduced in `3.0.1`; that correction did not
+modify production behavior.
 
 Migration guidance is documented in the [Quick Start](./quick-start.md),
 [installation guide](./install-controlcoding-on-your-project.md),

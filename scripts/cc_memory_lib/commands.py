@@ -375,9 +375,9 @@ The embedded Project Plane stays compatible with standalone ControlWork, but it 
 
 ## Origin And License Boundary
 
-ControlWork originated as the Project Plane inside ControlCoding and is now a standalone, source-available noncommercial product. This embedded Project Plane remains compatible with standalone ControlWork.
+ControlWork originated as the Project Plane inside ControlCoding and is now a standalone, source-available product. This embedded Project Plane remains compatible with standalone ControlWork.
 
-ControlCoding uses PolyForm Shield. ControlWork retains its separate source-available noncommercial license boundary. Commercial use of embedded or standalone ControlWork components requires separate written permission under the ControlWork terms.
+ControlCoding and ControlWork both use PolyForm Shield. Permitted internal and noncompeting commercial use is allowed. Providing a competing product or service requires separate written permission.
 
 ## Bridge Workflows
 

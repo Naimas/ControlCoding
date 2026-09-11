@@ -4,6 +4,17 @@ All notable changes to ControlCoding are documented in this file.
 
 ## Unreleased
 
+No unreleased changes.
+
+## 3.0.2
+
+### Changed - Unified PolyForm Shield Licensing
+- Licensed current ControlCoding material and embedded ControlWork components,
+  including documentation and templates, under PolyForm Shield 1.0.0.
+- Permitted internal and noncompeting commercial use of both products while
+  reserving competing, white-label, OEM, resale, and hosted-product uses for a
+  separate written license.
+
 ### Added - Memory V2 Core
 - Added deterministic document classification for scanned project documents.
 - Added semantic chunk records with continuation links for large sections.

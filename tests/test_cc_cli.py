@@ -7515,12 +7515,12 @@ class TestMajorVersionPublicTruth:
             for finding in payload["findings"]
         )
 
-    def test_real_repository_product_version_is_current_3_0_1_release(self):
+    def test_real_repository_product_version_is_current_3_0_2_release(self):
         repo_root = Path(__file__).resolve().parent.parent
 
         version, issue = cc_docs._read_project_version(repo_root / "pyproject.toml")
 
-        assert version == "3.0.1"
+        assert version == "3.0.2"
         assert issue == ""
 
     def test_real_release_docs_describe_published_clean_history(self):
@@ -7533,31 +7533,31 @@ class TestMajorVersionPublicTruth:
 
         combined = " ".join((readme + "\n" + changelog + "\n" + release_model).split())
 
-        assert "ControlCoding V1/Core `3.0.1` is the current public release" in readme
+        assert "ControlCoding V1/Core `3.0.2` is the current public release" in readme
         assert (
-            "`3.0.1` is the first release published from the clean public-source "
-            "repository" in " ".join(changelog.split())
+            "Licensed current ControlCoding material and embedded ControlWork "
+            "components" in " ".join(changelog.split())
         )
         assert "current published V1/Core release" in release_model
         assert "clean public repository begins at `3.0.1`" in release_model
         assert "not a published release" not in combined
-        assert "future `v3.0.1` tag" not in combined
+        assert "future `v3.0.2` tag" not in combined
         assert "earlier private development commits and tags" in readme.lower()
         assert "stage identity regression test" in readme
-        assert "did not modify production code" in readme
+        assert "PolyForm Shield 1.0.0" in readme
 
     def test_real_changelog_current_heading_syntax_is_selected_unambiguously(self):
         repo_root = Path(__file__).resolve().parent.parent
         changelog = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        sections, issues = cc_docs._current_changelog_sections(changelog, "3.0.1")
+        sections, issues = cc_docs._current_changelog_sections(changelog, "3.0.2")
 
         assert issues == []
         expected_unreleased = changelog.split("## Unreleased", 1)[1].split(
-            "## 3.0.1", 1
+            "## 3.0.2", 1
         )[0]
-        expected_release = changelog.split("## 3.0.1", 1)[1].split(
-            "## 3.0.0", 1
+        expected_release = changelog.split("## 3.0.2", 1)[1].split(
+            "## 3.0.1", 1
         )[0]
         assert sections == [expected_unreleased, expected_release]
         assert "## 3.0.0" in changelog

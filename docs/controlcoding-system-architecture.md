@@ -240,11 +240,11 @@ ControlWork exists in two distribution forms:
    `cc memory work-*`.
 
 ControlWork originated as the Project Plane inside ControlCoding and is now a
-standalone, source-available noncommercial product. The embedded form remains
-compatible with the standalone memory contract, but compatibility does not
-relicense ControlWork. ControlCoding uses PolyForm Shield, while commercial use
-of embedded or standalone ControlWork components requires separate written
-permission under the ControlWork terms.
+standalone, source-available product. The embedded form remains compatible with
+the standalone memory contract. ControlCoding and ControlWork both use
+PolyForm Shield: permitted internal and noncompeting commercial use is allowed,
+while providing a competing product or service requires separate written
+permission.
 
 Shared rules:
 

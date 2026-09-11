@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# SPDX-License-Identifier: PolyForm-Shield-1.0.0
 """Deterministic managed review queue for embedded ControlWork evidence.
 
 The queue is a projection of the current file index and scan analysis. Only

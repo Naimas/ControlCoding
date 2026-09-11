@@ -9275,7 +9275,7 @@ def test_memory_facade_preserves_public_constants():
     assert cc_memory.MEMORY_DIRNAME == "memory"
     assert cc_memory.DB_FILENAME == "memory.db"
     assert cc_memory.SCHEMA_VERSION == 5
-    assert cc_memory.CONTROLCODING_VERSION == "v3.0.1"
+    assert cc_memory.CONTROLCODING_VERSION == "v3.0.2"
     assert "document-only" in cc_memory.VALID_INSTALL_MODES
     assert "active" in cc_memory.VALID_LIFECYCLES
     assert "STATUS.md" in cc_memory.REQUIRED_VIEWS

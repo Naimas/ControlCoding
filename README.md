@@ -57,13 +57,14 @@ Start with the [installation guide](docs/install-controlcoding-on-your-project.m
 or [Quick Start](docs/quick-start.md). For scope and licensing boundaries, see
 the [Release Model](docs/release-model.md) and [LICENSE](LICENSE).
 
-## 3.0.1 Public Release
+## 3.0.2 Public Release
 
-ControlCoding V1/Core `3.0.1` is the current public release. It incorporates a
-deterministic correction to the stage identity regression test. That correction
-did not modify production code.
+ControlCoding V1/Core `3.0.2` is the current public release. It applies
+PolyForm Shield 1.0.0 consistently to current ControlCoding and embedded
+ControlWork material, including documentation and templates. It also retains
+the deterministic stage identity regression test introduced in `3.0.1`.
 
-The clean public repository begins with the verified `3.0.1` source snapshot.
+The clean public repository began with the verified `3.0.1` source snapshot.
 Earlier private development commits and tags remain outside the public
 repository.
 
@@ -258,7 +259,7 @@ For the public packaging split and the current release position of each layer, s
 | **External Consultation** | MCP server with 5 specialized roles and agent-mode (web search) | Official CLI session, official API, or Ollama |
 | **Session Management** | Automated local STATUS/devlog continuity and session history via MCP | Free, fastmcp required |
 | **Project Memory Engine** | Local `.controlcoding/` development memory for project context, docs, decisions, ideas, consults, agent runs, semantic chunks, correlation suggestions, sparse vector search, and impact views | Free, Python stdlib SQLite and Markdown |
-| **ControlWork Project Plane** | Embedded `CONTROLWORK.md` and `.controlwork/` work memory for research, requirements, source summaries, plans, scoped context packets, handoff packets, Obsidian projection, categories, checkpoints, and standalone ControlWork compatibility | Free for noncommercial use; commercial use follows ControlWork terms |
+| **ControlWork Project Plane** | Embedded `CONTROLWORK.md` and `.controlwork/` work memory for research, requirements, source summaries, plans, scoped context packets, handoff packets, Obsidian projection, categories, checkpoints, and standalone ControlWork compatibility | Permitted internal and noncompeting commercial use under PolyForm Shield |
 | **Multi-Agent Bridge** | Filesystem-based communication between AI sessions | Free, fastmcp required |
 | **Concierge Pattern** | Single-voice orchestration pattern for internal/lab agent surfaces: specialists report back through the Concierge, and a visualizer can mirror a routed local transcript without replacing the host chat. The public default remains host-mediated helper workflows | Free, uses existing backends |
 | **Planner** | Maieutic expansion of ideas into phased plans with acceptance criteria | Free, Concierge internal function |
@@ -268,9 +269,8 @@ For the public packaging split and the current release position of each layer, s
 ControlCoding components may be used internally and commercially to build
 products that do not compete with ControlCoding, subject to the exact terms in
 `LICENSE`. Competing products, white-label distribution, and other uses outside
-those terms require a separate written commercial license. Embedded or
-standalone ControlWork components retain their separate noncommercial license
-boundary.
+those terms require a separate written commercial license. Embedded and
+standalone ControlWork components use the same PolyForm Shield license model.
 
 ### Memory Layers
 
@@ -809,25 +809,26 @@ ControlCoding was born from real-world AI-assisted development experience since 
 
 ## License
 
-ControlCoding is source-available under a noncompete license.
+ControlCoding and its embedded ControlWork components are source-available
+under `PolyForm-Shield-1.0.0`. The license covers software, documentation,
+methodology, tests, workflows, configuration, templates, and host adapters,
+unless a file contains a more specific third-party license notice.
 
-- **Markdown documentation, methodology text, public context templates, and
-  host instruction templates**: `CC-BY-SA-4.0`.
-- **Software, tests, workflows, JSON/YAML configuration examples, executable
-  templates under `templates/scripts/` and `templates/hooks/`, and all code
-  file types listed in `LICENSE`**: `PolyForm-Shield-1.0.0`.
+- **Development use**: ControlCoding and ControlWork may be used to build,
+  maintain, verify, or manage other software, including commercial software.
 - **Commercial use**: internal business use and commercial use are permitted
-  when the use does not provide a product that competes with ControlCoding or
-  another product offered by its licensor. Competing products, white-label
-  distribution, and uses outside PolyForm Shield require separate written
-  permission.
+  when the use does not provide a product that competes with ControlCoding,
+  ControlWork, or another product offered by the licensor.
+- **Competing use**: competing products or services, white-label or OEM
+  distribution, resale, and paid hosting of either product require separate
+  written permission. Renaming, repackaging, embedding, or changing the
+  interface does not avoid this boundary.
   See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for the request path.
 
 ControlWork originated as the Project Plane inside ControlCoding and is now a
-standalone source-available noncommercial product that remains compatible with
-embedded ControlWork in ControlCoding. Compatibility does not relicense
-ControlWork. Commercial use of embedded or standalone ControlWork components
-requires separate written permission under the ControlWork terms.
+standalone source-available product that remains compatible with embedded
+ControlWork in ControlCoding. Both forms use PolyForm Shield while retaining
+their distinct ControlWork product identity.
 
 Historical note: versions previously released under MIT, CC-BY-NC-SA,
 PolyForm Noncommercial, or other terms remain governed by the terms under which
@@ -835,8 +836,8 @@ those versions were published. This repository state and future versions use
 the license boundaries in `LICENSE` unless a later release states otherwise.
 
 See [LICENSE](LICENSE) for the exact repository license boundary and
-[COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for commercial permission
-requests.
+[COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for uses that require separate
+written permission.
 
 ## Author
 

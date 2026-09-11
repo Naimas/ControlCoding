@@ -1,18 +1,20 @@
 # Commercial License Requests
 
-ControlCoding software is source-available under PolyForm Shield 1.0.0.
-Documentation and methodology are available under CC BY-SA 4.0. The exact
-scope and controlling terms are defined in `LICENSE`.
+ControlCoding and the embedded ControlWork components are source-available
+under PolyForm Shield 1.0.0. The exact scope and controlling terms are defined
+in `LICENSE`.
 
 No separate ControlCoding license is required merely to use the toolkit inside
 a company or to build a commercial product that does not compete with
 ControlCoding or another product offered by its licensor.
 
 A separate written license is required for uses outside PolyForm Shield. These
-include providing a competing developer tool or service, white-label or OEM
-distribution, resale of ControlCoding, or paid hosting of ControlCoding as a
-product. When the competitive boundary is material to a planned use, request a
-written determination before relying on this summary.
+include providing a competing developer tool or project-memory service,
+white-label or OEM distribution, resale of ControlCoding or ControlWork, or
+paid hosting of either product as a product. Repackaging, renaming, embedding,
+or exposing the functionality through another interface does not make a
+competing offering permissible. When the competitive boundary is material to a
+planned use, request a written determination before relying on this summary.
 
 This document describes the request path and does not replace `LICENSE` or
 constitute legal advice.
@@ -33,7 +35,7 @@ private channel before sharing sensitive information.
 ## Request Template
 
 ```text
-Product: ControlCoding
+Product: ControlCoding / ControlWork
 Requester:
 Company or organization:
 Contact:
@@ -49,9 +51,6 @@ Notes:
 ## Product Boundary
 
 ControlWork originated as the Project Plane inside ControlCoding and remains
-compatible with embedded ControlWork in ControlCoding. ControlWork has its own
-source-available noncommercial license boundary. Commercial use of embedded or
-standalone ControlWork components requires separate written permission under
-the ControlWork terms.
-
-Compatibility does not relicense ControlWork.
+compatible with embedded ControlWork in ControlCoding. Both products use
+PolyForm Shield 1.0.0. Their compatibility does not merge their identities,
+names, or competitive boundaries.
