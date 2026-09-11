@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "requiredKinds": [
+    "targeted",
+    "regression",
+    "invariant"
+  ],
+  "suites": [
+    {
+      "id": "docs-maintenance",
+      "kind": "targeted",
+      "required": true,
+      "command": "python scripts/cc.py docs check --project-root .",
+      "description": "Run the release-aware architecture and system-document contract."
+    },
+    {
+      "id": "truth-docs",
+      "kind": "targeted",
+      "required": true,
+      "command": "python scripts/cc.py truth check-docs --project-root .",
+      "description": "Validate public documentation commands and strong control claims."
+    },
+    {
+      "id": "truth-capabilities",
+      "kind": "targeted",
+      "required": true,
+      "command": "python scripts/cc.py truth check --project-root . --include-docs",
+      "description": "Validate capability claims, routed commands, and public docs."
+    },
+    {
+      "id": "memory-eval-ranking",
+      "kind": "targeted",
+      "required": true,
+      "command": "python scripts/cc.py memory eval --project-root . --json",
+      "description": "Run the executable MemoryEval ranking fixture and emit scoring evidence."
+    },
+    {
+      "id": "cli-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_cli.py tests/test_gitignore.py -q --basetemp {temp}/pytest",
+      "description": "Run the focused CLI and repository hygiene regression suite."
+    },
+    {
+      "id": "core-governance-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_memory.py tests/test_check_boundaries.py tests/test_check_dangerous_commands.py tests/test_check_repo_boundaries.py tests/test_check_file_organization.py tests/test_cc_organize.py tests/test_session.py -q --basetemp {temp}/pytest-core-governance",
+      "description": "Run V1/Core memory, hook, session, and organization regressions."
+    },
+    {
+      "id": "invariant-manifest",
+      "kind": "invariant",
+      "required": true,
+      "command": "python scripts/cc.py invariants run --project-root .",
+      "description": "Run executable project invariants declared in controlcoding.invariants.json."
+    },
+    {
+      "id": "diff-check",
+      "kind": "smoke",
+      "required": false,
+      "command": "git diff --check",
+      "description": "Check diff whitespace."
+    }
+  ]
+}

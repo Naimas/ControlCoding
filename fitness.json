@@ -1,0 +1,55 @@
+{
+  "thresholds": {
+    "god_file_fail_lines": 15000,
+    "god_file_baseline_max_slack": 50,
+    "god_file_protected_files": [
+      "scripts/cc.py",
+      "scripts/cc_memory_lib/work_features.py"
+    ],
+    "god_file_baselines": {
+      "scripts/cc.py": 17871,
+      "scripts/cc_memory_lib/work_features.py": 4822
+    },
+    "god_file_exceptions": []
+  },
+  "skip_dirs": [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "dist-electron",
+    "build",
+    "target",
+    "out",
+    "bin",
+    "obj",
+    ".controlcoding",
+    ".controlwork",
+    ".claude",
+    ".bridge",
+    "devlog",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".pytest-tmp",
+    ".pytest-tmp-*",
+    ".tmp",
+    ".tmp_*",
+    ".tmp-*",
+    ".tmp_pytest*",
+    "pytest-cache-files-*",
+    "pytest_tmp*",
+    "ui/dist",
+    "ui/dist-electron",
+    "ui/release",
+    "release-bundle*",
+    "release_bundle*",
+    "release-bundles",
+    "release_bundles",
+    "scratch-test",
+    "hooks",
+    "tools"
+  ]
+}

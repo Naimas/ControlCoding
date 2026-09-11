@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bridge": {
+      "command": "python",
+      "args": ["BRIDGE_SCRIPT_PATH"],
+      "env": {
+        "BRIDGE_AGENT_ID": "helper",
+        "BRIDGE_DIR": "SHARED_BRIDGE_PATH"
+      }
+    }
+  }
+}

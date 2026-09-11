@@ -1,0 +1,24 @@
+#!/bin/bash
+# CodeWarden post-commit hook - runs codewarden_review.py after each commit.
+#
+# Use this for AI coding tools that don't support Stop hooks (everything
+# except Claude Code). Works with Cursor, Aider, Copilot, Codex, etc.
+#
+# Requires: bash (Linux/macOS native, Windows via Git Bash or WSL).
+# Uses 'python' command (works on Windows and most Linux).
+# Change to 'python3' if needed on your system.
+#
+# Install:
+#   cp hooks/codewarden_postcommit .git/hooks/post-commit
+#   chmod +x .git/hooks/post-commit
+#
+# Or with a hook manager (husky, pre-commit framework):
+#   Add "python hooks/codewarden_review.py" as a post-commit hook.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)/hooks"
+
+if [ -f "$SCRIPT_DIR/codewarden_review.py" ]; then
+    $(command -v python3 || command -v python) "$SCRIPT_DIR/codewarden_review.py" &
+    # Run in background so the commit doesn't wait for the review.
+    # The report will be ready by the time you start your next session.
+fi

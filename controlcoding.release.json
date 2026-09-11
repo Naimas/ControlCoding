@@ -1,0 +1,320 @@
+{
+  "schemaVersion": 1,
+  "package": "controlcoding-core-source",
+  "description": "Public source release scope for ControlCoding Core.",
+  "architectureIndex": "docs/architecture-index.md",
+  "workPlaneContract": "controlwork-work-plane/1.0.0",
+  "allow": [
+    {
+      "pattern": ".gitignore",
+      "reason": "Repository hygiene rules for generated and local runtime state."
+    },
+    {
+      "pattern": "CHANGELOG.md",
+      "reason": "Public release history."
+    },
+    {
+      "pattern": "CONTRIBUTING.md",
+      "reason": "Public contribution guidance."
+    },
+    {
+      "pattern": "INSTALL_WIZARD.md",
+      "reason": "Public installation workflow documentation."
+    },
+    {
+      "pattern": "LICENSE",
+      "reason": "Public license file."
+    },
+    {
+      "pattern": "NOTICE",
+      "reason": "Public attribution and licensing notice."
+    },
+    {
+      "pattern": "COMMERCIAL_LICENSE.md",
+      "reason": "Public commercial permission request path."
+    },
+    {
+      "pattern": "TRADEMARKS.md",
+      "reason": "Public trademark guidance."
+    },
+    {
+      "pattern": "PROJECT_SETUP_WIZARD.md",
+      "reason": "Public project setup workflow documentation."
+    },
+    {
+      "pattern": "README.md",
+      "reason": "Public project entrypoint."
+    },
+    {
+      "pattern": "CONTROLCODING.md",
+      "reason": "Distilled public Core architecture, security, and behavior contract."
+    },
+    {
+      "pattern": "pyproject.toml",
+      "reason": "Python packaging metadata and cc console entry point."
+    },
+    {
+      "pattern": "fitness.json",
+      "reason": "Public architectural fitness baseline and God-file ratchet contract."
+    },
+    {
+      "pattern": "pytest.ini",
+      "reason": "Canonical pytest collection and workspace-local basetemp contract."
+    },
+    {
+      "pattern": "controlcoding.invariants.json",
+      "reason": "Public invariant contract for release verification."
+    },
+    {
+      "pattern": "controlcoding.release.json",
+      "reason": "Public release package allowlist and denylist contract."
+    },
+    {
+      "pattern": "controlcoding.verification.json",
+      "reason": "Public verification contract for release checks."
+    },
+    {
+      "pattern": ".github/workflows/**",
+      "reason": "Public CI workflow for release invariants."
+    },
+    {
+      "pattern": "benchmarks/2026-04-11-cctest-3dcrawler-v11-review-check.md",
+      "reason": "Curated public benchmark workflow review with explicit limitations."
+    },
+    {
+      "pattern": "benchmarks/2026-04-11-cctest-3dcrawler-v11-scorecard.md",
+      "reason": "Curated public 3D crawler benchmark summary."
+    },
+    {
+      "pattern": "benchmarks/2026-04-27-r5-release-pair-scorecard.md",
+      "reason": "Curated public R5 release-pair benchmark summary."
+    },
+    {
+      "pattern": "docs/**",
+      "reason": "Public documentation."
+    },
+    {
+      "pattern": "scripts/**",
+      "reason": "Public CLI, memory, and local tooling implementation."
+    },
+    {
+      "pattern": "templates/**",
+      "reason": "Public adopter templates and hook examples."
+    },
+    {
+      "pattern": "tests/**",
+      "reason": "Public regression and contract tests."
+    }
+  ],
+  "deny": [
+    {
+      "pattern": "ui/**",
+      "reason": "Desktop Studio and gateway UI are outside the V1/Core source package."
+    },
+    {
+      "pattern": "auditors/**",
+      "reason": "Development auditor skill packs are outside the V1/Core source package."
+    },
+    {
+      "pattern": "audit_reports/**",
+      "reason": "Internal audit outputs are not public package source."
+    },
+    {
+      "pattern": "AUDIT_REPORT*.md",
+      "reason": "Top-level audit outputs are not public package source."
+    },
+    {
+      "pattern": "IMPROVEMENT_BACKLOG.md",
+      "reason": "Internal improvement backlog is not public package source."
+    },
+    {
+      "pattern": "PROJECT.md",
+      "reason": "Workspace project context is not public package source."
+    },
+    {
+      "pattern": "PUBLIC_CORE_RELEASE_PLAN_ControlCoding_V1.md",
+      "reason": "Superseded internal release execution plan."
+    },
+    {
+      "pattern": "benchmarks/L3-trading-engine/**",
+      "reason": "Raw L3 benchmark package is excluded; only curated summaries ship."
+    },
+    {
+      "pattern": "benchmarks/L5-dungeon-crawler/**",
+      "reason": "Raw L5 benchmark package is excluded; only curated summaries ship."
+    },
+    {
+      "pattern": "tests/test_benchmark_setup_runs.py",
+      "reason": "Raw benchmark setup regression is outside the curated evidence package."
+    },
+    {
+      "pattern": "tests/test_gateway_runtime_r4.py",
+      "reason": "Excluded desktop gateway runtime test."
+    },
+    {
+      "pattern": "tests/test_gateway_surface_r1.py",
+      "reason": "Excluded desktop gateway surface test."
+    },
+    {
+      "pattern": "tests/test_auditors.py",
+      "reason": "Excluded auditor pack test."
+    },
+    {
+      "pattern": "tests/test_s7_auditors.py",
+      "reason": "Excluded auditor sprint test."
+    },
+    {
+      "pattern": "docs/installer-ui.md",
+      "reason": "Desktop installer UI documentation is outside V1/Core."
+    },
+    {
+      "pattern": "docs/controlwork-project-map.md",
+      "reason": "Internal Project Map cockpit documentation is outside V1/Core."
+    },
+    {
+      "pattern": "docs/controlwork-advanced-memory-phase-2-plan.md",
+      "reason": "Obsolete internal ControlWork execution plan."
+    },
+    {
+      "pattern": "docs/controlwork-controlcoding-v1-deep-testing-plan.md",
+      "reason": "Obsolete internal cross-repository validation plan."
+    },
+    {
+      "pattern": "docs/default-memory-graphrag-install-plan.md",
+      "reason": "Obsolete internal memory installation plan."
+    },
+    {
+      "pattern": "docs/memory-graphrag-final-plan.md",
+      "reason": "Obsolete internal memory implementation plan."
+    },
+    {
+      "pattern": "docs/memory-v2-plan.md",
+      "reason": "Obsolete internal memory implementation plan."
+    },
+    {
+      "pattern": "docs/session-graphrag-plan.md",
+      "reason": "Obsolete internal session-memory implementation plan."
+    },
+    {
+      "pattern": "docs/work-plane-v2-ingestion-plan.md",
+      "reason": "Obsolete internal Work Plane implementation plan."
+    },
+    {
+      "pattern": "docs/core-release-checklist.md",
+      "reason": "Superseded release execution document."
+    },
+    {
+      "pattern": "docs/core-release-decision-2026-04-27.md",
+      "reason": "Superseded release decision document."
+    },
+    {
+      "pattern": "docs/core-release-notes-2026-04-27.md",
+      "reason": "Superseded candidate release note."
+    },
+    {
+      "pattern": "docs/core-release-notes-2026-04-28-v2.4.0.md",
+      "reason": "Superseded candidate release note."
+    },
+    {
+      "pattern": ".controlcoding/**",
+      "reason": "Local ControlCoding runtime state and receipts."
+    },
+    {
+      "pattern": ".controlwork/**",
+      "reason": "Local ControlWork runtime memory state."
+    },
+    {
+      "pattern": ".claude/**",
+      "reason": "Host-local Claude settings."
+    },
+    {
+      "pattern": ".codex/**",
+      "reason": "Host-local Codex settings and attachments."
+    },
+    {
+      "pattern": ".pytest_cache/**",
+      "reason": "Local test cache."
+    },
+    {
+      "pattern": ".tmp*/**",
+      "reason": "Temporary local work output."
+    },
+    {
+      "pattern": "_work/**",
+      "reason": "Local work queue and scratch material."
+    },
+    {
+      "pattern": "dev/**",
+      "reason": "Internal development plans and analysis."
+    },
+    {
+      "pattern": "devlog/**",
+      "reason": "Internal session logs."
+    },
+    {
+      "pattern": "screenshots/**",
+      "reason": "Local visual evidence and temporary captures."
+    },
+    {
+      "pattern": "AGENTS.md",
+      "reason": "Generated host-local Codex context."
+    },
+    {
+      "pattern": "CLAUDE.md",
+      "reason": "Generated host-local Claude context."
+    },
+    {
+      "pattern": "CONTROLWORK.md",
+      "reason": "Generated or local ControlWork host context."
+    },
+    {
+      "pattern": "GEMINI.md",
+      "reason": "Generated host-local Gemini context."
+    },
+    {
+      "pattern": "STATUS.md",
+      "reason": "Local project status file."
+    },
+    {
+      "pattern": "ROADMAP.md",
+      "reason": "Local roadmap file outside the public release docs contract."
+    },
+    {
+      "pattern": "BUGS.md",
+      "reason": "Local issue tracking file outside the public release docs contract."
+    }
+  ],
+  "required": [
+    "README.md",
+    "LICENSE",
+    "COMMERCIAL_LICENSE.md",
+    "NOTICE",
+    "TRADEMARKS.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "INSTALL_WIZARD.md",
+    "PROJECT_SETUP_WIZARD.md",
+    "CONTROLCODING.md",
+    "pyproject.toml",
+    "fitness.json",
+    "pytest.ini",
+    "controlcoding.release.json",
+    "controlcoding.verification.json",
+    "controlcoding.invariants.json",
+    "scripts/cc.py",
+    "scripts/cc_memory.py",
+    "templates/CLAUDE.md.template",
+    "templates/cc_config.json.example",
+    "templates/adr.md",
+    "templates/hooks/check_boundaries.py",
+    "templates/hooks/check_dangerous_commands.py",
+    "templates/hooks/settings.json.example",
+    "docs/INDEX.md",
+    "docs/architecture-index.md",
+    "docs/quick-start.md",
+    "docs/install-controlcoding-on-your-project.md",
+    "docs/work-plane-compatibility-contract.md",
+    "tests/test_cc_cli.py",
+    "tests/test_gitignore.py"
+  ]
+}

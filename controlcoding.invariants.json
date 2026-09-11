@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "projectType": "controlcoding-core",
+  "domains": [
+    "trust-contract",
+    "verification"
+  ],
+  "invariants": [
+    {
+      "id": "public-doc-command-truth",
+      "title": "Public documented commands route to implemented CLI handlers",
+      "domain": "trust-contract",
+      "kind": "structural",
+      "severity": "blocking",
+      "status": "active",
+      "property": "Every public Core command mentioned in README and onboarding docs must route to an implemented CLI command.",
+      "threshold": "0 missing command routes and 0 unqualified strong control claims",
+      "command": "python scripts/cc.py truth check-docs --project-root .",
+      "evidence": [
+        "README.md",
+        "docs/quick-start.md",
+        "docs/install-controlcoding-on-your-project.md"
+      ]
+    },
+    {
+      "id": "capability-truth-contract",
+      "title": "Capability states match shipped CLI behavior",
+      "domain": "trust-contract",
+      "kind": "consistency",
+      "severity": "blocking",
+      "status": "active",
+      "property": "Shipped capabilities must cite routed commands and evidence; planned capabilities must not be described as shipped.",
+      "threshold": "0 truth contract findings",
+      "command": "python scripts/cc.py truth check --project-root . --include-docs",
+      "evidence": [
+        "scripts/cc.py",
+        "README.md",
+        "docs/roadmap-10-10.md"
+      ]
+    },
+    {
+      "id": "verification-contract-valid",
+      "title": "Required validation suites are declared",
+      "domain": "verification",
+      "kind": "consistency",
+      "severity": "blocking",
+      "status": "active",
+      "property": "The repository must declare required targeted, regression, and invariant validation suites.",
+      "threshold": "verification contract status is valid",
+      "command": "python scripts/cc.py verify status --project-root .",
+      "evidence": [
+        "controlcoding.verification.json"
+      ]
+    }
+  ]
+}

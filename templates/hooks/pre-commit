@@ -1,0 +1,53 @@
+#!/bin/sh
+# ControlCoding repo-side baseline pre-commit hook
+#
+# This is the canonical manual-install template. `cc init` writes a generated
+# version with absolute paths so it works with both local hooks and central hooks.
+#
+# Gates:
+#   1. repo boundary gate      -> blocks DENY-protected staged paths
+#   2. verification gate       -> runs fitness_check.py --ci when present
+#   3. project invariants      -> project-managed, uncomment and adapt explicitly
+
+set -e
+
+echo "Gate 1: repo boundary gate..."
+python hooks/check_repo_boundaries.py || exit 2
+
+if [ -f "tools/fitness_check.py" ]; then
+    echo "Gate 2: verification gate (fitness baseline)..."
+    if python tools/fitness_check.py --project-root . --ci; then
+        :
+    else
+        fitness_status=$?
+        if [ "$fitness_status" -eq 1 ]; then
+            exit 2
+        elif [ "$fitness_status" -eq 2 ]; then
+            echo "Gate 2: fitness warnings recorded; continuing."
+        else
+            exit "$fitness_status"
+        fi
+    fi
+elif [ -f "scripts/fitness_check.py" ]; then
+    echo "Gate 2: verification gate (fitness baseline)..."
+    if python scripts/fitness_check.py --project-root . --ci; then
+        :
+    else
+        fitness_status=$?
+        if [ "$fitness_status" -eq 1 ]; then
+            exit 2
+        elif [ "$fitness_status" -eq 2 ]; then
+            echo "Gate 2: fitness warnings recorded; continuing."
+        else
+            exit "$fitness_status"
+        fi
+    fi
+else
+    echo "Gate 2: fitness baseline not wired; add tools/fitness_check.py or wire verification in CI." >&2
+fi
+
+# Gate 3: project-specific invariants stay project-managed.
+# Uncomment and adapt one of these when the project is ready:
+# python -m pytest tests/ -x || exit 2
+# npm test -- --runInBand || exit 2
+# cargo test || exit 2

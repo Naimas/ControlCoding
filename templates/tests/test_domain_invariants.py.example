@@ -1,0 +1,127 @@
+"""test_domain_invariants.py - Domain invariant tests for [PROJECT_NAME].
+
+Copy this file to your project's tests/ directory and adapt the invariants
+to match your domain. These tests verify properties that must ALWAYS be true,
+regardless of what features are added or refactored.
+
+Run with: pytest tests/test_domain_invariants.py -v
+
+ControlCoding convention: run invariant tests before every commit.
+Add a pre-commit hook or include in your CI pipeline.
+
+Examples below cover common domains. Delete the ones that don't apply
+and add your own.
+"""
+
+import pytest
+
+
+# ============================================================
+# Example 1: Finance / Accounting
+# Invariant: total debits == total credits (zero drift)
+# ============================================================
+class TestFinanceInvariants:
+    def test_ledger_balances(self):
+        """Every ledger entry must have matching debit and credit."""
+        # from myapp.models import Ledger
+        # entries = Ledger.objects.all()
+        # total_debit = sum(e.debit for e in entries)
+        # total_credit = sum(e.credit for e in entries)
+        # assert total_debit == total_credit, f"Drift: {total_debit - total_credit}"
+        pass
+
+    def test_no_negative_balances(self):
+        """Account balances must never go negative."""
+        # from myapp.models import Account
+        # for account in Account.objects.all():
+        #     assert account.balance >= 0, f"{account.name} has negative balance"
+        pass
+
+
+# ============================================================
+# Example 2: Scoring / Rating system
+# Invariant: scores stay within declared bounds
+# ============================================================
+class TestScoringInvariants:
+    def test_score_range(self):
+        """Individual scores must be in [0, MAX_SCORE]."""
+        # MAX_SCORE = 4
+        # from myapp.scoring import calculate_score
+        # for item in test_items:
+        #     score = calculate_score(item)
+        #     assert 0 <= score <= MAX_SCORE, f"Score {score} out of range"
+        pass
+
+    def test_total_range(self):
+        """Aggregate total must be in [0, NUM_ITEMS * MAX_SCORE]."""
+        # NUM_ITEMS = 24
+        # MAX_SCORE = 4
+        # MAX_TOTAL = NUM_ITEMS * MAX_SCORE  # 96
+        # from myapp.scoring import calculate_total
+        # total = calculate_total(all_items)
+        # assert 0 <= total <= MAX_TOTAL
+        pass
+
+    def test_final_score_is_max_of_components(self):
+        """Final score = max(component_a, component_b)."""
+        # from myapp.scoring import final_score, component_a, component_b
+        # for case in test_cases:
+        #     assert final_score(case) == max(component_a(case), component_b(case))
+        pass
+
+
+# ============================================================
+# Example 3: Geometry / Physics simulation
+# Invariant: determinism, coverage, conservation
+# ============================================================
+class TestGeometryInvariants:
+    def test_deterministic_output(self):
+        """Same input must produce identical output across runs."""
+        # from myapp.simulation import run_step
+        # state = initial_state(seed=42)
+        # result_1 = run_step(state)
+        # result_2 = run_step(state)
+        # assert result_1 == result_2, "Non-deterministic output detected"
+        pass
+
+    def test_full_coverage_no_gaps(self):
+        """All surface elements must be covered, no gaps, no overlaps."""
+        # from myapp.mesh import get_faces, total_surface_area
+        # faces = get_faces()
+        # assert len(faces) == EXPECTED_FACE_COUNT
+        # computed_area = sum(f.area for f in faces)
+        # assert abs(computed_area - total_surface_area()) < 1e-6
+        pass
+
+
+# ============================================================
+# Example 4: API / Schema
+# Invariant: every response validates against declared schema
+# ============================================================
+class TestAPIInvariants:
+    def test_response_matches_schema(self):
+        """All API responses must validate against the JSON schema."""
+        # import jsonschema
+        # from myapp.schemas import RESPONSE_SCHEMA
+        # from myapp.api import get_sample_responses
+        # for response in get_sample_responses():
+        #     jsonschema.validate(response, RESPONSE_SCHEMA)
+        pass
+
+    def test_schema_version_present(self):
+        """Every response must include a schema_version field."""
+        # from myapp.api import get_sample_responses
+        # for response in get_sample_responses():
+        #     assert "schema_version" in response
+        pass
+
+
+# ============================================================
+# Your project invariants go here
+# ============================================================
+class TestProjectInvariants:
+    """Replace with your actual domain invariants."""
+
+    def test_placeholder(self):
+        """Remove this and add your real invariant tests."""
+        assert True

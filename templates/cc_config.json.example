@@ -1,0 +1,61 @@
+{
+  "documentation_mode": "managed",
+  "protected_zones": [
+    {
+      "path": "src/core/",
+      "description": "Core data models - stable zone",
+      "level": "deny"
+    },
+    {
+      "path": "src/renderer/renderer.h",
+      "description": "Render pipeline interface",
+      "level": "deny"
+    }
+  ],
+  "architecture_fitness": {
+    "zones": {
+      "stable": "src/stable",
+      "shared": "src/shared",
+      "features": "src/features",
+      "workspace": "src/workspace"
+    },
+    "thresholds": {
+      "god_file_warn_lines": 300,
+      "god_file_fail_lines": 500,
+      "import_fan_out_warn": 10,
+      "import_fan_in_warn": 10
+    },
+    "layer_rules": [
+      {
+        "source_zone": "shared",
+        "forbidden_target_zones": ["features"],
+        "severity": "fail",
+        "message": "shared cannot import features"
+      }
+    ],
+    "gateway_rules": [],
+    "ownership_rules": [],
+    "mutation_rules": []
+  },
+  "backends": {
+    "codewarden": "ollama",
+    "consultant": "claude",
+    "verifier": "claude"
+  },
+  "models": {
+    "ollama": "qwen3:32b",
+    "codewarden": "",
+    "consultant": "",
+    "verifier": ""
+  },
+  "workflow_mode": "step-by-step",
+  "hooks_location": "local",
+  "controlled_write_path": {
+    "enabled": false,
+    "mode": "off",
+    "scope": "opt_in",
+    "patch_format": "unified_diff",
+    "require_lift_for_deny": true,
+    "measure_ux": true
+  }
+}

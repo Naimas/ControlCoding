@@ -1,0 +1,66 @@
+<!-- SPDX-License-Identifier: CC-BY-NC-SA-4.0 -->
+
+# {{PROJECT_NAME}}
+
+## Project Identity
+
+- **Name**: {{PROJECT_NAME}}
+- **Purpose**: {{PROJECT_PURPOSE}}
+- **Product Boundary**: Embedded ControlWork project plane inside a ControlCoding project. The same contract can also live as a standalone ControlWork repository.
+
+## Work Memory Rules
+
+1. `CONTROLWORK.md` is the canonical source of truth for work/project context.
+2. Host files are projections, not canonical sources.
+3. Captured material starts in inbox or sources, then gets promoted into notes, ideas, decisions, plans, outputs, or legacy.
+4. Superseded material moves to legacy instead of being silently deleted.
+5. Add custom categories only when the work needs them.
+6. Legal, compliance, or regulatory categories such as normative are optional and project-specific, not default categories.
+
+## Memory Areas
+
+- `inbox` - raw captured thoughts or imported fragments awaiting classification.
+- `sources` - source documents, summaries, references, PDFs, scans, tables, images, links, or external notes.
+- `notes` - cleaned observations and reusable context.
+- `ideas` - brainstormed concepts, alternatives, open options, and design directions.
+- `decisions` - accepted decisions with rationale and current status.
+- `plans` - work plans, roadmaps, workflows, and implementation-ready briefs.
+- `outputs` - deliverables, reports, drafts, analyses, exported packets, and final artifacts.
+- `legacy` - superseded or archived material kept for traceability.
+- `views` - generated indexes and summaries.
+
+## ControlCoding Relationship
+
+ControlWork owns the Project Plane. ControlCoding adds Dev Plane and Code Plane behavior around it.
+
+## Origin And License Boundary
+
+ControlWork originated as the Project Plane inside ControlCoding and is now a
+standalone, source-available noncommercial product. This embedded Project Plane
+remains compatible with standalone ControlWork.
+
+ControlCoding and ControlWork are source-available noncommercial products.
+Commercial use, resale, paid hosting, commercial redistribution, commercial
+SaaS use, paid consulting packages, or inclusion of ControlCoding or
+ControlWork components in a commercial product or service requires a separate
+written commercial license from Stefano Tonello.
+
+## Bridge Workflows
+
+- Start directly inside ControlCoding: `cc memory work-init`.
+- Port a standalone ControlWork repo into this project: `cc memory work-import <path>`.
+- Attach a standalone ControlWork repo for manual sync: `cc memory work-attach <path>`, then `cc memory work-sync --direction pull|push --force`.
+- Create a separate work-only folder from this embedded plane: `cc memory work-export <target>`.
+
+## Project Sync Choices
+
+- The project owner decides whether ControlWork lives embedded, standalone, or both.
+- Import, attach, sync, and export operations are explicit user actions.
+- A project can keep standalone and embedded ControlWork aligned, or intentionally let them diverge for different audiences.
+- Public release policy is project-specific and is not defined by ControlWork.
+
+## Current Focus
+
+- [ ] Capture initial project sources.
+- [ ] Classify inbox material.
+- [ ] Promote current decisions and plans.

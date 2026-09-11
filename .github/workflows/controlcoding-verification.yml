@@ -1,0 +1,49 @@
+name: ControlCoding Verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verification:
+    name: verify (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+        python-version:
+          - "3.13"
+
+    defaults:
+      run:
+        working-directory: controlcoding lab
+
+    env:
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: Check out repository with a spaced path
+        uses: actions/checkout@v4
+        with:
+          path: controlcoding lab
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest ".[mcp]"
+
+      - name: Check verification contract
+        run: python scripts/cc.py verify status --project-root .
+
+      - name: Run verification contract
+        run: python scripts/cc.py verify run --project-root . --json

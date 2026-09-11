@@ -1,0 +1,193 @@
+# <!-- CC:PROJECT_NAME -->
+
+> This file is read by AI coding assistants at the start of every session.
+> It defines the rules, boundaries, and invariants of this project.
+> Keep this active AI context concise and cohesive. Length alone is not a
+> violation; mixed responsibility, stale details, theory, roadmap, and long
+> examples are. If it grows for different topics, keep critical rules here and
+> move details into linked sub-documents or a topic index.
+>
+> Sections marked `[hook-enforced]` are mechanically enforced by hooks and cannot be bypassed.
+> Sections marked `[advisory]` depend on AI compliance. In autonomous mode, only hook-enforced
+> rules are guaranteed. Sections marked `[advisory, workflow hook available]` have optional
+> mechanical enforcement via `check_workflow.py` (install with `cc install debug-tools`).
+
+## Project Identity
+
+- **Name**: <!-- CC:PROJECT_NAME -->
+- **Stack**: <!-- CC:PROJECT_STACK -->
+- **Architecture**: <!-- CC:PROJECT_ARCH -->
+- **Truth representation**: <!-- CC:TRUTH_REPR -->
+- **View representation**: <!-- CC:VIEW_REPR -->
+
+## Documentation Governance
+
+<!-- CC:DOCUMENTATION_POLICY -->
+
+## Architecture Rules
+
+<!-- CC:ARCH_RULES -->
+
+## Gateway Modules (optional)
+<!-- CC:GATEWAY_MODULES -->
+<!-- Register gateways in .controlcoding/cc_config.json for CodeWarden impact analysis (Section 9.18) -->
+
+## Module Boundaries
+
+> The zone model (Stable/Shared/Features/Workspace) follows the condominium metaphor:
+> code matures through levels of increasing stability, like apartments in a building
+> with shared infrastructure. See ControlCoding methodology Section 3 for details.
+
+### Stable (do NOT modify without explicit approval)
+<!-- CC:STABLE_ZONES -->
+
+### Shared (modify with care, run all tests after changes)
+<!-- CC:SHARED_ZONES -->
+### Features (active development)
+<!-- CC:FEATURE_ZONES -->
+### Workspace (experimental, can be rewritten freely)
+<!-- CC:WORKSPACE_ZONES -->
+
+## Domain Invariants
+
+These properties MUST always be true. Run invariant tests before any commit.
+
+<!-- CC:DOMAIN_INVARIANTS -->
+
+> Examples: finance balances, deterministic simulation outputs, geometry
+> coverage, API schema validity, and game-state determinism.
+
+## Protected Zones [hook-enforced]
+
+Zones are configured in `.controlcoding/cc_config.json` and enforced by hooks in `.controlcoding/settings.json`.
+These rules are enforced regardless of prompt content or AI judgment.
+
+**When you receive a WARN from a hook**: STOP. Explain to the user what you
+intended to modify and why. Wait for explicit approval before proceeding.
+
+**When you receive a DENY from a hook**: Do NOT attempt the operation again.
+Instead, follow the Temporary Lift Protocol: first explore alternatives outside
+protected zones. If none exists, state exact files/functions, estimated line
+count, and reason; keep changes wiring-only; wait for human approval; apply only
+the approved scope; restore DENY protections immediately.
+
+**Limitation**: boundary hooks only intercept Edit/Write tool calls. File writes
+via the Bash tool (`echo "x" > file.py`) bypass boundary protection. Always use
+Edit/Write for file modifications - never use Bash to write files.
+
+**IMPORTANT**: Never use `cd` to change directory in Bash commands. Use absolute
+paths or project-relative paths instead. Changing the working directory breaks
+hook scripts that use relative paths. Use `cmake -B build -S /path/to/project`
+instead of `cd /path && cmake -B build`.
+
+**Lift mechanisms**: Zone-scoped lifts (`lift_request.json`) temporarily downgrade
+specific DENY zones to WARN. Self-protected files (hooks, settings) remain protected.
+For full lift (`hooks_lifted.json`) - which disables ALL protection including
+self-protection - see Section 5.10 of the ControlCoding methodology.
+
+## Delegation Boundary
+
+When using subagents (Task tool, parallel agents):
+- **Accept**: factual data (file inventories, pattern searches, measurements)
+- **Filter**: recommendations, architectural suggestions, design proposals
+- Verify any subagent suggestion against the active project context before presenting it
+
+## Debug Protocol [advisory]
+
+When a feature doesn't produce the expected visual or runtime result:
+1. VERIFY the component exists (render with debug color, add log output)
+2. VERIFY data flow (check values at each stage of the pipeline)
+3. ONLY THEN adjust parameters
+Never skip to parameter tweaking without confirming the hypothesis.
+
+## Debug Escalation [advisory, workflow hook available]
+
+If the standard debug protocol does not resolve the issue, escalate:
+- **L1 (Protocol)**: always. Follow the steps above.
+- **L2 (Visual)**: for visual issues, write screenshot acceptance criteria
+  before implementation, run visual_check, inspect the screenshot, compare every
+  criterion, and return to L1 for each failure.
+  ```bash
+  python tools/visual_check.py --exe [EXECUTABLE_PATH] --build-cmd "[BUILD_CMD]" --output screenshots/check.png
+  ```
+- **L3 (Consult)**: if you have attempted 3+ fixes for the same issue without
+  improvement, use the `consult` MCP tool. Send ONLY: problem description,
+  relevant snippets, and failed attempts. Do NOT send full files. Fallback:
+  ```bash
+  python tools/consult.py --prompt "[problem description]" --role debug --backend claude
+  ```
+- Never skip levels: L1 before L2, L2 before L3.
+
+## Operative Rules [advisory]
+
+- Before creating a new function, search the codebase for existing implementations
+- For non-trivial features or cross-layer changes, create or confirm a mini-design slice before implementation: audited existing behavior, integration points, non-goals, duplicate-risk checks, and acceptance or verification checks
+- Before modifying stable code, verify there's no alternative in features/ or workspace/
+- Never invent facts, capabilities, implementation status, command behavior, security guarantees, benchmark results, or architectural conclusions
+- If a statement affects trust, cite a file, command, receipt, test, hook, CI gate, or mark it explicitly as an assumption that needs verification
+- Never introduce non-determinism (random without seed, Date.now() in business logic)
+- Translate brief-level must-haves into explicit acceptance criteria before calling a slice complete
+- Do not label work as done or complete unless there is verification evidence; prefer `implemented` vs `verified` language
+- After structural changes, run `python tools/fitness_check.py --project-root .`
+<!-- CC:OPERATIVE_RULES -->
+
+## Semantic Fidelity [advisory]
+
+- Never paraphrase, compress, or schematize requirements from spec documents.
+- When referencing a requirement, use its ID and quote the original text.
+- Do not convert prose requirements into bullet shorthand (+feature, -bug, keyword lists).
+- The original phrasing carries contextual meaning that shorthand destroys.
+- Specification documents in protected zones are read-only: read them, do not rewrite them.
+- Never shorten, summarize, or truncate existing design documents. Add or restructure only.
+
+See ControlCoding methodology Section 9.14 for structural and mechanical defenses.
+
+## External Connections [advisory]
+
+If this project calls external services (LLM APIs, HTTP endpoints, subprocesses):
+- Every connection must be explicitly authorized (env var, config, or user prompt)
+- All connection settings must default to OFF (fail-closed)
+- Fallback operations must not multiply cost without authorization
+- Connection errors must be propagated (`raise`), never masked with silent alternatives
+
+See ControlCoding methodology Section 9.13 for the full principles (P1-P6).
+
+## Verification Protocol (optional - install with `cc install vision`) [advisory]
+
+<!-- CC:VERIFICATION_PROTOCOL -->
+
+## Current Focus
+
+<!-- CC:CURRENT_FOCUS -->
+## Session Management [advisory, workflow hook available]
+
+At every significant milestone (feature complete, bug fixed, refactor done):
+1. Call `checkpoint(summary, decisions, problems, files_changed, what_next)`
+2. If the checkpoint says the project context needs review, update it
+3. Keep local CC working docs updated (`STATUS.md`, local `devlog/`, and related CC docs)
+4. Then commit what your repo policy allows to be tracked
+
+At the start of every new session:
+1. Call `read_status()` to understand current project state
+2. Call `read_devlog(last_n=3)` to review recent changes
+3. Then proceed with the task
+## Commit Ceremony
+
+The Commit Ceremony is mandatory for every significant commit.
+`documentation_mode` changes ownership only; it never disables the ceremony.
+
+Always update code, `STATUS.md`, and local `devlog/`. When impacted, also update
+project context, `BUGS.md`, roadmap, and affected development docs.
+
+Whether governed CC working docs are committed or kept local depends on
+`cc_artifact_mode`. `devlog/` stays local session memory. In the recommended
+adopter mode (`local_only`), the other CC working docs are still updated at
+each milestone but remain gitignored.
+## CodeWarden (optional - L2+)
+
+CodeWarden hooks review changes against the active project context at plan time, edit time,
+and session end. Includes Impact Analysis (Section 9.18) to flag files affected
+by changes but not mentioned in the plan. See `templates/hooks/` for setup.
+## Multi-Agent Communication (optional - multi-session setups)
+
+Bridge MCP for helper sessions: `send(to="helper", content="...")` / `wait_reply()` / `receive()`

@@ -1,0 +1,116 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/check_boundaries.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/check_workflow.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/check_dangerous_commands.py"
+          }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/codewarden_plan_review.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/ops_logger.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/check_bash_writes.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/check_index_staleness.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/codewarden_review.py"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python hooks/session_end_check.py"
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "consultant": {
+      "command": "python",
+      "args": ["tools/mcp_consultant.py"],
+      "env": {
+        "CONSULT_BACKEND": "claude",
+        "VERIFIER_BACKEND": "claude",
+        "CODEWARDEN_BACKEND": "claude"
+      }
+    },
+    "session-manager": {
+      "command": "python",
+      "args": ["tools/mcp_session.py"]
+    },
+    "handoff": {
+      "command": "python",
+      "args": ["tools/mcp_handoff.py"]
+    },
+    "agent-memory": {
+      "command": "python",
+      "args": ["tools/mcp_agent_memory.py"]
+    }
+  }
+}

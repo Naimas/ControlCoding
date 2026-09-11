@@ -1,0 +1,602 @@
+# Install ControlCoding On Your Project
+
+This guide is for a human developer. It explains what ControlCoding installs,
+which files it changes, what is optional, and how to verify that the install is
+actually active.
+
+If you are asking an AI coding host to do the install, give it this page and ask
+it to follow the steps exactly. The AI should report every command it ran and
+every file it changed.
+
+## What You Are Installing
+
+ControlCoding Core adds a local project control layer around your existing
+codebase. It does not replace your AI coding tool and it does not own your
+application code.
+
+The base install creates:
+
+- a canonical project context file: `CONTROLCODING.md`
+- a host-specific context file, such as `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+  or `.clinerules`
+- local ControlCoding state under `.controlcoding/`
+- hook scripts under `hooks/`
+- repo-side git hooks when the project is a git repository
+- a `cc_config.json` file where protected zones and workflow rules live
+- Project Memory Engine and GraphRAG as local Core capabilities
+
+The Core memory default is local and governed-scope first. Base setup initializes
+the `.controlcoding/` memory layout and indexes only governed ControlCoding or
+ControlWork surfaces:
+
+- `CONTROLCODING.md`
+- generated host context files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  and `.clinerules`
+- `CONTROLWORK.md`, when embedded Project Plane exists
+- `project-definition/`, `design/`, `criteria/`, and `contracts/`
+- `.controlwork/memory/`
+
+The base install does not run a full repository memory scan, OCR, document
+layout extraction, vector rebuild, file reorganization, document relocation, or
+graph promotion. Those actions require a separate explicit command or wizard
+confirmation.
+
+The base install does not automatically create application features, modify your
+business logic, publish anything, or enable remote AI calls.
+
+## Requirements
+
+- Python 3.10+
+- git
+- a local checkout of the ControlCoding repository
+- an authorized AI host or manual shell access
+
+Use official CLIs, official APIs, local runtimes, or vendor-approved connectors
+only. Do not reuse consumer chat login cookies, browser sessions, or private
+tokens as an integration mechanism.
+
+## Recommended Install
+
+The primary public flow should start from chat.
+
+Tell your AI host:
+
+```text
+Install ControlCoding in this project using the local ControlCoding repository.
+Read INSTALL_WIZARD.md and follow it.
+Ask one question at a time.
+```
+
+Only fall back to raw commands if the host truly cannot execute local commands.
+
+Backend apply sequence from the project root:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup --project-root .
+python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
+python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+```
+
+Replace `/path/to/ControlCoding/` with the real path where you downloaded this repository.
+
+Use `setup` for a guided install. Use `init` only when you intentionally want a
+minimal non-interactive install:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py init --project-root .
+python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+```
+
+This is the correct path for:
+
+- a brand-new project
+- an existing project that does not use ControlCoding yet
+
+Do not start with manual file copying unless you have a specific reason.
+
+Canonical chat contracts:
+
+- [`../INSTALL_WIZARD.md`](../INSTALL_WIZARD.md)
+- [`../PROJECT_SETUP_WIZARD.md`](../PROJECT_SETUP_WIZARD.md)
+
+## Every New Chat After Install
+
+Once a project is initialized, the simplest startup path is conversational.
+Open the AI chat in the project folder and say:
+
+```text
+Start this project and load its memory before working.
+```
+
+The host context file tells the AI to run the ControlCoding startup tools
+itself before answering, editing, or continuing prior work. Startup is
+read-only and loads one AI-ready packet containing checks, relevant memory,
+Project Plane context when `.controlwork/` exists, warnings, and expected
+closeout guidance.
+
+If the AI reports that Project Plane memory is missing and you want durable
+cross-chat project memory, ask it to initialize ControlWork memory for the
+project. The AI can then run the setup tool explicitly:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py memory work-quickstart --project-root . --topic "project bootstrap"
+```
+
+The V1/Core package does not include a bundled desktop installer or Studio UI.
+Use the same chat-guided or CLI setup logic documented here. Project setup
+remains a separate second flow after installation.
+For the public packaging split, see [release-model.md](./release-model.md).
+
+## Step 1: Installation Contract
+
+If you need the CLI fallback that prints the install prompt contract, run:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup --chat-guide --host-hint codex_cli --project-root .
+```
+
+This prints the official install prompt contract. Paste it into your AI host and let the host collect the required answers, generate `handoff.json`, and run the non-interactive apply step.
+
+If you already have a handoff file, run:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup --answers-file handoff.json --project-root .
+```
+
+### What it asks first
+
+- project identity
+- user host: `Codex CLI`, `Claude Code`, `Gemini CLI`, `Cursor`, and so on
+- ControlCoding usage model: `Core`, `Core + manual consultation`, `Agents`, or `Studio`
+- documentation ownership: `managed` vs `project_managed`
+- local project memory initialized with `memory_default_policy = governed_scope`
+- host workflow guidance
+
+CC working documents stay local-only in the public install path. The base setup no longer asks you to decide that.
+Project Memory Engine and GraphRAG are Core defaults. The setup path prepares
+local memory and a governed-scope bootstrap receipt, but does not treat that as
+permission for a full repo scan or OCR.
+
+### Separate Project Setup Flow
+
+The install flow configures ControlCoding. It does not define the product, write
+the master design package, or plan the implementation phases.
+
+After install, start the second flow from chat:
+
+```text
+Set up this project with ControlCoding.
+Read PROJECT_SETUP_WIZARD.md and follow it.
+Look for project_brief.md or another likely brief first.
+If the repo already looks mature, offer the brownfield adoption path.
+```
+
+CLI fallback that prints the project-setup prompt contract:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup-project --chat-guide --host-hint codex_cli --project-root .
+```
+
+Or, if the host already produced the kickoff handoff file:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup-project --answers-file handoff.json --project-root .
+```
+
+That second flow covers:
+
+- source mode: existing brief/doc vs interactive guidance vs brownfield adoption
+- project framing in plain language
+- implementation stack and system shape as optional/provisional inputs
+
+It now scaffolds the project in stages:
+
+- `.controlcoding/setup_intent.json`
+  - canonical setup-intent snapshot and phase graph for the project setup pass
+- `project-definition/`
+  - source assessment
+  - consultation planning
+  - existing-project inventory, truth map, architecture extraction, maturity/gap assessment, and adoption plan when the repo already exists
+  - manual consultation packets for external design help in `Core`
+  - specialist role specs for specialist-assisted planning
+- `design/`
+  - design baseline
+  - architecture and subsystem docs
+- `criteria/` and `contracts/`
+  - traceability, verification, and coverage governance
+- implementation planning artifacts
+  - master implementation plan
+  - progressive protection plan
+  - feature implementation docs
+
+That means `setup-project` is no longer just a doc generator. It first evaluates the quality of the source material, and for mature repos it also maps current authority, drift, architecture, and protection bootstrap candidates before the design baseline is trusted.
+
+It can scaffold:
+
+- initial design document
+- initial implementation plan
+- `ROADMAP.md`
+- `BUGS.md`
+
+The planning behavior follows the usage model you already selected during install:
+
+- `Core` can plan directly in one strong structured chat
+- `Core` may also allow one bounded manual consultation path
+- `Agents` uses explicit helper roles on the chosen host by design
+- `Studio` remains a future/internal UI path, not the current public release story
+
+This is the recommended path when you want ControlCoding to help turn one of these into real project docs:
+
+- a project idea
+- a short brief
+- an existing design direction that still needs to be turned into real project docs
+
+`CONTROLCODING.md` remains the host-agnostic rule/context source for AI tools.
+The design and implementation documents are the deeper project planning layer.
+
+## Step 2: Run The Engagement Apply
+
+Run:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup --engagement --answers-file handoff.json --project-root .
+```
+
+This applies the tier/runtime handoff generated by the chat-guided install flow.
+
+### What it asks
+
+- product tier: `Core`, `Agents`, or `Studio`
+- backend policy
+- local tandem/model details when relevant
+- on `Agents` / `Studio`, an explicit specialist/backend matrix:
+  active paths, backend/model per role, permission envelope, execution mode,
+  and call limits
+- advanced packs or specialist/backend-heavy paths only when they are actually relevant
+
+`Core + manual consultation` stays separate from that matrix and remains
+explicitly user-mediated.
+
+Current release freeze:
+
+- `Core + manual consultation` is the public manual second-opinion path
+- the current public `Agents` path is explicit helper work on the chosen host through prompt, folder, and behavior contracts
+- API-backed routed specialists belong to the later Version II path
+- `Studio` / CC UI remains a later optional extra
+
+### Which tier to choose first
+
+- Choose `Core` if you want the structured framework baseline first.
+- Choose `Agents` only if you want bounded helper roles with explicit prompt/folder/behavior contracts on the chosen host.
+- Treat API-backed routed specialists as later Version II work.
+- Choose `Studio` only for future/internal UI work, not for the current public release path.
+
+For most first installs, start with `Core`.
+That is also the publish-first public package.
+
+## Step 3: Validate The Installation
+
+Run:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+```
+
+`doctor` checks that the installation is coherent: context files, hooks, config,
+host profile, and other required pieces.
+
+## Claude Code Hook Activation
+
+Claude Code is the reference host for true inline hooks.
+
+ControlCoding keeps its canonical hook configuration in:
+
+```text
+.controlcoding/settings.json
+```
+
+Claude Code does not read that file directly. For Claude Code, setup also writes
+this local adapter:
+
+```text
+.claude/settings.local.json
+```
+
+That adapter is what makes Claude Code actually invoke the hook scripts. It
+contains machine-specific absolute paths and should not be committed.
+
+After setup, verify:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+```
+
+For Claude Code, also check that `.claude/settings.local.json` exists. If the
+hook scripts exist but the Claude adapter does not, Claude Code will not run the
+hooks.
+
+## Other AI Hosts
+
+Some hosts do not provide true pre-write hooks. In those hosts, ControlCoding
+uses a different protection path:
+
+- host-native context instructions
+- git pre-commit boundary checks
+- post-commit or manual review gates
+- project tests and invariants
+- optional explicit patch gateway through `cc write-path`
+
+Do not describe non-inline hosts as having Claude-style pre-write protection.
+
+## Use It From An IDE Chat
+
+If you work from Codex in VS Code, Claude in VS Code, or another IDE-hosted chat, use the official chat-guided setup path.
+
+Print a ready-to-paste chat-guided setup prompt with:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup --chat-guide --host-hint codex_cli --project-root .
+```
+
+Replace `codex_cli` with `claude_code`, `gemini_cli`, or another supported host when needed.
+
+The intended flow is:
+
+- the chat reads the printed prompt
+- the chat asks one setup question at a time
+- the chat helps translate non-technical answers into provisional setup values when needed
+- the chat emits a handoff JSON payload for `--answers-file`
+- if the host can execute local commands, the chat runs `setup`, `setup --engagement`, and `doctor` itself with `--apply-answers`
+- after install, the chat may offer the separate `setup-project` flow, but only if you explicitly want it
+- the default memory bootstrap remains governed-scope only unless you opt into a broader scan
+- only if the host truly cannot execute local commands does it fall back to asking you to run them manually
+- the chat reviews the generated files after each step
+
+### Recommended user-facing install ceremony
+
+If you want a short instruction you can give directly to a host chat, use this:
+
+```text
+Install ControlCoding in this project using the local repository at /path/to/ControlCoding.
+Act as the official chat-guided ControlCoding installation assistant.
+Briefly explain what ControlCoding is and how the setup flow will work in the user's language.
+Ask one question at a time.
+Keep the actual next question in the visible reply, not only in reasoning.
+Treat the likely current host as a recommendation, not as a forced choice.
+Explain briefly the difference between Core, Core + manual consultation, Agents, and Studio before asking me to choose.
+Recommend Core first.
+Do not silently choose the major setup options for me. Ask me to confirm the main choices before applying anything.
+If local commands are available, create handoff.json, run setup, setup --engagement, and doctor, then tell me exactly what files were written and whether doctor passed.
+```
+
+Replace:
+
+- `/path/to/ControlCoding` with the real local path
+
+If you want the repo to print the stricter official setup contract for benchmark
+or debugging use, run:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py setup --chat-guide --host-hint codex_cli --project-root .
+```
+
+### Recommended first choices
+
+For most adopters:
+
+- choose `Core` first
+- choose `managed` documentation mode
+- accept local project memory with governed-folder scope only
+- choose `recommended` host workflow guidance
+- choose `local` hooks
+- stop after installation unless you already want CC to help define the project now
+
+Choose `Core + manual consultation` when you want the `Core` baseline but also
+want CC to prepare manual external consultation packets when a blocking question
+appears. That path stays file-based and user-mediated under
+`.controlcoding/external_consultation/`.
+
+Choose `Agents` only when you are ready to work with explicit helper roles on
+the chosen host through prompt, folder, and behavior contracts.
+
+Choose `Studio` only for future/internal UI work after the lower layers are
+already solid.
+
+## What You Get
+
+After the standard setup flow, your project should have:
+
+- `CONTROLCODING.md` as the canonical context source
+- the derived host-native file for your selected host, such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or `.clinerules`
+- `.controlcoding/` control-plane files
+- hook wiring and host launcher assets
+- `ROADMAP.md` and `BUGS.md`
+- if you later run `setup-project`: design/plan docs
+
+## When To Use `init`
+
+Use:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py init --project-root .
+python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+```
+
+only when you intentionally want:
+
+- a minimal bootstrap
+- a non-interactive/scripted flow
+- a recovery path when the full chat-guided setup flow is not the right tool
+
+`init` is not the preferred first-time onboarding path for a normal project.
+
+## Migrating A Historical Host Adapter
+
+Do not use `--force` to claim an existing adapter. Start with a preview:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py context sync --host <host> --preview-only --project-root .
+python /path/to/ControlCoding/scripts/cc.py context adopt --host <host> --project-root .
+```
+
+The first command reports the ownership state. A valid-owned adapter can be
+synced after review. An `unmarked` or explicitly `foreign` target requires the
+separate adoption preview above and, only when the preflight permits it, this
+explicit apply:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py context adopt --host <host> --apply --project-root .
+python /path/to/ControlCoding/scripts/cc.py context sync --host <host> --project-root .
+```
+
+Invalid, ambiguous, and unreadable or unsafe targets remain blocked and cannot
+be adopted. The flow does not promise partial modification or rollback beyond
+the verified adapter transaction contract.
+
+## Manual Path
+
+If you deliberately want to bootstrap by hand, you can still:
+
+1. create `CONTROLCODING.md`
+2. derive the host-native file with `cc export host-context --host <host>`
+3. wire hooks manually
+4. run `cc doctor`
+
+But that is the advanced/manual path, not the recommended path for a new adopter.
+
+`cc doctor` is the canonical check after setup. It now reports the selected
+host's `inline gate`, `repo boundary gate`, `review gate`, and
+`verification gate` explicitly, including what is mechanical versus
+conditional/advisory.
+
+For automation or audits, use `cc doctor --json`. The JSON report contains an
+`operationalContract` block with explicit readiness fields:
+`safeForHumanWork`, `safeForAiAssistedWork`, `safeForAutonomousWork`, and
+`releaseReady`. Treat those fields as the operational truth. A project can pass
+basic health checks while still being unready for autonomous AI work if the host
+profile, verification contract, invariant manifest, boundary gate, review gate,
+or verification gate is missing.
+
+The same JSON report includes `constitutionDrift` when a canonical
+`CONTROLCODING.md` exists. This check catches a stale project constitution: host
+files generated from old rules, protected zones configured in `cc_config.json`
+but absent from the context, or active invariant ids that are not mentioned in
+the Domain Invariants section. Run it directly with:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py context drift --host <host> --project-root .
+```
+
+To turn domain knowledge into candidate invariant tests, use the elicitation
+command before editing the invariant manifest:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py invariants elicit --domain finance --write --project-root .
+```
+
+This writes a draft under `docs/invariants/` with domain questions, candidate
+properties, suggested thresholds, test paths, and pytest commands. It is still
+documentation until you create executable tests and add active manifest entries.
+
+To inspect the protected properties themselves, use:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py invariants report --project-root .
+```
+
+This prints the invariant ids, domains, properties, thresholds, executable
+status, and latest local run evidence. It is the human-readable view of what
+the invariant manifest is actually protecting.
+
+To diagnose the operational state of the invariant gate, use:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py invariants doctor --project-root .
+```
+
+This reports whether invariants are missing, only documented, executable only
+on the local machine, or wired into CI. It also reports the current control
+level so you do not confuse a principle with an enforced gate.
+
+To prepare CI enforcement for the invariant gate, use a dry run first:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py invariants wire-ci --project-root .
+```
+
+Then write the GitHub Actions workflow when the command and manifest are correct:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py invariants wire-ci --write --project-root .
+```
+
+This creates `.github/workflows/controlcoding-invariants.yml`. The gate becomes
+mechanical only after that workflow is committed and enabled by the repository
+host. Until then, it is a generated CI plan.
+
+For hosts without native inline hooks, the project should not be considered
+healthy until the repo-side boundary path is actually wired.
+
+If you want a stricter advanced path for a non-inline host, enable the optional
+controlled write prototype:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py write-path enable --mode patch_gateway --project-root .
+python /path/to/ControlCoding/scripts/cc.py write-path prepare --patch-file proposed.diff --project-root .
+python /path/to/ControlCoding/scripts/cc.py write-path apply --patch-file proposed.diff --manifest-id <manifest_id> --project-root .
+python /path/to/ControlCoding/scripts/cc.py write-path status --project-root .
+```
+
+That path is opt-in and explicit. It can block protected-zone writes before a
+patch is applied, but only when the write actually goes through `cc write-path`.
+If you enable manifest gating, `prepare` and `apply --manifest-id` become the
+mechanical two-step path, including a baseline snapshot of the files touched by
+the patch.
+If you enable `--preflight-fitness`, `apply` first runs the patch through a
+shadow-worktree `fitness_check.py` preflight and blocks the real apply on hard
+architectural violations.
+Each terminal outcome is also written to
+`.controlcoding/write_path_receipts/` for local auditability.
+
+For `Agents / human_mediated`, the bounded manual loop is:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py consult-packet create --project-root . --role architect --objective "Validate repo-side boundary split" --question "Should gateway branching move into a dedicated adapter?"
+python /path/to/ControlCoding/scripts/cc.py consult-packet show --project-root . --packet-id <packet_id>
+python /path/to/ControlCoding/scripts/cc.py consult-packet create --project-root . --role architect --thread-id <thread_id> --objective "Follow up on the adapter split" --question "What should move first?"
+python /path/to/ControlCoding/scripts/cc.py consult-packet create --project-root . --role architect --topic-key adapter_split --objective "Compare alternate adapter split" --question "Should option B be rejected?"
+python /path/to/ControlCoding/scripts/cc.py consult-result import --project-root . --packet-id <packet_id> --summary "Keep the split, isolate adapter logic." --decision partial --rationale-summary "Current split works, but gateway branching is leaking across layers." --next-action "Extract the adapter module."
+python /path/to/ControlCoding/scripts/cc.py consult resolution --project-root . --role architect --topic-key adapter_split
+python /path/to/ControlCoding/scripts/cc.py consult status --project-root .
+```
+
+This path keeps the helper role explicit and host-driven. It does not claim
+hidden routed orchestration parity. API-backed routed specialists belong to the
+later Version II path.
+
+For the current host capability/evidence overview:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py benchmark-matrix generate --project-root .
+```
+
+The import stores concise engineering summaries only. It does not persist raw
+chat transcripts or imply routed/automatic specialist execution parity.
+Manual consultation artifacts live under `.controlcoding/external_consultation/`.
+Each manual thread also writes `thread.json`, `memory.md`, and
+`resume_prompt.md` under `.controlcoding/external_consultation/threads/` so a
+new external chat can resume from the current bounded state.
+Cross-consultation continuity is summarized automatically in
+`.controlcoding/external_consultation/role_memory/` and
+`.controlcoding/external_consultation/convergence_summary.md`.
+Use `--topic-key` when separate manual consultations should merge around the
+same normalized decision topic instead of staying isolated.
+If that merged topic becomes conflicted, `cc consult resolution` shows the
+generated resolution artifact and prompt path for the next bounded manual chat.
+
+## After Base Install
+
+- If you only want the structured baseline, stop after `Core` and start working.
+- If you want the optional specialist/runtime layers after base setup, continue with [ecosystem-quickstart.md](./ecosystem-quickstart.md).
+- For a compact install summary, see [quick-start.md](./quick-start.md).
+- For the broader walkthrough with zone classification and domain examples, see [adoption-guide.md](./adoption-guide.md).

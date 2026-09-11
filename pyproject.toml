@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "controlcoding"
+version = "3.0.1"
+description = "ControlCoding CLI and local governance framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Stefano Tonello" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["fastmcp"]
+dashboard = ["gradio"]
+studio = ["gradio"]
+visual = ["pyautogui"]
+vision = ["pyautogui"]
+semantic = []
+
+[project.scripts]
+cc = "cc:main"
+
+[tool.setuptools]
+package-dir = { "" = "scripts" }
+py-modules = [
+  "cc",
+  "cc_memory",
+  "cc_setup",
+  "cc_feature",
+  "cc_docs",
+  "cc_review",
+  "cc_init_module",
+]
+
+[tool.setuptools.packages.find]
+where = ["scripts"]
+include = ["cc_memory_lib*"]

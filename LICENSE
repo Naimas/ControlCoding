@@ -1,0 +1,90 @@
+# ControlCoding Noncommercial Dual License
+
+Copyright (c) 2024-2026 Stefano Tonello.
+
+ControlCoding is source-available for noncommercial use only. Commercial use,
+commercial redistribution, resale, paid hosting, paid consulting packages,
+commercial SaaS use, or inclusion in a commercial product or service requires a
+separate written commercial license from Stefano Tonello.
+
+Commercial license requests are described in `COMMERCIAL_LICENSE.md`.
+
+ControlWork originated as the Project Plane inside ControlCoding and is now a
+standalone source-available noncommercial product that remains compatible with
+the embedded Project Plane in ControlCoding.
+
+Compatibility does not merge product identity or remove license boundaries.
+ControlCoding and ControlWork components both require separate written
+commercial permission for commercial use.
+
+Historical note: versions previously released under MIT, CC-BY-SA, or other
+terms remain governed by the terms under which those versions were published.
+This license describes this repository state and future versions unless a later
+release states otherwise.
+
+When a file has a more specific SPDX or license notice, that file-level notice
+controls for that file.
+
+## Documentation And Methodology
+
+Files in Markdown or other documentation formats, including `CONTROLCODING.md`,
+`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.clinerules`, files under `docs/`,
+ControlCoding templates, and ControlWork templates embedded in this repository
+are licensed under:
+
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+`CC-BY-NC-SA-4.0`
+
+Canonical license URL:
+https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+Summary:
+
+- Attribution is required.
+- Commercial use is not permitted.
+- Adapted material must be shared under the same license.
+- Changes must be indicated.
+
+## Software
+
+Files under `scripts/`, `templates/scripts/`, `templates/hooks/`, and all `.py`
+files in this repository are licensed under:
+
+PolyForm Noncommercial License 1.0.0
+`PolyForm-Noncommercial-1.0.0`
+
+Canonical license URL:
+https://polyformproject.org/licenses/noncommercial/1.0.0
+
+Summary:
+
+- Noncommercial use is permitted.
+- Commercial use is not permitted.
+- Redistribution must preserve copyright, license, and attribution notices.
+- Commercial licensing requires separate written permission.
+
+## Product Boundary
+
+ControlCoding covers methodology, host context, hooks, CLI tools, local memory,
+verification gates, agent-facing structure, and coding governance.
+
+ControlWork covers portable Work Plane / Project Plane memory, including
+`CONTROLWORK.md`, `.controlwork/`, source review, decisions, plans, outputs,
+graph projections, retrieval, handoff packets, context packets, and compatible
+standalone or embedded workflows.
+
+ControlWork compatibility with ControlCoding does not relicense either product
+as open source. Embedded, imported, synced, or exported ControlWork components
+keep the ControlWork noncommercial license boundary.
+
+## Attribution Requirement
+
+Any shared copy, fork, modified version, package collection, or redistribution
+of repository material must preserve visible attribution:
+
+ControlCoding by Stefano Tonello
+https://github.com/Naimas/ControlCoding
+
+Modified versions must clearly state that they are modified and must not imply
+that they are official ControlCoding or ControlWork releases unless explicitly
+approved in writing by Stefano Tonello.

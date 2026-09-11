@@ -1,0 +1,194 @@
+# Working folder (reviews, drafts, temporary files, obsolete docs)
+_work/
+
+# Internal working documents (drafts, project-specific versions)
+ControlCoding_2_*.md
+*_CaseStudy.md
+*_Bootstrap_Prompt.md
+*_Pubblicazione.md
+Bootstrap_Prompt.md
+Publication_Assessment.md
+github_profile_README_DRAFT.md
+
+# Old versions
+*.pdf
+
+# Project-specific audit scripts
+scripts/cc_audit_*.py
+
+# Generated review prompt (project-specific, not tracked)
+docs/review_prompt.md
+
+# Codex instance-specific config (adopters generate their own)
+/.codex/
+
+# Claude Code instance-specific config (adopters generate their own)
+.claude/settings.json
+.claude/settings.local.json
+.claude/commands/
+.claude/cc_config.json
+.claude/codewarden_violations.jsonl
+.claude/codewarden_report.md
+.claude/deny_hashes.json
+.claude/lift_request.json
+.claude/consult_log.jsonl
+.claude/decision_log.jsonl
+.claude/event_log.jsonl
+.claude/verifier_report.json
+.claude/gateway_pids.json
+.claude/session_counter.json
+.claude/cc_surface_lock.json
+.claude/launchers/
+
+# Context handoff session data (F1) - local state, never committed
+.claude/sessions/
+
+# UI build artifacts (W0-W9) - sources committed, build output not
+ui/node_modules/
+ui/dist/
+ui/dist-electron/
+ui/release/
+ui/launch.log
+
+# Development logs and session artifacts
+devlog/
+prompts/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+STATUS.md
+ROADMAP.md
+BUGS.md
+dev/
+knowledge/
+.controlcoding/
+.controlwork/
+
+# Local temp workspaces and smoke artifacts
+/.tmp_*
+/.tmp-pytest-*/
+/cc_perm_probe_*/
+/scratch-test/
+
+# Benchmark execution artifacts (specs and results are kept)
+benchmarks/m10-prompt.md
+benchmarks/m11-prompt.md
+benchmarks/setup_runs.py
+
+# Runtime artifacts
+.tmp/
+*.egg-info/
+cc_hook_log.jsonl
+*.pyc
+__pycache__/
+.pytest_cache/
+.pytest-tmp/
+.pytest-tmp-*/
+.pytest-local-*/
+pytest-cache-files-*/
+pytest_tmp*/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Test artifacts
+test.png
+test_timeout_dir/
+screenshots/
+
+# --- ControlCoding local artifacts (do not commit) ---
+# Hook scripts (local copies, sourced from CC installation)
+hooks/check_boundaries.py
+hooks/check_dangerous_commands.py
+hooks/check_repo_boundaries.py
+hooks/codewarden_*.py
+hooks/hook_logger.py
+hooks/hook_utils.py
+hooks/violation_store.py
+hooks/session_end_check.py
+hooks/check_workflow.py
+hooks/check_bash_writes.py
+hooks/check_file_organization.py
+hooks/check_index_staleness.py
+hooks/feature_lock.py
+hooks/ops_logger.py
+hooks/request_lift.py
+hooks/pre-commit
+
+# CC runtime artifacts (canonical)
+.controlcoding/deny_hashes.json
+.controlcoding/cc_hook_log.jsonl
+.controlcoding/codewarden_violations.jsonl
+.controlcoding/codewarden_report.md
+.controlcoding/session_counter.json
+.controlcoding/hooks_lifted.json
+.controlcoding/lift_request.json
+.controlcoding/consult_log.jsonl
+.controlcoding/consult_packets/
+.controlcoding/consult_results/
+.controlcoding/write_path_metrics.json
+.controlcoding/write_path_events.jsonl
+.controlcoding/write_path_manifests/
+.controlcoding/write_path_receipts/
+.controlcoding/write_path_shadow/
+.controlcoding/verification_receipts/
+.controlcoding/verification_tmp/
+.controlcoding/invariant_receipts/
+.controlcoding/invariant_tmp/
+.controlcoding/promotions/
+.controlcoding/settings.json
+.controlcoding/cc_surface_lock.json
+.controlcoding/active_module.json
+.controlcoding/launchers/
+
+# CC runtime artifacts (legacy compatibility)
+.claude/deny_hashes.json
+.claude/cc_hook_log.jsonl
+.claude/codewarden_violations.jsonl
+.claude/codewarden_report.md
+.claude/session_counter.json
+.claude/hooks_lifted.json
+.claude/lift_request.json
+.claude/consult_log.jsonl
+.claude/consult_packets/
+.claude/consult_results/
+.claude/write_path_manifests/
+.claude/write_path_receipts/
+.claude/write_path_shadow/
+.claude/verification_receipts/
+.claude/verification_tmp/
+.claude/invariant_receipts/
+.claude/invariant_tmp/
+.claude/promotions/
+.claude/cc_surface_lock.json
+.claude/active_module.json
+.claude/launchers/
+.vscode/tasks.json
+
+# CC optional tools (local copies)
+tools/fitness_check.py
+tools/mcp_*.py
+tools/visual_check.py
+tools/visual_test.py
+tools/consult.py
+tools/cc_dashboard.py
+tools/cc_audit.py
+
+# Visual check and multi-agent runtime
+screenshots/
+.bridge/
+# --- End ControlCoding ---
+# CC local session memory (always local)
+devlog/
+# CC working documents (local-only mode)
+STATUS.md
+ROADMAP.md
+BUGS.md
+dev/
+knowledge/
