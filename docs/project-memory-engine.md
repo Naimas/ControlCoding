@@ -202,10 +202,10 @@ and Code Plane behavior around it.
 ControlWork originated as the Project Plane inside ControlCoding and was spun
 out as a standalone, source-available noncommercial product. The embedded and
 standalone forms remain contract-compatible, but they are not automatically
-the same product identity. ControlCoding and ControlWork are both
-source-available noncommercial products. Commercial use of either product, or
-of embedded, imported, synced, or exported ControlWork components, requires
-separate written permission.
+the same product identity. ControlCoding uses PolyForm Shield. ControlWork
+retains its separate noncommercial license boundary, and commercial use of
+embedded, imported, synced, or exported ControlWork components requires
+separate written permission under the ControlWork terms.
 
 Shared Project Plane improvements should flow both ways deliberately:
 

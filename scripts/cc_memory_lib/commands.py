@@ -377,7 +377,7 @@ The embedded Project Plane stays compatible with standalone ControlWork, but it 
 
 ControlWork originated as the Project Plane inside ControlCoding and is now a standalone, source-available noncommercial product. This embedded Project Plane remains compatible with standalone ControlWork.
 
-ControlCoding and ControlWork are source-available noncommercial products. Commercial use, resale, paid hosting, commercial redistribution, commercial SaaS use, paid consulting packages, or inclusion of ControlCoding or ControlWork components in a commercial product or service requires a separate written commercial license from Stefano Tonello.
+ControlCoding uses PolyForm Shield. ControlWork retains its separate source-available noncommercial license boundary. Commercial use of embedded or standalone ControlWork components requires separate written permission under the ControlWork terms.
 
 ## Bridge Workflows
 

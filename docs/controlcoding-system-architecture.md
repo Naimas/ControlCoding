@@ -242,8 +242,9 @@ ControlWork exists in two distribution forms:
 ControlWork originated as the Project Plane inside ControlCoding and is now a
 standalone, source-available noncommercial product. The embedded form remains
 compatible with the standalone memory contract, but compatibility does not
-permit commercial use of ControlCoding or ControlWork without separate written
-permission.
+relicense ControlWork. ControlCoding uses PolyForm Shield, while commercial use
+of embedded or standalone ControlWork components requires separate written
+permission under the ControlWork terms.
 
 Shared rules:
 

@@ -1,11 +1,21 @@
 # Commercial License Requests
 
-ControlCoding is source-available for noncommercial use only.
+ControlCoding software is source-available under PolyForm Shield 1.0.0.
+Documentation and methodology are available under CC BY-SA 4.0. The exact
+scope and controlling terms are defined in `LICENSE`.
 
-Commercial use requires separate written permission from Stefano Tonello. This
-includes commercial redistribution, resale, paid hosting, paid consulting
-packages, commercial SaaS use, company/internal business use, or inclusion in a
-commercial product or service.
+No separate ControlCoding license is required merely to use the toolkit inside
+a company or to build a commercial product that does not compete with
+ControlCoding or another product offered by its licensor.
+
+A separate written license is required for uses outside PolyForm Shield. These
+include providing a competing developer tool or service, white-label or OEM
+distribution, resale of ControlCoding, or paid hosting of ControlCoding as a
+product. When the competitive boundary is material to a planned use, request a
+written determination before relying on this summary.
+
+This document describes the request path and does not replace `LICENSE` or
+constitute legal advice.
 
 ## How To Request Permission
 
@@ -40,7 +50,8 @@ Notes:
 
 ControlWork originated as the Project Plane inside ControlCoding and remains
 compatible with embedded ControlWork in ControlCoding. ControlWork has its own
-source-available noncommercial license boundary. Commercial use of either
-ControlCoding or ControlWork requires written permission.
+source-available noncommercial license boundary. Commercial use of embedded or
+standalone ControlWork components requires separate written permission under
+the ControlWork terms.
 
-Compatibility does not grant commercial rights.
+Compatibility does not relicense ControlWork.

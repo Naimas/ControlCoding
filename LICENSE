@@ -1,11 +1,18 @@
-# ControlCoding Noncommercial Dual License
+# ControlCoding Source-Available License
 
 Copyright (c) 2024-2026 Stefano Tonello.
 
-ControlCoding is source-available for noncommercial use only. Commercial use,
-commercial redistribution, resale, paid hosting, paid consulting packages,
-commercial SaaS use, or inclusion in a commercial product or service requires a
-separate written commercial license from Stefano Tonello.
+Required Notice: ControlCoding by Stefano Tonello (Naimas), https://github.com/Naimas/ControlCoding
+Licensor Line of Business: AI-assisted software development governance, verification, and developer tooling.
+
+ControlCoding is source-available under the license boundaries below. Internal
+business use and commercial use are permitted when they satisfy the applicable
+license and do not provide a product that competes with ControlCoding or another
+product offered by its licensor.
+
+Providing a competing developer tool, hosted service, white-label distribution,
+or other use outside these terms requires a separate written commercial license
+from Stefano Tonello.
 
 Commercial license requests are described in `COMMERCIAL_LICENSE.md`.
 
@@ -14,8 +21,7 @@ standalone source-available noncommercial product that remains compatible with
 the embedded Project Plane in ControlCoding.
 
 Compatibility does not merge product identity or remove license boundaries.
-ControlCoding and ControlWork components both require separate written
-commercial permission for commercial use.
+ControlCoding and ControlWork therefore have different commercial-use terms.
 
 Historical note: versions previously released under MIT, CC-BY-SA, or other
 terms remain governed by the terms under which those versions were published.
@@ -32,16 +38,16 @@ Files in Markdown or other documentation formats, including `CONTROLCODING.md`,
 ControlCoding templates, and ControlWork templates embedded in this repository
 are licensed under:
 
-Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
-`CC-BY-NC-SA-4.0`
+Creative Commons Attribution-ShareAlike 4.0 International
+`CC-BY-SA-4.0`
 
 Canonical license URL:
-https://creativecommons.org/licenses/by-nc-sa/4.0/
+https://creativecommons.org/licenses/by-sa/4.0/
 
 Summary:
 
 - Attribution is required.
-- Commercial use is not permitted.
+- Commercial use is permitted.
 - Adapted material must be shared under the same license.
 - Changes must be indicated.
 
@@ -50,18 +56,21 @@ Summary:
 Files under `scripts/`, `templates/scripts/`, `templates/hooks/`, and all `.py`
 files in this repository are licensed under:
 
-PolyForm Noncommercial License 1.0.0
-`PolyForm-Noncommercial-1.0.0`
+PolyForm Shield License 1.0.0
+`PolyForm-Shield-1.0.0`
 
 Canonical license URL:
-https://polyformproject.org/licenses/noncommercial/1.0.0
+https://polyformproject.org/licenses/shield/1.0.0
 
 Summary:
 
-- Noncommercial use is permitted.
-- Commercial use is not permitted.
+- Use, modification, and distribution are permitted for permitted purposes.
+- Internal business use and noncompeting commercial use are permitted.
+- Providing a product that competes with the licensor's products is not
+  permitted.
 - Redistribution must preserve copyright, license, and attribution notices.
-- Commercial licensing requires separate written permission.
+- Competing products and uses outside these terms require separate written
+  permission.
 
 ## Product Boundary
 
@@ -73,9 +82,10 @@ ControlWork covers portable Work Plane / Project Plane memory, including
 graph projections, retrieval, handoff packets, context packets, and compatible
 standalone or embedded workflows.
 
-ControlWork compatibility with ControlCoding does not relicense either product
-as open source. Embedded, imported, synced, or exported ControlWork components
-keep the ControlWork noncommercial license boundary.
+ControlWork compatibility with ControlCoding does not relicense either product.
+Embedded, imported, synced, or exported ControlWork components keep the
+ControlWork noncommercial license boundary. Commercial use of those ControlWork
+components requires separate written permission under the ControlWork terms.
 
 ## Attribution Requirement
 

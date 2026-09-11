@@ -23,6 +23,11 @@ The stage identity regression test was made deterministic by keeping the
 original file alive while creating its replacement. Production behavior did
 not change.
 
+ControlCoding software is published under PolyForm Shield 1.0.0, allowing
+internal and noncompeting commercial use. Documentation and methodology are
+published under CC BY-SA 4.0. Embedded and standalone ControlWork components
+retain their separate noncommercial license boundary.
+
 ## 3.0.0
 
 The `3.0.0` section is retained for migration context. The clean public

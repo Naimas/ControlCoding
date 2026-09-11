@@ -1,12 +1,13 @@
 # ControlCoding
 
-![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue) ![License Source Available NC](https://img.shields.io/badge/License-Source--Available%20Noncommercial-yellow)
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue) ![License PolyForm Shield](https://img.shields.io/badge/License-PolyForm%20Shield-yellow)
 
-**Repository governance for AI-assisted development in complex, long-lived codebases.**
+**Build complex software with AI without losing architectural control.**
 
-ControlCoding is a source-available reference implementation and toolkit for
+ControlCoding is a developer-side, source-available governance toolkit for
 keeping AI-assisted changes inside explicit architectural, authorization, and
-verification boundaries.
+verification boundaries. It operates alongside a project during development;
+it is not a runtime dependency of the software being built.
 
 ## Who It Is For
 
@@ -264,10 +265,12 @@ For the public packaging split and the current release position of each layer, s
 | **Tandem Debate** | Two AI backends debate architecture decisions, identify agreements/divergences | Backend cost x2 |
 | **Runtime Engagement** | Internal 4-mode runtime config (`conservative` to `full`) that currently controls component activation behind the public tiers | Free, just config |
 
-All listed local components are free for noncommercial use. Commercial use,
-resale, paid hosting, paid consulting packages, commercial SaaS use, or
-inclusion in a commercial product or service requires a separate written
-commercial license from Stefano Tonello.
+ControlCoding components may be used internally and commercially to build
+products that do not compete with ControlCoding, subject to the exact terms in
+`LICENSE`. Competing products, white-label distribution, and other uses outside
+those terms require a separate written commercial license. Embedded or
+standalone ControlWork components retain their separate noncommercial license
+boundary.
 
 ### Memory Layers
 
@@ -806,28 +809,30 @@ ControlCoding was born from real-world AI-assisted development experience since 
 
 ## License
 
-ControlCoding is source-available for noncommercial use only.
+ControlCoding is source-available under a noncompete license.
 
 - **Markdown documentation, methodology text, public context templates, and
-  host instruction templates**: `CC-BY-NC-SA-4.0`.
+  host instruction templates**: `CC-BY-SA-4.0`.
 - **Software, tests, workflows, JSON/YAML configuration examples, executable
   templates under `templates/scripts/` and `templates/hooks/`, and all code
-  file types listed in `LICENSE`**: `PolyForm-Noncommercial-1.0.0`.
-- **Commercial use**: commercial use, resale, paid hosting, commercial
-  redistribution, commercial SaaS use, paid consulting packages, or inclusion
-  in a commercial product or service requires a separate written commercial
-  license from Stefano Tonello.
+  file types listed in `LICENSE`**: `PolyForm-Shield-1.0.0`.
+- **Commercial use**: internal business use and commercial use are permitted
+  when the use does not provide a product that competes with ControlCoding or
+  another product offered by its licensor. Competing products, white-label
+  distribution, and uses outside PolyForm Shield require separate written
+  permission.
   See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for the request path.
 
 ControlWork originated as the Project Plane inside ControlCoding and is now a
 standalone source-available noncommercial product that remains compatible with
-embedded ControlWork in ControlCoding. Compatibility does not make either
-product open source or permit commercial use without written permission.
+embedded ControlWork in ControlCoding. Compatibility does not relicense
+ControlWork. Commercial use of embedded or standalone ControlWork components
+requires separate written permission under the ControlWork terms.
 
-Historical note: versions previously released under MIT, CC-BY-SA, or other
-terms remain governed by the terms under which those versions were published.
-This repository state and future versions use the noncommercial license unless
-a later release states otherwise.
+Historical note: versions previously released under MIT, CC-BY-NC-SA,
+PolyForm Noncommercial, or other terms remain governed by the terms under which
+those versions were published. This repository state and future versions use
+the license boundaries in `LICENSE` unless a later release states otherwise.
 
 See [LICENSE](LICENSE) for the exact repository license boundary and
 [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for commercial permission
@@ -839,4 +844,4 @@ Created by Stefano Tonello (Naimas).
 
 ---
 
-ControlCoding is a source-available noncommercial methodology and structural framework. No vendor lock-in. The core (`CONTROLCODING.md` as canonical source, derived host files, hooks, and invariants) requires only Python 3.10+. Optional MCP tools require `pip install fastmcp`. The dashboard requires `pip install gradio`. Everything works with official CLIs, official APIs, local models, or vendor-approved connector flows. Commercial use requires separate written permission.
+ControlCoding is a source-available methodology and developer-side governance toolkit for building complex software with AI. No vendor lock-in. The core (`CONTROLCODING.md` as canonical source, derived host files, hooks, and invariants) requires only Python 3.10+. Optional MCP tools require `pip install fastmcp`. The dashboard requires `pip install gradio`. Everything works with official CLIs, official APIs, local models, or vendor-approved connector flows. Noncompeting internal and commercial use is permitted under the license boundaries in `LICENSE`.
