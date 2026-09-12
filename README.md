@@ -55,6 +55,16 @@ flowchart LR
     W --> G[Declared repository gates]
     G --> V[Verification evidence]
     V --> D[Human release decision]
+
+    classDef human fill:#e7f5ef,stroke:#1a7f37,stroke-width:2px
+    classDef context fill:#eaf2ff,stroke:#0969da,stroke-width:2px
+    classDef work fill:#fff8c5,stroke:#9a6700,stroke-width:2px
+    classDef evidence fill:#fbefff,stroke:#8250df,stroke-width:2px
+
+    class H,D human
+    class C,A context
+    class W,G work
+    class V evidence
 ```
 
 Gate behavior is explicit: depending on the host and configuration, a gate can
@@ -132,36 +142,17 @@ collapse into God files, duplicated logic, or scattered one-off scripts.
 
 ## FAQ
 
-### Is this a replacement for Cursor, Claude Code, or another AI coding host?
+| Signal | Question | Short answer |
+| --- | --- | --- |
+| 🟦 | **Does it replace Cursor, Claude Code, or another host?** | No. ControlCoding is not an IDE, model wrapper, or autonomous coding agent. It can work alongside a host and keeps selected context, boundaries, checks, and release evidence visible in the repository. |
+| 🟪 | **What is different from host instruction files?** | Host instruction files are useful, but they are often host-specific and mainly advisory. ControlCoding keeps canonical context in the repository and declares whether a protection is mechanical, conditional, advisory, or unavailable. |
+| 🟨 | **Do I need it for every project?** | No. It is intentionally unnecessary for small scripts, quick prototypes, and simple CRUD applications. It is intended for codebases where continuity, architecture, and release confidence matter over time. |
+| 🟥 | **Does it guarantee correct AI-generated code?** | No. It does not replace engineering judgment, review, or testing. It makes intended constraints and release evidence more explicit and inspectable. |
+| 🟩 | **Can it be used with Cursor?** | Yes. Cursor can be one of the hosts. ControlCoding does not require a specific IDE or model, but enforcement strength depends on the host and configuration. |
 
-No. ControlCoding is not an IDE, model wrapper, or autonomous coding agent. It
-can work alongside an AI coding host. Its role is to keep selected project
-context, boundaries, checks, and release evidence visible in the repository.
-
-### What is different from host instruction files?
-
-Host instruction files are useful, but they are often host-specific and mainly
-advisory. ControlCoding keeps canonical context in the repository and can
-declare whether a protection is mechanical, conditional, advisory, or
-unavailable for the active host.
-
-### Do I need it for every project?
-
-No. It is intentionally unnecessary for small scripts, quick prototypes, and
-simple CRUD applications. It is intended for codebases where continuity,
-architecture, and release confidence matter over time.
-
-### Does it guarantee that AI-generated code is correct?
-
-No. It does not replace engineering judgment, review, or testing. It makes the
-intended constraints and the evidence behind release claims more explicit and
-inspectable.
-
-### Can it be used with Cursor?
-
-Yes. Cursor can be one of the hosts. ControlCoding does not require a specific
-IDE or model, but the strength of enforcement depends on the host and
-configuration.
+> [!NOTE]
+> The status of a protection is part of the result, not a marketing claim. Use
+> `doctor` to see what is real for the active host and configuration.
 
 ## Canonical Context And Project Setup Docs
 
