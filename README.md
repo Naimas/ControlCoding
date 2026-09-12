@@ -784,10 +784,17 @@ devlog/                           # Local chronological working memory
 
 ## History
 
-- **v1 (2024)**: Created for a procedural generation project. Heavy on process: CODEMAP, CONTRACTS, METRICS, RenameSpec, ChangeSpec. Five separate files to maintain.
+ControlCoding began as a private, personal working system rather than a public
+product. Its design was shaped by the author's use of AI systems across several
+generations, from GPT-3, ChatGPT, GPT-4, and Claude 3 through later GPT-5 and
+Claude 4 tools. These names identify development tools used during that work;
+they do not imply affiliation with or endorsement by OpenAI or Anthropic.
+
+- **v1, private internal tool (2024)**: Created for personal use while developing a procedural-generation project with contemporary AI assistants. Heavy on process: CODEMAP, CONTRACTS, METRICS, RenameSpec, ChangeSpec. Five separate files to maintain.
+- **Private dogfooding (2025)**: The evolving method was used on real personal software projects, including a scientific simulation with 3D rendering and a data-analysis pipeline. This work exposed recurring problems with architectural drift, duplicated logic, continuity across sessions, and plausible but unverified changes. It remained an internal tool rather than a public product.
 - **v2 (February 2026)**: Generalized and simplified. Less process, more automation. Mechanical enforcement via hooks replaced trust-based enforcement. Domain-agnostic. One CLAUDE.md instead of five files.
 - **v2.1 (March 2026)**: Added session management (MCP), multi-agent communication (bridge), external consultation with 5 agent-mode roles, monitoring dashboard, SessionEnd integrity verification, peer review prompt generation (`cc review`), central hooks, auto-gitignore, interactive visual testing, and 472 automated tests.
-- **v3.1.0-alpha (March 2026)**: Agent-layer prototype with BaseAgent implementations for Concierge, Architect, Coder, Reviewer, Debugger, Socratic, Visual, Expert, and verification orchestration, plus hook-based CodeWarden review. Planner with maieutic expansion, Tandem debate protocol, Verification Engine with DAG-based criteria tracking. 4-level engagement system, authority/precedence model, 3 deepened auditors with 15 operative skill files. 977 automated tests.
+- **v3.1.0-alpha internal prototype (March 2026)**: Developed and tested an experimental agent layer with BaseAgent implementations for Concierge, Architect, Coder, Reviewer, Debugger, Socratic, Visual, Expert, and verification orchestration, plus hook-based CodeWarden review. Planner with maieutic expansion, Tandem debate protocol, Verification Engine with DAG-based criteria tracking, a 4-level engagement system, an authority/precedence model, and 3 deepened auditors with 15 operative skill files. These components remain an advanced implementation surface; the stable public workflow is explicitly controlled and host-mediated rather than a fully autonomous multi-agent runtime. 977 automated tests.
 
 Key insight from v1 to v2: AI models got smarter, but structural guardrails are still necessary. The nature of the guardrails changed, from "remind the AI what exists" to "prevent the AI from breaking what's stable."
 
