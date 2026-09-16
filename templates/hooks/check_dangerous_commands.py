@@ -76,7 +76,8 @@ DANGEROUS_PATTERNS = [
 # --- BASH WRITE DETECTION ---
 # Patterns that indicate file-writing operations via Bash.
 # Used to detect attempts to bypass Edit/Write hooks.
-# Only catches obvious cases; check_bash_writes.py (PostToolUse) is the reliable backstop.
+# Only catches obvious cases; the optional check_bash_writes.py reports
+# conservative protected-path observations without attributing or reverting.
 WRITE_TARGET = r"((?:\"[^\"]+\"|'[^']+'|[^\s;|&]+))"
 WRITE_PATTERNS = [
     (rf"\bcat\s*>\s*{WRITE_TARGET}", "cat > file"),

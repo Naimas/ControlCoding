@@ -100,10 +100,16 @@ On hosts without native pre-write hooks, the wizard must say clearly that there 
 From the target project root:
 
 ```bash
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+python "/path/to/ControlCoding/scripts/cc.py" setup --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --engagement --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" doctor --project-root .
 ```
+
+Before this Bash sequence, save the confirmed `setup` and `engagement` choices
+using the [complete example](docs/install-controlcoding-on-your-project.md#complete-fresh-project-example).
+That guide also provides PowerShell commands. Inspect conflicts before apply:
+existing canonical context may be replaced. An answers file applies immediately
+with or without `--apply-answers`; omitting the flag is not a preview.
 
 Optional second step after installation:
 

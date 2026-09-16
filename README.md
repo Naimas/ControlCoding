@@ -1,6 +1,6 @@
 # ControlCoding
 
-![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue) ![License PolyForm Shield](https://img.shields.io/badge/License-PolyForm%20Shield-yellow)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue) ![License PolyForm Shield](https://img.shields.io/badge/License-PolyForm%20Shield-yellow)
 
 **Build complex software with AI without losing architectural control.**
 
@@ -34,16 +34,29 @@ the project risk justifies them.
 
 ## Quick Example
 
+Review the [complete handoff and installation steps](docs/install-controlcoding-on-your-project.md#complete-fresh-project-example)
+first and save the confirmed choices as `handoff.json`. This example is for a
+fresh target without conflicting context/configuration; existing projects need
+the conflict review in that guide. The following commands use Bash; the guide
+also provides PowerShell commands.
+
 ```bash
-cd /path/to/your-project
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+cd "/path/to/your-project" &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --chat-guide --host-hint codex_cli --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --engagement --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" doctor --project-root .
 ```
 
 The result is a canonical project context, matching host adapters, local
 configuration, and a `doctor` report showing which protections are real for the
 selected host.
+
+Core requires Python 3.11+. Selected memory also requires a working SQLite
+`deserialize` API, checked before setup writes. The guide prints instructions;
+supplying an answers file applies immediately,
+including when `--apply-answers` is omitted. It is not a dry-run. The handoff
+explicitly chooses governed-scope memory or defers initialization.
 
 ## How The Control Loop Works
 
@@ -203,7 +216,7 @@ AI models get smarter every month, but structural complexity doesn't get solved 
 
 ControlCoding doesn't replace the AI's capability - it contains it. It tells the AI: "work freely here, don't touch there", "if you modify this file, stop and explain", "these domain properties must always be true".
 
-It works across AI coding assistants through official CLIs, official APIs, local runtimes, and vendor-approved connectors. On Claude Code and Cline, the inline gate can run before a write. On Codex CLI, the real protection path is repo-side: repo boundary gate, review gate, and verification gate. On instruction-first hosts such as Gemini CLI, Cursor, Copilot, Aider, or whatever comes next, the structure stays the same but enforcement is repo-side and review-driven. ControlCoding does not claim Claude-style pre-write parity on hosts that do not expose native inline hooks. No install required. Python 3.10+ for hooks. No vendor lock-in.
+ControlCoding provides host context and repository workflows through official interfaces. Its current integration model selects native hooks for Claude Code and a platform-dependent Cline route; their actual loading and event delivery require separate validation. The Codex CLI, Gemini CLI, Cursor and Windsurf integrations currently use context exports and repository-side gates. This describes the shipped CC routes, not the vendors' full capabilities: several also document native hooks. See the [dated host coverage guide](docs/cross-tool-guide.md#14-dated-platform-documentation) for platform sources, CC implementation, configuration and tested coverage. Python 3.10+ for hooks. No vendor lock-in.
 
 ### Authorized Interfaces Only
 
@@ -289,7 +302,7 @@ For the public packaging split and the current release position of each layer, s
 |---|---|---|
 | **Canonical Context Source** | `CONTROLCODING.md` holds the project rules once; host-native files such as `CLAUDE.md` and `AGENTS.md` are derived from it | Free, just markdown files |
 | **Condominium Architecture** | Separates code into stable/shared/features/workspace zones | Free, just conventions |
-| **Hooks** (boundary enforcement) | Mechanically prevents AI from touching protected zones | Free, Python scripts |
+| **Hooks** (boundary enforcement) | Rejects selected writes on configured hook routes; the optional Bash inspector reports conservative protected-path observations after the action | Free, Python scripts |
 | **Invariant Manifest** | `cc invariants` elicits domain properties, records the project properties that must not break, reports which properties are protected, diagnoses whether they are only documented, locally executable, or CI-wired, runs executable invariant commands, and can wire a CI gate | Free, local commands |
 | **Verification Contract** | `cc verify` defines required targeted, regression, and invariant checks, runs them, and stores local receipts | Free, local commands |
 | **Promotion Gate** | `cc promote` plans, checks, and applies staged movement from workspace to features to shared to stable, with ADR generation for stable promotion | Free, local commands |
@@ -332,7 +345,8 @@ state into a clean source release unless the release plan explicitly says so.
 
 ### What it looks like in practice
 
-When the AI tries to edit a protected file, the hook blocks it mechanically:
+On a configured native Edit/Write route, the boundary hook can reject a protected
+edit before it occurs:
 
 ```
 > Edit src/core/physics_engine.py
@@ -344,7 +358,28 @@ explain to the user WHAT you need to change and WHY, then run:
 python hooks/request_lift.py --file <path> --reason \"<why>\""}
 ```
 
-The AI cannot proceed until a human approves the lift. No amount of prompt creativity bypasses this - it is a mechanical gate, not an instruction.
+This gate covers the configured tool route. Shell writes and other routes have
+different limits. The optional `check_bash_writes.py` hook reports conservative,
+bounded protected-path observations after a Bash event, without attributing
+changes to that command or restoring/deleting user files. Raw comparisons may
+also report Git-normalized or smudge-filtered files. Unsafe or unsupported raw
+reads, including tracked symlinks, are reported as incomplete rather than clean.
+Tracked inspection retains one root boundary from index enumeration through
+content reads. Windows temporarily prevents root/ancestor directory replacement;
+POSIX requires a usable inherited directory-descriptor alias for Git. Unsupported
+root acquisition is reported as incomplete; see the reference for platform limits.
+Minimal `cc init` does not enable it.
+See the [hook scope and resolution guidance](docs/hooks-reference.md#optional-bash-working-tree-inspector).
+
+The current boundary template distinguishes edits from creation. A configured
+custom `DENY` zone blocks an existing target, but an absent target is allowed
+after the mandatory-zone and self-protection checks; new targets in those
+mandatory/self-protected locations remain blocked. A scoped lift is a local
+request/approval workflow, not an independent identity boundary: terminal and
+token checks do not authenticate a human against another process or user with
+equivalent local access. Its local state can be consumed before the host has
+completed an edit, so it is not evidence of exactly-once use or a successful
+write. See the hooks reference for malformed-input and repository-gate limits.
 
 ### Maturity Levels
 
@@ -374,9 +409,9 @@ Backend apply sequence:
 
 ```bash
 cd /path/to/your-project
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+python "/path/to/ControlCoding/scripts/cc.py" setup --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --engagement --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" doctor --project-root .
 ```
 
 That is the default serious baseline. Do **not** start with manual file copying unless you have a specific reason.
@@ -423,7 +458,8 @@ CC working documents stay local-only in the public install path. The base setup 
 No bundled graphical installer is included in this release. Project framing
 and kickoff docs remain a separate `setup-project` step after installation.
 
-`cc.py setup --engagement` opens the tier/runtime wizard. It asks for:
+The chat collects tier/runtime choices before `setup --engagement` applies the
+reviewed `engagement` section of the handoff. Those choices include:
 
 - product tier: `Core`, `Agents`, or `Studio`
 - backend policy
@@ -631,7 +667,7 @@ For Class B/C hosts, `cc write-path` is the optional serious experiment for a
 future CC-owned write path: opt-in, explicit, and measured. It does not claim
 that normal editor/host writes are intercepted.
 
-Tested or documented for: Claude Code, Cline, Codex CLI, Gemini CLI, GitHub Copilot, Cursor, Aider, OpenCode, and self-hosted stacks (Ollama + local models). See [`docs/cross-tool-guide.md`](docs/cross-tool-guide.md) for setup instructions per tool and a full compatibility matrix.
+Host coverage has four separate layers: vendor documentation, shipped CC integration, local configuration and named-host execution evidence. `cc host status`, doctor and the generated matrix describe the CC integration model and label host delivery as unverified; generated files and historical benchmark reports do not certify current loading or enforcement. See [`docs/cross-tool-guide.md`](docs/cross-tool-guide.md) for implemented routes, manual adaptation suggestions and explicit coverage limits.
 
 [AGENTS.md](https://github.com/anthropics/agent-conventions) is converging as a cross-tool standard for AI context files. CC adopters can maintain an AGENTS.md alongside other host files, but the ControlCoding source of truth is now `CONTROLCODING.md`.
 For supported hosts, `cc setup` and `cc export host-context --host <host>` can generate the host-native context file from the canonical `CONTROLCODING.md` (or from legacy `CLAUDE.md` until a project migrates).
@@ -892,4 +928,4 @@ Created by Stefano Tonello (Naimas).
 
 ---
 
-ControlCoding is a source-available methodology and developer-side governance toolkit for building complex software with AI. No vendor lock-in. The core (`CONTROLCODING.md` as canonical source, derived host files, hooks, and invariants) requires only Python 3.10+. Optional MCP tools require `pip install fastmcp`. The dashboard requires `pip install gradio`. Everything works with official CLIs, official APIs, local models, or vendor-approved connector flows. Noncompeting internal and commercial use is permitted under the license boundaries in `LICENSE`.
+ControlCoding is a source-available methodology and developer-side governance toolkit for building complex software with AI. No vendor lock-in. Core requires Python 3.11+; memory additionally checks the linked SQLite deserialize capability. Optional MCP tools require `pip install fastmcp`. The dashboard requires `pip install gradio`. Everything works with official CLIs, official APIs, local models, or vendor-approved connector flows. Noncompeting internal and commercial use is permitted under the license boundaries in `LICENSE`.

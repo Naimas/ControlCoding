@@ -13,7 +13,8 @@ pre-commit, review, and verification gates described in the cross-tool guide
 instead of claiming pre-write hook parity:
 
 - **PreToolUse**: runs before a tool call (Edit, Write, Bash). Can block (exit 2) or allow (exit 0).
-- **PostToolUse**: runs after a tool call. Cannot block, only warn and revert.
+- **PostToolUse**: runs after a tool call has completed. The optional Bash
+  inspector reports observations; it does not undo writes or prevent that call.
 
 Exit codes: `0` = allow, `2` = block. Never `1`. Blocking hooks keep JSON on
 `stdout` for tests/logs and mirror the human-readable reason on `stderr`, which
@@ -25,7 +26,7 @@ is the visible channel Claude Code surfaces to the agent on exit code `2`.
 |---|---|---|
 | `check_boundaries.py` | PreToolUse | Blocks writes to protected zones (self-protection, global deny, module perimeter) |
 | `check_dangerous_commands.py` | PreToolUse | Blocks destructive shell commands and bash writes to protected zones |
-| `check_bash_writes.py` | PostToolUse | Detects and reverts protected file changes made via Bash |
+| `check_bash_writes.py` | PostToolUse | Reports conservative protected-path observations without restoring or deleting user files |
 | `check_doc_compression.py` | PreToolUse | Blocks edits that reduce document size by >20% |
 | `codewarden_plan_review.py` | PreToolUse | Reviews the AI plan against project context rules + impact analysis |
 | `codewarden_review.py` | Stop | Reviews the session diff against project context rules + impact analysis + architectural fitness evidence |
@@ -36,9 +37,69 @@ is the visible channel Claude Code surfaces to the agent on exit code `2`.
 | `request_lift.py` | CLI tool | Scoped lift request/approval system |
 | `feature_lock.py` | Library | Module Feature Lock engine |
 
+## Optional Bash Working-Tree Inspector
+
+`templates/hooks/settings.json.example` registers `check_bash_writes.py` for
+`PostToolUse` on `Bash`. Minimal `cc init` does not register this optional hook.
+It compares protected regular files with their staged index objects as raw
+bytes, and reports deletions, type changes and unmerged protected paths. Tracked
+symlinks and submodules produce an incomplete-inspection diagnostic rather than
+an unbounded or indirect content read. It also lists non-ignored untracked
+entries. Paths in configured DENY zones or denied by the active module perimeter
+are reported. Staged-only content whose raw worktree bytes match the index,
+absent skip-worktree entries, ignored untracked entries, file-mode-only changes
+and writes outside the configured event path are outside this inspection.
+
+The observed changes may predate the command or belong to another actor. The
+inspector never attributes them to the current command, restores files, deletes
+files or updates the Git index. A raw mismatch can be reported even when Git
+would consider a normalized or smudge-filtered worktree file clean. It may repeat
+a warning while the observation remains. Review the paths and their diffs with
+the user before deciding how to resolve them. An optional hook-log entry records
+the observation as `WARN`.
+
+Tracked paths come from the index-only command `git --no-optional-locks -c
+core.fsmonitor= ls-files --stage -v -z --`; the same-invocation override prevents
+a configured filesystem-monitor callback. Git content conversion is not used,
+so configured `clean` and `process` filters are not executed. Non-ignored
+untracked paths use `ls-files --others --exclude-standard -z` under the same
+fsmonitor override. A regular-file comparison reads at most the size observed
+on its validated open handle: every read request is capped by the remaining
+8 MiB per-file and shared 32 MiB event budgets, and returned bytes stay charged
+even if that entry later changes or fails. The tracked phase acquires one root
+boundary before listing the index and retains it through the last entry. On
+Windows, directory handles without delete sharing keep the root and its ancestor
+components from being renamed or replaced during that phase. The root chain
+must consist of accessible plain directories; reparse components or acquisition
+failures produce an incomplete result. Each opened content handle's final path
+is checked against the held root handle before reading. On supported POSIX
+systems, index Git enters the held root through an inherited `/proc/self/fd` or
+`/dev/fd` directory alias; no-follow traversal starts from that same root
+descriptor, with a nonblocking leaf open. Root pathname replacement therefore
+retains inspection of the original directory and index. Missing descriptor-alias
+support produces an incomplete result. This boundary covers the tracked phase;
+untracked enumeration and policy/configuration reads remain separate operations,
+and the index and file contents are not a transactional snapshot. If required
+primitives are unavailable or a content path escapes the held boundary, that
+entry is not read and inspection is incomplete. These byte and open controls are not a
+universal execution-time guarantee. Missing Git, timeout, nonzero or malformed
+path output, a concurrent read change, an unreadable entry, a tracked symlink or
+submodule, or a limit being reached produces an incomplete-inspection warning.
+Results already obtained from the other phase are still reported. Invalid JSON
+input, non-object input and non-Bash events exit 0 without inspection. The hook
+exits 0 after reporting; the Bash action has already occurred. Activity that
+starts after a path was inspected may only be visible on a later event.
+
+Warnings use a single JSON object with `systemMessage` for user feedback and
+`hookSpecificOutput` containing `hookEventName: "PostToolUse"` and
+`additionalContext` for agent feedback, following the
+[Claude Code hook output contract](https://code.claude.com/docs/en/hooks#posttooluse-decision-control).
+Local subprocess tests validate the output envelope and file preservation;
+they do not certify delivery in a particular installed host version.
+
 ## Self-Protection
 
-These files are self-protected and cannot be modified by AI via Edit/Write:
+These files are self-protected on the configured native Edit/Write route:
 
 - `check_boundaries.py`
 - `check_dangerous_commands.py`
@@ -51,12 +112,16 @@ These files are self-protected and cannot be modified by AI via Edit/Write:
 - `.feature-lock.json` (any directory)
 - `active_module.json`
 
-To modify self-protected files, use the lift system (see below).
+Self-protection is evaluated before both global and scoped lifts, so the lift
+system does not override it. Change these files only through a separately
+authorized maintenance path; this reference does not claim coverage for other
+write routes.
 
 ## Module Feature Lock
 
-Module Feature Lock provides mechanical write isolation per module. An agent working
-on module A cannot write files belonging to module B.
+On covered native write routes, Module Feature Lock rejects writes outside the
+active module's allowed paths. The optional Bash inspector reports dirty paths
+after the action; it does not provide pre-write isolation for arbitrary commands.
 
 ### Schema: `.feature-lock.json`
 
@@ -163,17 +228,44 @@ Disables an entire hook temporarily (1-hour auto-expiry):
 
 ### Scoped Lift (`request_lift.py`)
 
-Per-zone, single-use lift with human approval:
+Per-zone local request/approval workflow:
 
 1. AI requests: `python hooks/request_lift.py --file <path> --reason "<why>"`
 2. Human approves: `python hooks/request_lift.py --approve`
-3. Single-use: consumed after one successful operation
+3. The boundary reader may consume matching local state before the host tool
+   operation is known to have completed.
 
 The request state lives in `.controlcoding/lift_request.json` when the canonical
 control plane is present, with legacy fallback to `.claude/lift_request.json`
 for older repos.
 
 Module perimeter blocks are also liftable via the scoped lift system.
+
+`--approve` rejects a non-interactive terminal and asks for a stored token. This
+is the intended human-approval step, not an independent identity or
+authorization boundary against a process or user with equivalent local access.
+Pending, unrelated, malformed, or expired scoped state is not active. The
+template also retains a legacy whole-hook lift (`hooks_lifted.json`), whose
+scope and expiry semantics differ from the scoped request; do not treat the
+two as equivalent. The local state transition neither proves a successful edit
+nor establishes exactly-once use, and failed persistence or concurrent access
+are not characterized here.
+
+## Boundary Input and Create/Edit Semantics
+
+`check_boundaries.py` exits `0` without a decision for invalid JSON,
+non-object input, or a missing `file_path`; a reached outer exception emits an
+error diagnostic and also exits `0`. This fail-open continuation avoids a hook
+deadlock, but does not certify that a write is safe or that every hook has the
+same error behavior.
+
+On the covered native route, self-protection is checked first, then legacy
+whole-hook lift state. The current template allows a missing target after it
+checks mandatory DENY zones: an existing target in a configured custom `DENY`
+zone is blocked, while a missing custom target follows the preserved allow
+path. New files in mandatory DENY zones and self-protected paths remain
+blocked. This create/edit distinction is template behavior, not a universal
+policy for repository-stage checks.
 
 ## CodeWarden (LLM-based Review)
 

@@ -78,6 +78,18 @@
       "reason": "Public CI workflow for release invariants."
     },
     {
+      "pattern": ".github/requirements-ci.in",
+      "reason": "Reviewed CI dependency roots."
+    },
+    {
+      "pattern": ".github/requirements-ci.lock",
+      "reason": "Versioned and hashed CI dependency resolution."
+    },
+    {
+      "pattern": ".github/scripts/record_ci_environment.py",
+      "reason": "Explicit CI environment and input diagnostics."
+    },
+    {
       "pattern": "benchmarks/2026-04-11-cctest-3dcrawler-v11-review-check.md",
       "reason": "Curated public benchmark workflow review with explicit limitations."
     },

@@ -46,7 +46,7 @@ business logic, publish anything, or enable remote AI calls.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+ for Core; memory also requires a working SQLite deserialize API
 - git
 - a local checkout of the ControlCoding repository
 - an authorized AI host or manual shell access
@@ -72,10 +72,13 @@ Only fall back to raw commands if the host truly cannot execute local commands.
 Backend apply sequence from the project root:
 
 ```bash
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+python "/path/to/ControlCoding/scripts/cc.py" setup --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --engagement --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" doctor --project-root .
 ```
+
+This Bash sequence requires the reviewed handoff below. It is not a terminal
+questionnaire. Use the PowerShell variant below when working in PowerShell.
 
 Replace `/path/to/ControlCoding/` with the real path where you downloaded this repository.
 
@@ -126,6 +129,112 @@ The V1/Core package does not include a bundled desktop installer or Studio UI.
 Use the same chat-guided or CLI setup logic documented here. Project setup
 remains a separate second flow after installation.
 For the public packaging split, see [release-model.md](./release-model.md).
+
+## Complete Fresh-Project Example
+
+Selected-memory setup probes deserialize in private memory before writing to the
+target. Unsupported Python or SQLite capability produces an actionable error.
+If initialization or scanning fails later, setup reports partial completion and
+returns nonzero; already-created files remain for inspection. It does not roll
+back the whole installation. Optional package/runtime installation is separate.
+
+Use an existing ControlCoding checkout and a separate adopter directory. Before
+applying, inspect the target for `CONTROLCODING.md`, host instruction files,
+`.controlcoding/`, `.claude/`, `hooks/` and custom Git hooks. If any conflict with
+existing work, stop this fresh-install example and review ownership and changes
+first. Direct apply can replace canonical context; foreign adapters can cause
+partial setup. It is not a transactional installer or an automatic merge of
+arbitrary customizations. Repeated setup is not a preservation guarantee.
+
+Review the following choices and save the JSON as `handoff.json` outside any
+protected target folder. It deliberately selects Core, a Codex configuration,
+local hooks and no specialist agents or extra backend activation. `local_only`
+is the policy for extra backends, not a claim about the user's host running
+locally. No live host session or model call is needed to apply this handoff.
+
+<!-- cc-install-handoff -->
+```json
+{
+  "setup": {
+    "name": "Example Project",
+    "user_host": "codex_cli",
+    "documentation_mode": "managed",
+    "host_instruction_mode": "recommended",
+    "host_custom_notes": [],
+    "hooks_location": "local",
+    "memory_default_policy": "governed_scope",
+    "planning": {"tier": "core", "manual_consultation_allowed": false},
+    "configure_advanced_packs": false,
+    "selected_packs": [],
+    "stable": [],
+    "shared": [],
+    "features": [],
+    "behavioral_rules": [],
+    "project_definition_mode": "skip"
+  },
+  "engagement": {
+    "tier": "core",
+    "manual_consultation_allowed": false,
+    "backend_policy": "local_only",
+    "tandem": {"mode": "off"},
+    "specialist_paths": []
+  }
+}
+```
+
+The empty boundary lists classify no application folders; review and fill them
+for your project. Governed memory indexes only the surfaces described above.
+To postpone memory, explicitly change `memory_default_policy` to `deferred`:
+setup records that choice without creating a memory database. Minimal `init`
+also leaves memory uninitialized. Some handoff fields have defaults; this sample
+is not a claim that every omitted field will be rejected.
+
+Set the four absolute paths in the appropriate block. The target must already
+exist. The interpreter must meet the requirements above. The first command only
+prints guidance; review the handoff before executing the two apply commands.
+**An answers file applies immediately, even without `--apply-answers`.** There
+is no setup dry-run; the review step is a human inspection of choices and effects.
+Setup can initialize a target Git repository and write context, configuration,
+hooks, local launchers and the selected memory state.
+
+PowerShell:
+
+<!-- cc-install-powershell -->
+```powershell
+$CcPython = 'C:/path/to/python.exe'
+$CcScript = 'C:/path/to/ControlCoding/scripts/cc.py'
+$CcTarget = 'C:/path/to/your-project'
+$CcHandoff = 'C:/path/to/handoff.json'
+& $CcPython $CcScript setup --chat-guide --host-hint codex_cli --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Setup guide failed' }
+& $CcPython $CcScript setup --answers-file $CcHandoff --apply-answers --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Base setup failed; inspect the output before continuing' }
+& $CcPython $CcScript setup --engagement --answers-file $CcHandoff --apply-answers --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Engagement setup failed' }
+& $CcPython $CcScript doctor --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Doctor reported a failure' }
+```
+
+Bash (including Git Bash on Windows, with paths readable by that shell):
+
+<!-- cc-install-bash -->
+```bash
+CC_PYTHON='/path/to/python'
+CC_SCRIPT='/path/to/ControlCoding/scripts/cc.py'
+CC_TARGET='/path/to/your-project'
+CC_HANDOFF='/path/to/handoff.json'
+"$CC_PYTHON" "$CC_SCRIPT" setup --chat-guide --host-hint codex_cli --project-root "$CC_TARGET" || exit $?
+"$CC_PYTHON" "$CC_SCRIPT" setup --answers-file "$CC_HANDOFF" --apply-answers --project-root "$CC_TARGET" || exit $?
+"$CC_PYTHON" "$CC_SCRIPT" setup --engagement --answers-file "$CC_HANDOFF" --apply-answers --project-root "$CC_TARGET" || exit $?
+"$CC_PYTHON" "$CC_SCRIPT" doctor --project-root "$CC_TARGET" || exit $?
+```
+
+Check the actual files and all command exit codes. Confirm the selected host and
+memory policy in local configuration, the Core engagement choice, and the memory
+bootstrap receipt when requested. A completed receipt must report governed scope
+without a full scan. If any step fails, inspect partial output before retrying.
+Doctor and generated `AGENTS.md` do not prove that a live host loads context or
+executes hooks. The optional Bash observation hook is not enabled by minimal init.
 
 ## Step 1: Installation Contract
 
@@ -514,9 +623,10 @@ To diagnose the operational state of the invariant gate, use:
 python /path/to/ControlCoding/scripts/cc.py invariants doctor --project-root .
 ```
 
-This reports whether invariants are missing, only documented, executable only
-on the local machine, or wired into CI. It also reports the current control
-level so you do not confuse a principle with an enforced gate.
+This reports local manifest configuration and recognized CI command text patterns.
+Legacy state/control-level labels do not establish execution or enforcement.
+Current local receipt assessment is separate; hosted execution and required
+server checks remain unverified.
 
 To prepare CI enforcement for the invariant gate, use a dry run first:
 
@@ -530,9 +640,9 @@ Then write the GitHub Actions workflow when the command and manifest are correct
 python /path/to/ControlCoding/scripts/cc.py invariants wire-ci --write --project-root .
 ```
 
-This creates `.github/workflows/controlcoding-invariants.yml`. The gate becomes
-mechanical only after that workflow is committed and enabled by the repository
-host. Until then, it is a generated CI plan.
+This creates `.github/workflows/controlcoding-invariants.yml`, a generated CI plan.
+Review and commit the workflow, then separately verify successful hosted execution
+and required server checks. Generating or detecting the file proves neither.
 
 For hosts without native inline hooks, the project should not be considered
 healthy until the repo-side boundary path is actually wired.

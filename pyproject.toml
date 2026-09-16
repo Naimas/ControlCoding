@@ -7,7 +7,7 @@ name = "controlcoding"
 version = "3.0.2"
 description = "ControlCoding CLI and local governance framework"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [
   { name = "Stefano Tonello" },
@@ -29,6 +29,9 @@ cc = "cc:main"
 package-dir = { "" = "scripts" }
 py-modules = [
   "cc",
+  "cc_evidence",
+  "cc_evidence_inputs",
+  "cc_evidence_process",
   "cc_memory",
   "cc_setup",
   "cc_feature",

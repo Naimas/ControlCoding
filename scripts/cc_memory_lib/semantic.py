@@ -23,6 +23,10 @@ SEMANTIC_LOCAL_RUNTIME_MAX_CANDIDATES_LIMIT = DEFAULT_RETRIEVAL_SCORING.semantic
 SEMANTIC_LOCAL_RUNTIME_SCORE_MULTIPLIER = DEFAULT_RETRIEVAL_SCORING.semantic_runtime.score_multiplier
 
 
+def _effective_local_runtime_limit(value: Any, default: int, maximum: int) -> int:
+    return max(1, min(int(value or default), maximum))
+
+
 class SemanticAdapter(Protocol):
     """Minimal interface for optional semantic retrieval adapters."""
 
@@ -47,6 +51,8 @@ class LocalSparseSemanticAdapter:
             "id": self.adapter_id,
             "kind": self.kind,
             "configured": True,
+            "executionSupported": True,
+            "executionEligible": True,
             "available": True,
             "default": True,
             "externalRuntime": False,
@@ -76,24 +82,46 @@ class LocalRuntimeSemanticAdapter:
     def status(self) -> dict[str, Any]:
         enabled = bool(self.config.get("enabled"))
         command_args = _runtime_command_args(self.config.get("command"))
+        configured = enabled and bool(command_args)
+        timeout_seconds = _effective_local_runtime_limit(
+            self.config.get("timeoutSeconds"),
+            SEMANTIC_LOCAL_RUNTIME_DEFAULT_TIMEOUT_SECONDS,
+            SEMANTIC_LOCAL_RUNTIME_MAX_TIMEOUT_SECONDS,
+        )
+        max_candidates = _effective_local_runtime_limit(
+            self.config.get("maxCandidates"),
+            SEMANTIC_LOCAL_RUNTIME_DEFAULT_MAX_CANDIDATES,
+            SEMANTIC_LOCAL_RUNTIME_MAX_CANDIDATES_LIMIT,
+        )
         return {
             "id": self.adapter_id,
             "kind": self.kind,
-            "configured": enabled and bool(command_args),
-            "available": enabled and bool(command_args),
+            "configured": configured,
+            "executionSupported": True,
+            "executionEligible": configured,
+            "available": configured,
             "default": False,
             "externalRuntime": True,
-            "network": False,
+            "network": None,
+            "networkAccess": "unknown",
+            "networkRestrictionsImposed": False,
+            "environmentIsolationImposed": False,
+            "workingDirectoryIsolationImposed": False,
             "commandConfigured": bool(command_args),
-            "timeoutSeconds": int(self.config.get("timeoutSeconds") or SEMANTIC_LOCAL_RUNTIME_DEFAULT_TIMEOUT_SECONDS),
-            "maxCandidates": int(self.config.get("maxCandidates") or SEMANTIC_LOCAL_RUNTIME_DEFAULT_MAX_CANDIDATES),
+            "timeoutSeconds": timeout_seconds,
+            "maxCandidates": max_candidates,
             "scoring": {
                 "scoreMultiplier": SEMANTIC_LOCAL_RUNTIME_SCORE_MULTIPLIER,
                 "maxCandidatesLimit": SEMANTIC_LOCAL_RUNTIME_MAX_CANDIDATES_LIMIT,
             },
+            "requestFields": {
+                "topLevel": ["interfaceVersion", "adapter", "query", "candidates"],
+                "candidate": ["id", "recordType", "type", "title", "path", "headingPath", "lifecycle", "text"],
+            },
             "notes": [
-                "Optional local runtime adapter is considered available only when explicitly enabled with a command.",
+                "Available means eligible for an execution attempt when explicitly enabled with a command; it does not prove that the command exists or will succeed.",
                 "Status inspection does not execute the configured command.",
+                "ControlCoding does not impose network, environment, or working-directory isolation on the child command.",
             ],
         }
 
@@ -102,20 +130,8 @@ class LocalRuntimeSemanticAdapter:
         if not status["available"]:
             return {"used": False, "adapter": self.adapter_id, "reason": "local runtime adapter is not available", "scores": {}}
         command_args = _runtime_command_args(self.config.get("command"))
-        timeout = max(
-            1,
-            min(
-                int(self.config.get("timeoutSeconds") or SEMANTIC_LOCAL_RUNTIME_DEFAULT_TIMEOUT_SECONDS),
-                SEMANTIC_LOCAL_RUNTIME_MAX_TIMEOUT_SECONDS,
-            ),
-        )
-        max_candidates = max(
-            1,
-            min(
-                int(self.config.get("maxCandidates") or SEMANTIC_LOCAL_RUNTIME_DEFAULT_MAX_CANDIDATES),
-                SEMANTIC_LOCAL_RUNTIME_MAX_CANDIDATES_LIMIT,
-            ),
-        )
+        timeout = status["timeoutSeconds"]
+        max_candidates = status["maxCandidates"]
         payload = {
             "interfaceVersion": SEMANTIC_ADAPTER_INTERFACE_VERSION,
             "adapter": self.adapter_id,
@@ -188,7 +204,10 @@ class OfficialApiSemanticAdapter:
             "id": self.adapter_id,
             "kind": self.kind,
             "configured": configured,
-            "available": configured and env_available,
+            "executionSupported": False,
+            "executionEligible": False,
+            "available": False,
+            "unavailableReason": "official API semantic scoring is not implemented in this build",
             "default": False,
             "externalRuntime": True,
             "network": True,
@@ -198,9 +217,9 @@ class OfficialApiSemanticAdapter:
             "apiKeyEnv": api_key_env,
             "apiKeyAvailable": env_available,
             "notes": [
-                "Official API adapter is disabled unless explicitly configured.",
+                "Configuration and environment-variable presence do not make API scoring available in this build or validate credentials.",
                 "This registry does not reuse consumer login sessions or tokens.",
-                "Runtime API calls must use official APIs and project-approved configuration.",
+                "No API request is implemented or executed by this adapter.",
             ],
         }
 
@@ -239,17 +258,28 @@ def semantic_adapter_status_payload(project: Path) -> dict[str, Any]:
         LocalRuntimeSemanticAdapter(local_runtime_config).status(),
         OfficialApiSemanticAdapter(official_api_config).status(),
     ]
-    active = LOCAL_SPARSE_ADAPTER
-    for adapter in adapters:
-        if adapter["id"] != LOCAL_SPARSE_ADAPTER and adapter["available"] and config.get("activeAdapter") == adapter["id"]:
-            active = str(adapter["id"])
-            break
+    requested = str(config.get("activeAdapter") or LOCAL_SPARSE_ADAPTER)
+    selected = next((adapter for adapter in adapters if adapter["id"] == requested), None)
+    if selected is None:
+        active = ""
+        selection_reason = f"requested semantic adapter is unknown: {requested}"
+    elif selected["executionEligible"]:
+        active = requested
+        selection_reason = "requested semantic adapter is eligible for execution"
+    else:
+        active = ""
+        selection_reason = str(
+            selected.get("unavailableReason")
+            or "requested semantic adapter is not configured or eligible for execution"
+        )
     return {
         "ok": True,
         "interfaceVersion": SEMANTIC_ADAPTER_INTERFACE_VERSION,
         "configPath": _relative_path(project, _semantic_config_path(project)),
         "hasConfig": _semantic_config_path(project).exists(),
+        "requestedAdapter": requested,
         "activeAdapter": active,
+        "selectionReason": selection_reason,
         "defaultAdapter": LOCAL_SPARSE_ADAPTER,
         "adapters": adapters,
         "policy": {
@@ -257,6 +287,7 @@ def semantic_adapter_status_payload(project: Path) -> dict[str, Any]:
             "officialApiExplicitOnly": True,
             "consumerLoginReuseAllowed": False,
             "statusCommandExecutesAdapters": False,
+            "availableMeansExecutionEligible": True,
         },
     }
 
@@ -265,17 +296,46 @@ def semantic_score_candidates(project: Path, query: str, candidates: list[dict[s
     config = _semantic_config(project)
     local_runtime_config = config.get("localRuntime") if isinstance(config.get("localRuntime"), dict) else {}
     official_api_config = config.get("officialApi") if isinstance(config.get("officialApi"), dict) else {}
-    active = str(config.get("activeAdapter") or LOCAL_SPARSE_ADAPTER)
+    requested = str(config.get("activeAdapter") or LOCAL_SPARSE_ADAPTER)
+    adapters: dict[str, SemanticAdapter] = {
+        LOCAL_SPARSE_ADAPTER: LocalSparseSemanticAdapter(),
+        "local_runtime_v1": LocalRuntimeSemanticAdapter(local_runtime_config),
+        "official_api_v1": OfficialApiSemanticAdapter(official_api_config),
+    }
+    selected = adapters.get(requested)
+    selected_status = selected.status() if selected is not None else None
+    active = requested if selected_status and selected_status["executionEligible"] else ""
+    attempted = ""
     if active == "local_runtime_v1":
+        attempted = active
         result = LocalRuntimeSemanticAdapter(local_runtime_config).score(query, candidates)
-    elif active == "official_api_v1":
-        result = OfficialApiSemanticAdapter(official_api_config).score(query, candidates)
-    else:
+    elif active == LOCAL_SPARSE_ADAPTER:
         result = LocalSparseSemanticAdapter().score(query, candidates)
+    elif selected_status is None:
+        result = {
+            "used": False,
+            "adapter": requested,
+            "reason": f"requested semantic adapter is unknown: {requested}",
+            "scores": {},
+        }
+    else:
+        result = {
+            "used": False,
+            "adapter": requested,
+            "reason": str(
+                selected_status.get("unavailableReason")
+                or "requested semantic adapter is not configured or eligible for execution"
+            ),
+            "scores": {},
+        }
     scores = result.get("scores", {}) if isinstance(result.get("scores"), dict) else {}
     report = {key: value for key, value in result.items() if key != "scores"}
-    report.setdefault("adapter", active)
+    report.setdefault("adapter", requested)
     report.setdefault("used", False)
+    report["requestedAdapter"] = requested
+    report["activeAdapter"] = active
+    report["attemptedAdapter"] = attempted
+    report["executionAttempted"] = bool(attempted)
     return scores, report
 
 
@@ -284,15 +344,32 @@ def _semantic_status_text(payload: dict[str, Any]) -> str:
         "Memory semantic adapter status",
         f"  Interface: {payload['interfaceVersion']}",
         f"  Config: {payload['configPath']} ({'present' if payload['hasConfig'] else 'missing'})",
+        f"  Requested adapter: {payload['requestedAdapter']}",
         f"  Active adapter: {payload['activeAdapter']}",
         f"  Default adapter: {payload['defaultAdapter']}",
-        "  Policy: official API adapters require explicit project configuration",
+        f"  Selection: {payload['selectionReason']}",
+        "  Policy: available means execution-eligible; status never executes adapters",
         "  Adapters:",
     ]
     for adapter in payload["adapters"]:
         lines.append(
-            f"    {adapter['id']}: kind={adapter['kind']}, configured={adapter['configured']}, available={adapter['available']}"
+            f"    {adapter['id']}: kind={adapter['kind']}, configured={adapter['configured']}, "
+            f"supported={adapter['executionSupported']}, eligible={adapter['executionEligible']}, "
+            f"available={adapter['available']}"
         )
+        if adapter.get("unavailableReason"):
+            lines.append(f"      Reason: {adapter['unavailableReason']}")
+        if adapter["id"] == "local_runtime_v1":
+            lines.append(
+                f"      Effective limits: maxCandidates={adapter['maxCandidates']}, "
+                f"timeoutSeconds={adapter['timeoutSeconds']}"
+            )
+            lines.append(
+                "      Network access: unknown; ControlCoding imposes no network, environment, or working-directory isolation"
+            )
+            lines.append(
+                "      Request: query plus bounded candidate id, recordType, type, title, path, headingPath, lifecycle, and text"
+            )
     return "\n".join(lines)
 
 

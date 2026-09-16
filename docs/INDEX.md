@@ -16,6 +16,9 @@ ControlCoding V1/Core source release.
 
 ## Release Scope
 
+[Verification evidence](./verification-evidence.md) defines receipt outcomes,
+current-evidence gates, input identity and execution limits.
+
 This source release ships Core implementation, public contracts, tests,
 templates, and selected documentation. It does not ship the desktop
 Studio/gateway UI, auditor skill packs, raw benchmark workspaces, audit outputs,

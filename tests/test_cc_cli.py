@@ -647,7 +647,15 @@ class TestPackagingMetadata:
         expected_commands = [
             (
                 "Install test dependencies",
-                ["python", "-m", "pip", "install", "--upgrade", "pip", "pytest", ".[mcp]"],
+                ["python", "-m", "pip", "install", "--require-hashes", "--only-binary=:all:", "-r", ".github/requirements-ci.lock"],
+            ),
+            (
+                "Install candidate without dependency resolution",
+                ["python", "-m", "pip", "install", "--no-deps", "--no-build-isolation", ".[mcp]"],
+            ),
+            (
+                "Record verification environment",
+                ["python", ".github/scripts/record_ci_environment.py", "--output", ".controlcoding/ci-environment.json"],
             ),
             (
                 "Check verification contract",
@@ -1135,10 +1143,10 @@ class TestPackagingMetadata:
         assert_workflow_contract(workflow)
 
         equivalent_workflows = {
-            "unquoted mcp extra": replace_step_run(
+            "quoted requirements path": replace_step_run(
                 workflow,
                 "Install test dependencies",
-                "python -m pip install --upgrade pip pytest .[mcp]",
+                "python -m pip install --require-hashes --only-binary=:all: -r '.github/requirements-ci.lock'",
             ),
             "double-quoted CI step names": quote_step_names(workflow, '"'),
             "single-quoted CI step names": quote_step_names(workflow, "'"),
@@ -1377,6 +1385,103 @@ class TestHostProfileDerivation:
         assert by_id["review_gate"]["nature"] == "conditional"
 
 
+
+class TestHostCoverageDescriptions:
+    @pytest.mark.parametrize("host", cc.BENCHMARK_HOST_ORDER)
+    def test_profile_and_gate_describe_cc_not_vendor_absence(self, host):
+        profile = cc._derive_host_profile(host)
+        assert profile.get("profileScope") == "cc_integration_model"
+        assert "unverified" in profile["summary"]
+        assert "without native inline hooks" not in profile["summary"]
+        assert "without inline file hooks" not in profile["summary"]
+        gates = cc._derive_host_gate_contract(profile)
+        assert all(gate.get("scope") == "cc_integration_model" for gate in gates)
+        assert "host does not expose" not in json.dumps(gates)
+
+    @pytest.mark.parametrize("supported", [False, True])
+    def test_cline_branch_is_cc_policy_not_host_detection(self, supported):
+        with patch.object(cc, "_cline_inline_hooks_supported", return_value=supported):
+            profile = cc._derive_host_profile("cline")
+        assert profile["inlineBoundaryGate"] == ("native_hooks" if supported else "none")
+        assert profile["protectionModel"] == ("inline_first" if supported else "repo_side")
+        assert "CC" in profile["summary"] and "unverified" in profile["summary"]
+        assert "Cline hooks are not available" not in profile["summary"]
+
+    @pytest.mark.parametrize("host", ["claude_code", "codex_cli", "cursor", "cline"])
+    def test_persisted_old_description_does_not_require_regeneration(self, host):
+        expected = cc._derive_host_profile(host)
+        persisted = dict(expected)
+        persisted.pop("profileScope", None)
+        persisted["summary"] = "Historical descriptive text, not execution evidence."
+        assert cc._host_profile_matches(persisted, expected)
+        for key in ("inlineBoundaryGate", "permissionGate", "userHost", "schemaVersion"):
+            invalid = dict(persisted, **{key: "inconsistent"})
+            assert not cc._host_profile_matches(invalid, expected)
+
+    @pytest.mark.parametrize("host", ["claude_code", "cursor"])
+    @pytest.mark.parametrize("state", ["absent", "generated_only", "declared", "forged_evidence"])
+    def test_real_status_does_not_promote_files_or_claims_to_host_evidence(self, tmp_path, host, state):
+        control = tmp_path / ".controlcoding"
+        control.mkdir()
+        gateway = {}
+        if state in {"declared", "forged_evidence"}:
+            gateway["userHost"] = host
+        if state == "forged_evidence":
+            gateway["hostCoverage"] = {"testedIntegration": {"status": "verified"}}
+            gateway["hostProfile"] = {"summary": "verified on all hosts"}
+        (control / "gateway_config.json").write_text(json.dumps(gateway), encoding="utf-8")
+        if state != "absent":
+            context = cc._derive_host_profile(host)["contextFile"]
+            target = tmp_path / context
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("Generated instructions; no host has loaded these.", encoding="utf-8")
+        before = {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+        result = _run_cc("host", "status", "--project-root", tmp_path, "--json")
+        assert result.returncode == 0, result.stderr
+        payload = _assert_pure_json_object(result.stdout)
+        coverage = payload.get("hostCoverage", {})
+        assert coverage.get("testedIntegration") == {"status": "unverified", "artifacts": []}
+        assert coverage["platformCapability"]["status"] == "documented_separately"
+        expected = "declared_unverified" if state in {"declared", "forged_evidence"} else "not_declared"
+        assert coverage["projectConfiguration"]["status"] == expected
+        assert {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+    @pytest.mark.parametrize("host", ["claude_code", "codex_cli"])
+    def test_doctor_native_model_does_not_attest_delivery(self, tmp_path, capsys, host):
+        _make_healthy_project(tmp_path)
+        _write_gateway_config(tmp_path, user_host=host)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            cc.cmd_doctor(tmp_path, json_output=True)
+        report = _assert_pure_json_object(capsys.readouterr().out)
+        assert report.get("hostCoverage", {}).get("testedIntegration", {}).get("status") == "unverified"
+        messages = json.dumps(report["checks"])
+        assert "mechanical via native host hooks" not in messages
+        assert "no true pre-write host hook" not in messages
+
+    def test_matrix_and_generated_instructions_preserve_evidence_scope(self, tmp_path, capsys):
+        rows = cc._build_benchmark_matrix_rows()
+        for row in rows:
+            coverage = row.get("hostCoverage", {})
+            assert coverage.get("testedIntegration", {}).get("status") == "unverified"
+            assert coverage["projectConfiguration"]["status"] == "not_inspected"
+        text = cc._render_benchmark_matrix_markdown(rows)
+        assert "CC integration model" in text and "unverified" in text
+        for host in cc.BENCHMARK_HOST_ORDER:
+            generated = cc._build_host_instructions_document(host, "claim", False, False, None)
+            assert "unverified" in generated and "CC integration model" in generated
+        cc.cmd_host_status(tmp_path)
+        output = capsys.readouterr().out
+        assert "Named-host integration: unverified" in output
+
+    def test_compare_reports_static_scope_without_project_claims(self, tmp_path, capsys):
+        cc.cmd_host_compare(tmp_path, "codex_cli", "claude_code", json_output=True)
+        result = _assert_pure_json_object(capsys.readouterr().out)
+        for side in ("left", "right"):
+            assert result[side].get("profileScope") == "cc_integration_model"
+            assert "unverified" in result[side]["summary"]
+
+
 # ----------------------------------------------------- TestLoadSaveSettings ---
 
 
@@ -1611,8 +1716,53 @@ class TestResolveHookCommands:
         }
         result = cc._resolve_hook_commands(settings, hooks_dir)
         cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        assert str(hooks_dir.resolve()).replace("\\", "/") in cmd
-        assert "check_boundaries.py" in cmd
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check_boundaries.py"
+        assert cmd == f"python {shlex.quote(expected_script)}"
+
+    @pytest.mark.parametrize("directory_name", ["plain", "spaced hooks", "hòoks é & '$"])
+    def test_quotes_generated_script_path_for_posix_shell(self, tmp_path, directory_name):
+        hooks_dir = tmp_path / directory_name / "hooks"
+        hooks_dir.mkdir(parents=True)
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"hooks": [{"command": "python hooks/check_boundaries.py"}]}
+                ]
+            }
+        }
+
+        result = cc._resolve_hook_commands(settings, hooks_dir)
+        cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check_boundaries.py"
+        assert cmd == f"python {shlex.quote(expected_script)}"
+
+    def test_preserves_generated_command_arguments(self, tmp_path):
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"hooks": [{"command": "python hooks/check.py --mode strict --label 'two words'"}]}
+                ]
+            }
+        }
+
+        result = cc._resolve_hook_commands(settings, hooks_dir)
+        cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check.py"
+        assert cmd == f"python {shlex.quote(expected_script)} --mode strict --label 'two words'"
+
+    def test_resolves_local_and_central_hook_directories(self, tmp_path):
+        local_hooks = tmp_path / "project hooks" / "hooks"
+        central_hooks = tmp_path / "central hooks" / "hooks"
+        local_hooks.mkdir(parents=True)
+        central_hooks.mkdir(parents=True)
+
+        for hooks_dir in (local_hooks, central_hooks):
+            settings = {"hooks": {"Stop": [{"hooks": [{"command": "python hooks/stop.py"}]}]}}
+            command = cc._resolve_hook_commands(settings, hooks_dir)["hooks"]["Stop"][0]["hooks"][0]["command"]
+            expected_script = f"{hooks_dir.resolve().as_posix()}/stop.py"
+            assert command == f"python {shlex.quote(expected_script)}"
 
     def test_ignores_already_absolute(self, tmp_path):
         hooks_dir = tmp_path / "hooks"
@@ -1627,6 +1777,29 @@ class TestResolveHookCommands:
         result = cc._resolve_hook_commands(settings, hooks_dir)
         cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         assert cmd == "python /abs/path/check.py"
+
+    def test_ignores_custom_commands_and_repeated_resolution(self, tmp_path):
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"hooks": [
+                        {"command": "custom-run hooks/check.py"},
+                        {"command": "python /abs/path/check.py"},
+                        {"command": "python hooks/check.py"},
+                    ]}
+                ]
+            }
+        }
+
+        once = cc._resolve_hook_commands(settings, hooks_dir)
+        twice = cc._resolve_hook_commands(once, hooks_dir)
+        commands = twice["hooks"]["PreToolUse"][0]["hooks"]
+        assert commands[0]["command"] == "custom-run hooks/check.py"
+        assert commands[1]["command"] == "python /abs/path/check.py"
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check.py"
+        assert commands[2]["command"] == f"python {shlex.quote(expected_script)}"
 
     def test_handles_nested_hooks(self, tmp_path):
         hooks_dir = tmp_path / "hooks"
@@ -2261,7 +2434,9 @@ class TestCmdDoctor:
         assert contract["inline_gate"]["primary"] is True
         assert contract["inline_gate"]["nature"] == "mechanical"
         assert contract["repo_boundary_gate"]["requirement"] == "backstop"
-        assert checks["inline_gate"]["status"] == "ok"
+        assert checks["inline_gate"]["status"] == "info"
+        assert "unverified" in checks["inline_gate"]["detail"]
+        assert payload["hostCoverage"]["testedIntegration"]["status"] == "unverified"
 
     def test_doctor_json_smoke_reports_class_c_repo_side_host_contract(self, tmp_path, capsys, monkeypatch):
         _make_healthy_project(tmp_path)
@@ -3690,7 +3865,7 @@ class TestHumanMediatedAgents:
         assert payload["resolutionTopicCount"] == 0
         assert payload["convergenceSummaryPath"].endswith("convergence_summary.json")
 
-    def test_consult_packet_create_can_continue_existing_thread(self, tmp_path):
+    def test_consult_packet_create_can_continue_existing_thread(self, tmp_path, capsys):
         _make_healthy_project(tmp_path)
         self._write_engagement(
             tmp_path,
@@ -3708,17 +3883,21 @@ class TestHumanMediatedAgents:
                 }
             ],
         )
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate the initial boundary split.",
             questions=["Should the adapter stay inside CLI?"],
         ) == 0
-        first_packet = json.loads(next(cc._consult_packets_dir(tmp_path).glob("*.json")).read_text(encoding="utf-8"))
+        first_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
 
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Follow up on the adapter extraction path.",
             questions=["What should move first?"],
             thread_id=first_packet["thread_id"],
@@ -3726,7 +3905,7 @@ class TestHumanMediatedAgents:
 
         packets = sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))
         assert len(packets) == 2
-        second_packet = json.loads(packets[-1].read_text(encoding="utf-8"))
+        second_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert second_packet["thread_id"] == first_packet["thread_id"]
 
         thread_payload = json.loads(cc._consult_thread_state_path(tmp_path, first_packet["thread_id"]).read_text(encoding="utf-8"))
@@ -3735,7 +3914,7 @@ class TestHumanMediatedAgents:
         assert thread_payload["topic_key"] == first_packet["topic_key"]
         assert "What should move first?" in cc._consult_thread_resume_path(tmp_path, first_packet["thread_id"]).read_text(encoding="utf-8")
 
-    def test_convergence_summary_flags_role_level_conflicts(self, tmp_path):
+    def test_convergence_summary_flags_role_level_conflicts(self, tmp_path, capsys):
         _make_healthy_project(tmp_path)
         self._write_engagement(
             tmp_path,
@@ -3753,15 +3932,17 @@ class TestHumanMediatedAgents:
                 }
             ],
         )
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate adapter split option A.",
             questions=["Should option A be accepted?"],
             topic_key="adapter_split",
         ) == 0
         packets = sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))
-        first_packet = json.loads(packets[-1].read_text(encoding="utf-8"))
+        first_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=first_packet["packet_id"],
@@ -3771,15 +3952,17 @@ class TestHumanMediatedAgents:
             next_action="Document option A.",
         ) == 0
 
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate adapter split option B.",
             questions=["Should option B be rejected?"],
             topic_key="adapter_split",
         ) == 0
         packets = sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))
-        second_packet = json.loads(packets[-1].read_text(encoding="utf-8"))
+        second_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=second_packet["packet_id"],
@@ -3827,14 +4010,16 @@ class TestHumanMediatedAgents:
                 }
             ],
         )
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate option A.",
             questions=["Should option A be accepted?"],
             topic_key="adapter_split",
         ) == 0
-        first_packet = json.loads(sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))[-1].read_text(encoding="utf-8"))
+        first_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=first_packet["packet_id"],
@@ -3843,14 +4028,16 @@ class TestHumanMediatedAgents:
             rationale_summary="It keeps boundaries clean.",
             next_action="Document option A.",
         ) == 0
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate option B.",
             questions=["Should option B be rejected?"],
             topic_key="adapter_split",
         ) == 0
-        second_packet = json.loads(sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))[-1].read_text(encoding="utf-8"))
+        second_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=second_packet["packet_id"],
@@ -3865,6 +4052,124 @@ class TestHumanMediatedAgents:
         payload = json.loads(capsys.readouterr().out)
         assert payload["resolutionTopic"]["topic_key"] == "adapter_split"
         assert payload["resolutionPromptPath"].endswith("resolution_prompt.md")
+
+    @pytest.mark.parametrize("collision", ["distinct", "packet", "thread", "result", "historical", "all", "reverse"])
+    def test_consult_equal_clock_preserves_independent_records(self, tmp_path, capsys, collision):
+        _make_healthy_project(tmp_path)
+        self._write_engagement(tmp_path, [{
+            "role_id": "consultant_1", "label": "Architect", "path_type": "consultant",
+            "active": True, "backend": "chatgpt_manual", "model": "fixture",
+            "permission": "user_mediated", "execution_mode": "human_mediated", "max_calls": 1,
+        }])
+        stamps = [f"20260915T004509{i:06d}Z" for i in range(6)]
+        if collision in {"packet", "thread", "result"}:
+            index = {"packet": 0, "thread": 1, "result": 2}[collision]
+            stamps[index + 3] = stamps[index]
+        elif collision == "historical":
+            stamps = ["20260915T004509009565Z"] * 5 + ["20260915T004509021431Z"]
+        elif collision == "all":
+            stamps = [stamps[0]] * 6
+        elif collision == "reverse":
+            stamps.reverse()
+        packets, results = [], []
+        preserved = {}
+        # Descending suffixes ensure filename order cannot stand in for creation order.
+        suffixes = [f"{i:032x}" for i in range(6, 0, -1)]
+        with patch.object(cc, "_compact_utc_stamp", side_effect=stamps), patch.object(
+            cc.secrets, "token_hex", side_effect=suffixes
+        ):
+            for option, decision in [("A", "accepted"), ("B", "rejected")]:
+                capsys.readouterr()
+                assert cc.cmd_consult_packet_create(
+                    tmp_path, role="architect", objective=f"Validate option {option}.",
+                    questions=["Should this be accepted?"], topic_key="adapter_split", json_output=True,
+                ) == 0
+                packet = json.loads(capsys.readouterr().out)
+                packets.append(packet)
+                for path, content in preserved.items():
+                    assert path.read_bytes() == content
+                assert cc.cmd_consult_result_import(
+                    tmp_path, packet_id=packet["packetId"], summary=f"Option {option}.",
+                    decision=decision, rationale_summary="Fixture rationale.", next_action="Review.",
+                    json_output=True,
+                ) == 0
+                result = json.loads(capsys.readouterr().out)
+                results.append(result)
+                for path, content in preserved.items():
+                    assert path.read_bytes() == content
+                for key in ["packetPath", "threadPath", "resultPath"]:
+                    path = tmp_path / result[key]
+                    preserved[path] = path.read_bytes()
+        assert len({item["packetId"] for item in packets}) == 2
+        assert len({item["threadId"] for item in packets}) == 2
+        assert len({item["resultId"] for item in results}) == 2
+        assert len(cc._load_consult_packets(tmp_path)) == 2
+        assert len(cc._load_consult_results(tmp_path)) == 2
+        threads = cc._load_consult_threads(tmp_path)
+        assert len(threads) == 2
+        assert sorted(item["decision_history"][0]["decision"] for item in threads) == ["accepted", "rejected"]
+        assert cc.cmd_consult_resolution_show(
+            tmp_path, role="architect", topic_key="adapter_split", json_output=True,
+        ) == 0
+        resolution = json.loads(capsys.readouterr().out)["resolutionTopic"]
+        assert resolution["decision_counts"] == {"accepted": 1, "rejected": 1}
+        assert {item["result_id"] for item in resolution["recent_decisions"]} == {item["resultId"] for item in results}
+
+    def test_consult_equal_clock_continues_thread_without_replacing_packet(self, tmp_path, capsys):
+        with patch.object(cc, "_compact_utc_stamp", return_value="20260915T004509009565Z"), patch.object(
+            cc.secrets, "token_hex", side_effect=["f" * 32, "e" * 32, "d" * 32]
+        ):
+            self.test_consult_packet_create_can_continue_existing_thread(tmp_path, capsys)
+
+    @pytest.mark.parametrize("layout", ["canonical", "legacy_external", "legacy_root"])
+    def test_consult_timestamp_only_ids_remain_readable_and_continuable(self, tmp_path, capsys, layout):
+        _make_healthy_project(tmp_path)
+        self._write_engagement(tmp_path, [{
+            "role_id": "consultant_1", "label": "Architect", "path_type": "consultant",
+            "active": True, "backend": "chatgpt_manual", "model": "fixture",
+            "permission": "user_mediated", "execution_mode": "human_mediated", "max_calls": 1,
+        }])
+        def legacy_id(role_id, kind):
+            return f"{role_id}_{kind}_20260915T004509009565Z"
+        with patch.object(cc, "_build_consult_artifact_id", side_effect=legacy_id):
+            assert cc.cmd_consult_packet_create(
+                tmp_path, role="architect", objective="Legacy consultation.",
+                questions=["Keep compatibility?"], topic_key="adapter_split", json_output=True,
+            ) == 0
+            packet = json.loads(capsys.readouterr().out)
+            assert cc.cmd_consult_result_import(
+                tmp_path, packet_id=packet["packetId"], summary="Keep it.", decision="accepted",
+                rationale_summary="Compatible records.", next_action="Continue.", json_output=True,
+            ) == 0
+            result = json.loads(capsys.readouterr().out)
+        if layout != "canonical":
+            if layout == "legacy_external":
+                base = tmp_path / cc.LEGACY_CONTROL_PLANE_DIRNAME / cc.EXTERNAL_CONSULTATION_DIRNAME
+                packet_dir, result_dir = base / "requests", base / "imports"
+            else:
+                base = tmp_path / cc.LEGACY_CONTROL_PLANE_DIRNAME
+                packet_dir, result_dir = base / cc.CONSULT_PACKET_DIRNAME, base / cc.CONSULT_RESULT_DIRNAME
+            for source, target in [(tmp_path / packet["packetPath"], packet_dir), (tmp_path / result["resultPath"], result_dir)]:
+                target.mkdir(parents=True, exist_ok=True)
+                source.rename(target / source.name)
+        assert cc.cmd_consult_packet_show(tmp_path, packet["packetId"], json_output=True) == 0
+        shown = json.loads(capsys.readouterr().out)
+        assert shown["latestResult"]["result_id"] == result["resultId"]
+        assert shown["thread"]["thread_id"] == packet["threadId"]
+        old_result_path = cc._consult_result_path(tmp_path, result["resultId"])
+        old_result_bytes = old_result_path.read_bytes()
+        assert cc.cmd_consult_packet_create(
+            tmp_path, role="architect", objective="Continue legacy consultation.", questions=["Next?"],
+            thread_id=packet["threadId"], json_output=True,
+        ) == 0
+        continued = json.loads(capsys.readouterr().out)
+        assert continued["packetId"] != packet["packetId"]
+        assert continued["threadId"] == packet["threadId"]
+        thread = cc._load_consult_thread(tmp_path, packet["threadId"])
+        assert thread["packet_ids"] == [packet["packetId"], continued["packetId"]]
+        assert thread["latest_packet_id"] == continued["packetId"]
+        assert thread["decision_history"][0]["result_id"] == result["resultId"]
+        assert old_result_path.read_bytes() == old_result_bytes
 
     def test_consult_result_import_rejects_verbose_rationale_dump(self, tmp_path):
         _make_healthy_project(tmp_path)
@@ -4916,8 +5221,65 @@ class TestExportHostContext:
 
         assert result == 0
         content = (tmp_path / ".cursor" / "rules" / "project.mdc").read_text(encoding="utf-8")
+        lines = content.splitlines()
+        assert lines[:3] == ["---", "alwaysApply: true", "---"]
+        assert lines[3].startswith("<!-- controlcoding-managed: ")
+        assert lines[4:7] == ["", "# project.mdc", ""]
         assert "Target host: Cursor." in content
         assert "## Project Identity" in content
+        assert "## Commit Ceremony" not in content
+        front_matter_end, _offset, error = cc._adapter_front_matter_layout(content)
+        assert (front_matter_end, error) == (2, "")
+        marker, state, detail = cc._adapter_marker_payload(content)
+        assert state == "owned"
+        assert detail == "valid ControlCoding ownership marker"
+        assert marker == {
+            "owner": "ControlCoding",
+            "schema": "controlcoding.host-adapter-ownership",
+            "version": 1,
+            "target": ".cursor/rules/project.mdc",
+            "host": "cursor",
+            "source": "CONTROLCODING.md",
+            "format": "host-context-section-export-v1",
+        }
+
+    def test_cursor_real_cli_preview_apply_check_and_repeat_are_stable(self, tmp_path):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        (tmp_path / "CONTROLCODING.md").write_text(canonical, encoding="utf-8")
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+
+        preview = _run_cc(
+            "export", "host-context", "--project-root", tmp_path,
+            "--host", "cursor", "--preview-only",
+        )
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        assert not target.exists()
+        assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")) == [
+            "CONTROLCODING.md",
+        ]
+
+        applied = _run_cc(
+            "export", "host-context", "--project-root", tmp_path,
+            "--host", "cursor",
+        )
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        first_bytes = target.read_bytes()
+        assert first_bytes.startswith(b"---\nalwaysApply: true\n---\n")
+
+        checked = _run_cc(
+            "context", "check", "--project-root", tmp_path,
+            "--host", "cursor", "--json",
+        )
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        checked_payload = _assert_pure_json_object(checked.stdout)
+        assert checked_payload["hosts"][0]["ownershipState"] == "owned_current"
+
+        repeated = _run_cc(
+            "context", "sync", "--project-root", tmp_path,
+            "--host", "cursor",
+        )
+        assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+        assert target.read_bytes() == first_bytes
 
     def test_generates_windsurf_rules_context(self, tmp_path):
         (tmp_path / "CONTROLCODING.md").write_text(
@@ -4929,6 +5291,30 @@ class TestExportHostContext:
         content = (tmp_path / ".windsurfrules").read_text(encoding="utf-8")
         assert "Target host: Windsurf." in content
         assert "## Project Identity" in content
+
+    @pytest.mark.parametrize(
+        "host",
+        ["codex_cli", "gemini_cli", "cline", "windsurf"],
+    )
+    def test_non_cursor_section_exports_keep_the_legacy_renderer_bytes(self, tmp_path, host):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        source = tmp_path / "CONTROLCODING.md"
+        source.write_text(canonical, encoding="utf-8")
+        spec = cc._host_context_export_spec(host)
+        assert "front_matter" not in spec
+
+        rendered, _entry = cc._expected_host_context(tmp_path, host)
+        legacy, _included, _warnings = cc._build_host_context_output(
+            spec["file_label"],
+            spec["relative_path"],
+            host,
+            spec["host_label"],
+            cc._HOST_CONTEXT_RUNTIME_SECTIONS,
+            cc._parse_claude_md_sections(source.read_bytes().decode("utf-8")),
+            "CONTROLCODING.md",
+            "host-context-section-export-v1",
+        )
+        assert rendered.encode("utf-8") == legacy.encode("utf-8")
 
     def test_manual_vscode_context_check_is_not_applicable(self, tmp_path, capsys):
         canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
@@ -4985,6 +5371,169 @@ class TestExportHostContext:
         assert cc.cmd_export_host_context(tmp_path, host="cursor", preview_only=True) == 0
 
         assert not (tmp_path / ".cursor").exists()
+
+    def test_old_owned_cursor_output_is_stale_previewed_updated_and_then_stable(
+        self,
+        tmp_path,
+    ):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        source = tmp_path / "CONTROLCODING.md"
+        source.write_text(canonical, encoding="utf-8")
+        spec = cc._host_context_export_spec("cursor")
+        old_content, _included, warnings = cc._build_host_context_output(
+            spec["file_label"],
+            spec["relative_path"],
+            "cursor",
+            spec["host_label"],
+            cc._HOST_CONTEXT_RUNTIME_SECTIONS,
+            cc._parse_claude_md_sections(canonical),
+            "CONTROLCODING.md",
+            "host-context-section-export-v1",
+        )
+        assert warnings == []
+        assert old_content.startswith("# project.mdc\n\n<!-- controlcoding-managed: ")
+        assert "alwaysApply" not in old_content
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(old_content.encode("utf-8"))
+        old_bytes = target.read_bytes()
+
+        export_plan = cc._adapter_plan_payload(
+            tmp_path,
+            host="cursor",
+            operation="export",
+        )
+        assert export_plan["entries"][0]["state"] == "owned_stale"
+        assert export_plan["entries"][0]["action"] == "block"
+        assert cc.cmd_export_host_context(
+            tmp_path,
+            host="cursor",
+            force=True,
+            preview_only=True,
+        ) == 0
+        assert target.read_bytes() == old_bytes
+
+        assert cc.cmd_context_sync(
+            tmp_path,
+            host="cursor",
+            preview_only=True,
+        ) == 0
+        assert target.read_bytes() == old_bytes
+        assert cc.cmd_context_sync(tmp_path, host="cursor") == 0
+        new_bytes = target.read_bytes()
+        assert new_bytes != old_bytes
+        assert new_bytes.startswith(b"---\nalwaysApply: true\n---\n")
+        assert cc._context_sync_payload(tmp_path, host="cursor")["hosts"][0][
+            "ownershipState"
+        ] == "owned_current"
+        assert cc.cmd_context_sync(tmp_path, host="cursor") == 0
+        assert target.read_bytes() == new_bytes
+
+    @pytest.mark.parametrize(
+        ("unsafe_content", "expected_state"),
+        [
+            (
+                "---\nalwaysApply: true\n---\n# User Cursor rules\n\ncustom payload\n",
+                "unmarked",
+            ),
+            (
+                "---\nalwaysApply: true\n---\n"
+                "<!-- managed-by: OtherTool -->\n\nforeign payload\n",
+                "foreign",
+            ),
+            (
+                "---\nalwaysApply: true\n---\n"
+                "<!-- controlcoding-managed: not-json -->\n\ninvalid payload\n",
+                "invalid",
+            ),
+        ],
+    )
+    def test_cursor_frontmatter_does_not_authorize_unsafe_existing_files(
+        self,
+        tmp_path,
+        unsafe_content,
+        expected_state,
+    ):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        target.write_text(unsafe_content, encoding="utf-8")
+        before = target.read_bytes()
+
+        plan = cc._adapter_plan_payload(
+            tmp_path,
+            host="cursor",
+            operation="export",
+            force=True,
+        )
+        assert plan["entries"][0]["state"] == expected_state
+        assert plan["entries"][0]["action"] == "block"
+        assert cc.cmd_export_host_context(tmp_path, host="cursor", force=True) == 1
+        assert target.read_bytes() == before
+
+    def test_cursor_explicit_adoption_preserves_custom_frontmatter_payload(self, tmp_path):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        original = b"---\nalwaysApply: false\n---\n# Custom Cursor payload\n\nkeep this text\n"
+        target.write_bytes(original)
+
+        assert cc.cmd_context_adopt(tmp_path, host="cursor") == 0
+        assert target.read_bytes() == original
+        assert cc.cmd_context_adopt(tmp_path, host="cursor", apply=True) == 0
+
+        adopted = target.read_bytes()
+        assert adopted.startswith(
+            b"---\nalwaysApply: false\n---\n<!-- controlcoding-managed: "
+        )
+        assert b"# Custom Cursor payload\n\nkeep this text\n" in adopted
+        marker, state, _detail = cc._adapter_marker_payload(adopted.decode("utf-8"))
+        assert state == "owned"
+        assert marker["host"] == "cursor"
+
+    def test_cursor_tampered_metadata_is_owned_stale_and_sync_restores_expected(self, tmp_path):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        assert cc.cmd_export_host_context(tmp_path, host="cursor") == 0
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        tampered = target.read_bytes().replace(b"alwaysApply: true", b"alwaysApply: false", 1)
+        target.write_bytes(tampered)
+
+        plan = cc._adapter_plan_payload(tmp_path, host="cursor", operation="sync")
+        assert plan["entries"][0]["state"] == "owned_stale"
+        assert plan["entries"][0]["action"] == "update"
+        assert cc.cmd_export_host_context(tmp_path, host="cursor") == 1
+        assert target.read_bytes() == tampered
+        assert cc.cmd_context_sync(tmp_path, host="cursor") == 0
+        assert b"alwaysApply: true" in target.read_bytes()
+
+    def test_cursor_duplicate_embedded_marker_blocks_all_host_sync_atomically(self, tmp_path):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        (tmp_path / "CONTROLCODING.md").write_text(canonical, encoding="utf-8")
+        expected, _entry = cc._expected_host_context(tmp_path, "cursor")
+        marker = cc._adapter_marker_line(
+            ".cursor/rules/project.mdc",
+            "cursor",
+            "CONTROLCODING.md",
+            "host-context-section-export-v1",
+        )
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        target.write_text(expected + marker + "\n", encoding="utf-8")
+        before = target.read_bytes()
+
+        assert cc.cmd_context_sync(tmp_path, all_hosts=True) == 1
+        assert target.read_bytes() == before
+        for relative in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".clinerules", ".windsurfrules"):
+            assert not (tmp_path / relative).exists()
 
     def test_host_export_requires_force_to_replace_valid_owned_target(self, tmp_path):
         canonical_path = tmp_path / "CONTROLCODING.md"
@@ -6512,6 +7061,22 @@ class TestContextCommands:
 
 
 class TestTruthCommands:
+    @pytest.mark.parametrize("route", ["report", "check", "check-docs", "include-docs"])
+    def test_structural_scope_is_explicit_in_json_and_human(self, tmp_path, capsys, route):
+        command = {"report": cc.cmd_truth_report, "check": cc.cmd_truth_check,
+                   "check-docs": cc.cmd_truth_check_docs, "include-docs": cc.cmd_truth_check}[route]
+        kwargs = {"include_docs": True} if route == "include-docs" else {}
+        command(tmp_path, json_output=True, **kwargs)
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["scope"] == "structural"
+        assert "declarations" in " ".join(payload["limitations"])
+        if route == "include-docs":
+            assert payload["docs"]["scope"] == "structural"
+        command(tmp_path, **kwargs)
+        human = capsys.readouterr().out
+        assert "Scope: structural" in human
+        assert "does not validate full arguments" in human
+
     @staticmethod
     def _write_truth_docs_fixture(project, readme, quick_start="", install=""):
         docs_dir = project / "docs"
@@ -8860,6 +9425,11 @@ class TestMajorVersionPublicTruth:
         assert "There is no direct replacement command" in tools
         assert "context adopt --host <host> --apply" in cross_tool
         assert "`--force` applies only to adapters that are already valid-owned" in " ".join(cross_tool.split())
+        cursor_guide = cross_tool[cross_tool.index("### 3.5 Cursor"):cross_tool.index("### 3.6 Cline")]
+        assert "`.cursor/rules/project.mdc`" in cursor_guide
+        assert "`alwaysApply: true`" in cursor_guide
+        assert "correct file does not prove loading" in " ".join(cursor_guide.split())
+        assert "named host/version/OS" in cursor_guide
         for state in ("valid-owned", "unmarked", "foreign", "Invalid", "ambiguous"):
             assert state in install
         assert "Migrating From v2.5.2" in quick_start
@@ -9475,6 +10045,13 @@ class TestReleaseDoctor:
         assert all(relative not in finding for finding in findings)
 
 
+def _fixture_evidence_result(code):
+    return {"status": "passed" if code == 0 else "failed", "returnCode": code,
+            "durationMs": 1, "error": None, "stdoutTail": "", "stderrTail": "",
+            "output": {"policy": "metadata-only-v1", "limitBytes": 16777216,
+                       "stdoutBytes": 0, "stderrBytes": 0, "discardedBytes": 0, "textOmitted": True}}
+
+
 class TestVerifyCommands:
     def _write_contract(self, project: Path, suites: list[dict] | None = None):
         contract = {
@@ -9572,8 +10149,8 @@ class TestVerifyCommands:
     def test_verify_run_executes_required_suites_and_writes_receipt(self, tmp_path, capsys):
         self._write_contract(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(tmp_path, json_output=True)
 
         assert result == 0
@@ -9606,8 +10183,8 @@ class TestVerifyCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(tmp_path, suite_ids=["targeted-check"], json_output=True)
 
         assert result == 0
@@ -9640,8 +10217,8 @@ class TestVerifyCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(project, suite_ids=["targeted-check"], json_output=True)
 
         assert result == 0
@@ -9657,10 +10234,10 @@ class TestVerifyCommands:
     def test_verify_run_fails_when_suite_fails(self, tmp_path, capsys):
         self._write_contract(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
+        with patch("cc_evidence.run_command") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout="", stderr=""),
-                MagicMock(returncode=1, stdout="", stderr="failed"),
+                _fixture_evidence_result(0),
+                _fixture_evidence_result(1),
             ]
             result = cc.cmd_verify_run(tmp_path, json_output=True)
 
@@ -9709,13 +10286,14 @@ class TestVerifyCommands:
         )
         assert docs_suite["status"] == "failed"
         assert docs_suite["returnCode"] == 1
-        assert "docs/project-memory-engine.md" in docs_suite["stdoutTail"]
+        assert docs_suite["stdoutTail"] == ""
+        assert docs_suite["output"]["stdoutBytes"] > 0
 
     def test_verify_run_can_select_kind(self, tmp_path, capsys):
         self._write_contract(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(tmp_path, kinds=["targeted"], json_output=True)
 
         assert result == 0
@@ -9949,8 +10527,8 @@ class TestInvariantCommands:
     def test_invariants_run_executes_active_invariants_and_writes_receipt(self, tmp_path, capsys):
         self._write_manifest(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_invariants_run(tmp_path, json_output=True)
 
         assert result == 0
@@ -9983,8 +10561,8 @@ class TestInvariantCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_invariants_run(project, json_output=True)
 
         assert result == 0
@@ -10019,8 +10597,8 @@ class TestInvariantCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_invariants_run(tmp_path, json_output=True)
 
         assert result == 0
@@ -10034,8 +10612,8 @@ class TestInvariantCommands:
     def test_invariants_report_names_protected_properties_and_latest_run(self, tmp_path, capsys):
         self._write_manifest(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             assert cc.cmd_invariants_run(tmp_path, json_output=True) == 0
         capsys.readouterr()
 
@@ -10149,8 +10727,8 @@ class TestInvariantCommands:
     def test_invariants_run_fails_when_command_fails(self, tmp_path, capsys):
         self._write_manifest(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="failed")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(1)
             result = cc.cmd_invariants_run(tmp_path, json_output=True)
 
         assert result == 1
@@ -11277,6 +11855,59 @@ class TestSetupHostContextSync:
         assert cc_config["project_definition_mode"] == "skip"
         assert "environment" not in cc_config
 
+    def test_setup_generates_cursor_rule_with_project_wide_metadata(self, tmp_path, monkeypatch):
+        answers_file = tmp_path / "setup_answers.json"
+        answers_file.write_text(
+            json.dumps(
+                {
+                    "setup": {
+                        "name": "Demo Project",
+                        "planning": {
+                            "tier": "core",
+                            "planning_mode": "solo_structured",
+                            "planning_authority": "single_author",
+                            "manual_consultation_allowed": False,
+                        },
+                        "documentation_mode": "managed",
+                        "user_host": "cursor",
+                        "host_instruction_mode": "recommended",
+                        "hooks_location": "local",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(cc_setup, "_ask", lambda prompt, default="": default)
+        monkeypatch.setattr(cc_setup, "_ask_yn", lambda prompt, default=True: default)
+        monkeypatch.setattr(cc_setup, "_scan_dirs", lambda project: [])
+        monkeypatch.setattr(cc_setup, "_detect_backends", lambda: {})
+        monkeypatch.setattr(
+            cc_setup,
+            "_detect_obvious_environment_inventory",
+            lambda: {"toolchains": ["Python"], "package_managers": ["pip"]},
+        )
+        monkeypatch.setattr(cc_setup, "cmd_init", lambda project, central_hooks=False, quiet=False: 0)
+        monkeypatch.setattr(cc_setup, "cmd_doctor", lambda project: 0)
+        monkeypatch.setattr(
+            cc_setup,
+            "_write_host_integration_assets",
+            lambda project, user_host, host_instructions=None: [],
+        )
+
+        assert cc_setup.cmd_setup(tmp_path, answers_file=answers_file) == 0
+
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        assert target.read_bytes().startswith(b"---\nalwaysApply: true\n---\n")
+        marker, state, _detail = cc._adapter_marker_payload(
+            target.read_text(encoding="utf-8")
+        )
+        assert state == "owned"
+        assert marker["host"] == "cursor"
+        gateway = json.loads(
+            (tmp_path / ".controlcoding" / "gateway_config.json").read_text(encoding="utf-8")
+        )
+        assert gateway["hostProfile"]["contextFile"] == ".cursor/rules/project.mdc"
+
 
 class TestHostSwitch:
     SAMPLE_CLAUDE_MD = TestExportAgentsMd.SAMPLE_CLAUDE_MD
@@ -11349,6 +11980,33 @@ class TestHostSwitch:
         assert (tmp_path / "AGENTS.md").exists()
         content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert "## Operative Rules" in content
+
+    def test_switch_to_cursor_uses_shared_renderer_metadata(self, tmp_path, monkeypatch):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        control_dir = tmp_path / ".controlcoding"
+        control_dir.mkdir()
+        (control_dir / "gateway_config.json").write_text(
+            json.dumps({"userHost": "claude_code", "enabledHosts": ["claude_code"]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            cc,
+            "_write_host_integration_assets",
+            lambda project, user_host, host_instructions=None: [],
+        )
+
+        assert cc.cmd_host_switch(tmp_path, "cursor") == 0
+
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        assert target.read_bytes().startswith(b"---\nalwaysApply: true\n---\n")
+        gateway = json.loads(
+            (control_dir / "gateway_config.json").read_text(encoding="utf-8")
+        )
+        assert gateway["userHost"] == "cursor"
+        assert gateway["hostProfile"]["contextFile"] == ".cursor/rules/project.mdc"
 
     def test_switch_preview_only_changes_nothing(self, tmp_path, monkeypatch):
         (tmp_path / "CONTROLCODING.md").write_text(

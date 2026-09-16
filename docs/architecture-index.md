@@ -71,6 +71,9 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | File | Public role |
 |---|---|
 | `cc.py` | Main ControlCoding CLI and governance command router. |
+| `cc_evidence.py` | Local verification/invariant receipts, coverage and current-evidence assessment. |
+| `cc_evidence_inputs.py` | Bounded input snapshots, confined file reads and runner/context identity. |
+| `cc_evidence_process.py` | Bounded command execution and metadata-only pipe capture. |
 | `cc_docs.py` | Documentation maintenance commands. |
 | `cc_feature.py` | Feature lifecycle commands. |
 | `cc_init_module.py` | Module initialization commands. |

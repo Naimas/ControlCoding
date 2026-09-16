@@ -12,6 +12,7 @@ jobs:
   verification:
     name: verify (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -19,6 +20,7 @@ jobs:
           - ubuntu-latest
           - windows-latest
         python-version:
+          - "3.11"
           - "3.13"
 
     defaults:
@@ -27,23 +29,59 @@ jobs:
 
     env:
       PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
 
     steps:
       - name: Check out repository with a spaced path
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: controlcoding lab
+          persist-credentials: false
+
+      - name: Set up unsupported Python for rejection test
+        id: python310
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest ".[mcp]"
+        run: 'python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-ci.lock'
+
+      - name: Install candidate without dependency resolution
+        run: python -m pip install --no-deps --no-build-isolation ".[mcp]"
+
+      - name: Record verification environment
+        run: python .github/scripts/record_ci_environment.py --output .controlcoding/ci-environment.json
 
       - name: Check verification contract
         run: python scripts/cc.py verify status --project-root .
 
       - name: Run verification contract
+        env:
+          CC_TEST_PYTHON310: ${{ steps.python310.outputs.python-path }}
+          # Fixture Git policy must not inherit a runner's global EOL/filter settings.
+          # Tests can still configure local attributes and filters explicitly.
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: ${{ runner.os == 'Windows' && 'NUL' || '/dev/null' }}
+          GIT_CONFIG_COUNT: "0"
         run: python scripts/cc.py verify run --project-root . --json
+
+      - name: Upload verification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verification-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_attempt }}
+          path: |
+            controlcoding lab/.controlcoding/verification_receipts/*.json
+            controlcoding lab/.controlcoding/verification_receipts/*.xml
+            controlcoding lab/.controlcoding/invariant_receipts/*.json
+            controlcoding lab/.controlcoding/ci-environment.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

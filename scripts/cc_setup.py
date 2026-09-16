@@ -11,12 +11,15 @@ Contains:
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import date
 from pathlib import Path
+
+from cc_memory_lib.runtime import core_runtime_error, memory_runtime_error
 
 # Import shared utilities and constants from cc.py
 # cc_setup.py lives in the same directory as cc.py
@@ -6648,6 +6651,10 @@ def _require_chat_or_answers_file(
 
 def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bool = False):
     """Base setup executor for ControlCoding using a prefilled handoff."""
+    runtime_issue = core_runtime_error()
+    if runtime_issue is not None:
+        warn(runtime_issue.message)
+        return 1
     apply_answers, early_exit = _require_chat_or_answers_file(
         "cc setup",
         "--chat-guide",
@@ -6763,6 +6770,11 @@ def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bo
     answers["memory_default_policy"] = _normalize_memory_default_policy(
         str(prefill.get("memory_default_policy", MEMORY_DEFAULT_POLICY_GOVERNED_SCOPE))
     )
+    if answers["memory_default_policy"] == MEMORY_DEFAULT_POLICY_GOVERNED_SCOPE:
+        runtime_issue = memory_runtime_error()
+        if runtime_issue is not None:
+            warn(runtime_issue.message)
+            return 1
     info(
         "Project Memory Engine and GraphRAG are Core defaults. "
         "Base setup prepares local memory with governed-scope indexing only."
@@ -7065,11 +7077,16 @@ def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bo
     adapter_sync_failed = host_context_spec is not None and host_context_path is None
     if host_context_path:
         synced_context_paths.append(host_context_path)
-    memory_receipt = _bootstrap_default_project_memory(
-        project,
-        answers["name"],
-        answers["memory_default_policy"],
-    )
+    try:
+        memory_receipt = _bootstrap_default_project_memory(
+            project,
+            answers["name"],
+            answers["memory_default_policy"],
+        )
+    except Exception as exc:
+        warn(f"Partial setup: Project Memory Engine bootstrap failed ({type(exc).__name__}: {exc}). "
+             "Inspect the existing setup output before retrying; no rollback was performed.")
+        return 1
     if memory_receipt.get("status") == "completed":
         ok(
             "Initialized Project Memory Engine with governed-scope scan "
@@ -7079,9 +7096,11 @@ def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bo
         info("Project Memory Engine initialization was deferred by setup policy.")
     else:
         warn(
-            "Project Memory Engine bootstrap did not complete: "
-            f"{memory_receipt.get('status')}"
+            "Partial setup: Project Memory Engine bootstrap did not complete: "
+            f"{memory_receipt.get('status')}. Inspect its receipt and existing setup output "
+            "before retrying; no rollback was performed."
         )
+        return 1
     host_manifest = _load_json_object(_control_plane_path(project, "launchers", "manifest.json"))
     next_steps = host_manifest.get("nextSteps", [])
     if isinstance(next_steps, list):
@@ -7440,14 +7459,23 @@ def cmd_setup_project(project: Path, answers_file: Path | None = None, apply_ans
     return 0
 
 
+def _setup_guide_command(project: Path, *arguments: str) -> str:
+    """Quote a command for PowerShell on Windows, or a POSIX shell elsewhere."""
+    parts = [sys.executable, str(SCRIPT_DIR / "cc.py"), *arguments,
+             "--project-root", str(project.resolve())]
+    if os.name == "nt":
+        return "& " + " ".join("'" + part.replace("'", "''") + "'" for part in parts)
+    return shlex.join(parts)
+
+
 def cmd_setup_chat_guide(project: Path, host_hint: str = ""):
     """Print a copy/paste prompt for using setup through an IDE or host chat."""
     normalized_host = host_hint if host_hint in _GATEWAY_VALID_USER_HOSTS else ""
     host_label = _derive_host_profile(normalized_host)["label"] if normalized_host else "the chosen AI host"
-    setup_cmd = f"python {SCRIPT_DIR / 'cc.py'} setup --project-root ."
-    engagement_cmd = f"python {SCRIPT_DIR / 'cc.py'} setup --engagement --project-root ."
-    doctor_cmd = f"python {SCRIPT_DIR / 'cc.py'} doctor --project-root ."
-    project_setup_cmd = f"python {SCRIPT_DIR / 'cc.py'} setup-project --project-root ."
+    setup_cmd = _setup_guide_command(project, "setup", "--answers-file", "./handoff.json", "--apply-answers")
+    engagement_cmd = _setup_guide_command(project, "setup", "--engagement", "--answers-file", "./handoff.json", "--apply-answers")
+    doctor_cmd = _setup_guide_command(project, "doctor")
+    project_setup_cmd = _setup_guide_command(project, "setup-project", "--chat-guide")
     prompt = (
         "Read this project and act as the official chat-guided ControlCoding installation assistant.\n\n"
         "Important:\n"
@@ -7511,7 +7539,9 @@ def cmd_setup_chat_guide(project: Path, host_hint: str = ""):
         "- Preserve the exact accepted values in the handoff payload; do not silently rename the project or swap the chosen stack later.\n"
         "- After enough answers are collected, summarize the chosen values and generate a JSON handoff file payload with top-level `setup` and `engagement` objects.\n"
         "- Do not write files or run setup/apply commands until those high-impact choices are explicitly confirmed.\n"
-        f"- If this host can execute local commands, save that payload as `handoff.json`, run `{setup_cmd}` with `--answers-file .\\handoff.json --apply-answers`, then run `{engagement_cmd}` with the same flags, then run `{doctor_cmd}`. Do this yourself instead of sending me to the terminal.\n"
+        "- Review the completed handoff and existing-file conflicts before applying. Supplying an answers file applies immediately, even without --apply-answers; there is no setup dry-run.\n"
+        f"- Commands below use {'PowerShell' if os.name == 'nt' else 'a POSIX shell'}. Run from the folder containing the reviewed handoff.json, and stop if any command returns nonzero.\n"
+        f"- If this host can execute local commands, save that payload as `handoff.json`, run `{setup_cmd}`, then `{engagement_cmd}`, then `{doctor_cmd}`. Do this yourself instead of sending me to the terminal.\n"
         f"- After installation succeeds, ask me whether I want to start the separate project setup flow. Only if I explicitly say yes may you continue by collecting a new `project_setup` payload and running `{project_setup_cmd}`.\n"
         "- Only if this host truly cannot execute local commands may you fall back to asking me to run the commands manually.\n"
         "- When you finish applying the setup, review the generated files and tell me exactly what was written.\n"

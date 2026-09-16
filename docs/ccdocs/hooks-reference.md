@@ -9,11 +9,17 @@
 
 ControlCoding hooks are Python scripts that run at specific points in an AI host's lifecycle when that host exposes a hook protocol. On native-hook hosts such as Claude Code and supported Cline setups, they can block an operation before it lands. On non-inline hosts, equivalent protection is repo-side: pre-commit, review, and verification gates catch violations without pretending to intercept every editor write.
 
-All hooks use only Python stdlib (no pip dependencies). All hooks handle stdin JSON parse failure gracefully (exit 0). Hook self-protection is hardcoded, never configurable via CLAUDE.md.
+The current public hook templates use only Python stdlib (no pip dependencies).
+For `check_boundaries.py`, invalid/non-object input and a missing `file_path`
+allow with exit `0`; a reached outer exception reports a diagnostic and also
+continues with exit `0`. This is a fail-open continuation, not a safe-write
+claim or a statement about every hook. Hook self-protection is hardcoded and
+precedes lift handling on its configured native route.
 
-### Fail-open input guard (all hooks)
+### Current boundary-hook input guard
 
-Every hook parses stdin as JSON at the start of `main()`. Two layers of protection ensure the hook never crashes on malformed input:
+`check_boundaries.py` parses stdin at the start of `main()`. Two guards handle
+the malformed inputs covered by its implementation:
 
 1. **JSONDecodeError / EOFError**: if stdin is not valid JSON, the hook exits 0 (allow).
 2. **isinstance(dict) check**: if the parsed JSON is valid but not a dictionary (e.g. a bare string, array, or number), the hook exits 0 (allow) immediately, before accessing any keys.
@@ -28,7 +34,9 @@ if not isinstance(input_data, dict):
     sys.exit(0)
 ```
 
-This pattern appears in all four hooks: `check_boundaries.py`, `check_dangerous_commands.py`, `check_workflow.py`, and `session_end_check.py` (which uses the same guard when loading `cc_config.json`). The rationale is robustness: Claude Code's hook protocol sends JSON objects, but a future protocol change or a bug could send unexpected data. Failing open prevents a single malformed message from deadlocking the entire session (see the "Hook Resilience" section below for the full deadlock problem).
+The rationale is robustness: an unexpected host payload should not deadlock a
+session. This exercised behavior does not show that a write was safe, that a
+host delivered the hook, or that other hooks have identical error handling.
 
 ### Hook events
 
@@ -37,7 +45,7 @@ This pattern appears in all four hooks: `check_boundaries.py`, `check_dangerous_
 | `PreToolUse` (Edit/Write) | Before every file write | Boundary enforcement: blocks writes outside perimeter |
 | `PreToolUse` (Bash) | Before every shell command | Blocks dangerous commands: no force-push, no reset --hard |
 | `PreToolUse` (ExitPlanMode) | When AI exits plan mode | CodeWarden plan review: evaluates plan against CLAUDE.md |
-| `PostToolUse` (Bash) | After every shell command | Bash bypass protection: reverts DENY-zone changes made via Bash |
+| `PostToolUse` (Bash) | After a configured Bash event | Optional conservative protected-path reporting; no automatic recovery |
 | `Stop` | When the AI finishes | Final verification: runs invariant tests, integrity check |
 
 ### Exit codes
@@ -158,15 +166,18 @@ if __name__ == "__main__":
 
 ### Hook self-protection
 
-The template `check_boundaries.py` has a hardcoded constant `HOOK_SELF_PROTECTION = True` that protects its own filename. Self-protection runs BEFORE the new-file check, preventing bypass via path resolution tricks. Self-protected files (hook scripts, settings.json) are **never liftable** - this is guaranteed by execution order: self-protection exits before zone matching runs.
+The template `check_boundaries.py` has a hardcoded constant `HOOK_SELF_PROTECTION = True` that protects its own filename. Self-protection runs before lift and new-file checks on the configured native route. Scoped or legacy local lift state does not override that order; this does not establish coverage for another host route.
 
 ### Multi-segment zone matching
 
 For patterns like `src/core/`, the hook checks consecutive path segments, not just substring matching. This prevents false positives (e.g. a file at `test_src/core_utils/` would not match `src/core/`).
 
-### Zone-scoped lifts
+### Current scoped and legacy lifts
 
-The full lift mechanism (`hooks_lifted.json`) disables an entire hook, losing all boundary protection. For targeted modifications to a single stable zone, use a zone-scoped lift instead.
+The legacy `hooks_lifted.json` mechanism disables the current hook subject to its
+local expiry check. The current `request_lift.py` workflow stores local scoped
+request state for targeted zones. They have different scope and consumption
+semantics and must not be described as interchangeable.
 
 Create `.controlcoding/lift_request.json` (legacy `.claude/lift_request.json` still works in older repos):
 ```json
@@ -177,18 +188,21 @@ Create `.controlcoding/lift_request.json` (legacy `.claude/lift_request.json` st
 }
 ```
 
-Behavior:
-- `zones`: array of zone paths to lift (supports 1-3 correlated zones for realistic refactoring)
-- `expires_at`: declarative expiry - the requester states when the lift ends
-- The hook allows modifications to listed zones with WARN instead of DENY
-- All other zones remain fully protected
-- Self-protected files (hook scripts, settings.json) are **never liftable** - this is guaranteed by execution order: self-protection exits before zone matching runs
-- The session-end hook reports any active or expired lift requests
-- Delete the file when the lift is no longer needed
+Current behavior:
+- an active scoped request requires `status: "APPROVED"`, matching zone state,
+  and unexpired local data; pending, unrelated, malformed, and expired data do
+  not activate the scoped path;
+- `request_lift.py --approve` rejects non-interactive use and requests a local
+  token. That is an intended human workflow, not independent authentication or
+  authorization against equivalent local access;
+- the boundary reader updates/consumes local scoped state before the host
+  operation is known to succeed. It does not prove exactly-once use or a
+  completed edit, especially across failed persistence or concurrent access;
+- self-protected files remain before lift handling on the covered native path.
 
 ### Edge cases and known limitations
 
-- The hook only intercepts Edit and Write tools. File writes via the Bash tool (e.g. heredoc) bypass boundary protection. For stricter guarantees, combine with git pre-commit checks and session_end_check.py.
+- The hook only applies on a configured, delivered Edit/Write route. File writes via the Bash tool and other uncovered routes are outside that boundary. A local pre-commit check separately evaluates staged paths at its invocation; it does not establish server enforcement or accepted remote history.
 - Regex-based path matching is inherently incomplete. A file can be constructed via variables or aliases in ways no pattern list can cover.
 - When the shell working directory changes, relative paths in hook commands break. Always use absolute paths (see Resilience section below).
 
@@ -247,27 +261,80 @@ Regex-based filtering is inherently incomplete. A command can be constructed via
 
 ---
 
-## 3. check_bash_writes.py (Bash Bypass Protection)
+## 3. check_bash_writes.py (Optional Bash Working-Tree Inspector)
 
-**Purpose**: Detects and reverts modifications to DENY-protected files made through Bash commands. Closes the known limitation where `Edit`/`Write` hooks are bypassed by writing files through Bash (`cat`, `echo`, `tee`, `cp`, `python -c`, etc.).
+**Purpose**: Reports conservative path observations in DENY zones or denied by
+the active module perimeter after a Bash event. The observations may predate the
+command or belong to another actor. The hook never attributes them to the
+command and never restores or deletes user files.
 
 **Trigger event**: `PostToolUse` on `Bash`
 
-**Mechanism**: After every Bash command completes, the hook:
-1. Runs `git diff --name-only` to detect which files changed
-2. Loads DENY zones from `.claude/cc_config.json`
-3. For each changed file that falls within a DENY zone, reverts it with `git checkout -- <file>`
-4. Prints a warning listing the reverted files
+**Installation**: Opt-in through `templates/hooks/settings.json.example`.
+Minimal `cc init` does not register this hook.
 
-**Exit code**: Always 0. PostToolUse hooks cannot block operations (the command has already executed). The revert is the enforcement mechanism.
+**Mechanism**: After a configured Bash event, the hook:
 
-**Relationship to other hooks**:
-- `check_dangerous_commands.py` (PreToolUse): blocks dangerous Bash commands **before** they run (pattern-based, preventive)
-- `check_bash_writes.py` (PostToolUse): reverts protected file changes **after** they happen (git-based, corrective)
+1. Enumerates index entries with `git --no-optional-locks -c core.fsmonitor=
+   ls-files --stage -v -z --`. The same-invocation override prevents a configured
+   filesystem-monitor callback; this index-only operation does not run Git
+   content conversion.
+2. Uses bounded standard-library reads to compare only protected regular files
+   with their staged Git object IDs as raw bytes. Deletions, type changes and
+   unmerged protected paths are observations. Tracked symlinks, protected
+   submodules and entries that cannot be inspected are incomplete-inspection
+   diagnostics; their content is not read.
+3. Lists non-ignored untracked paths with `ls-files --others --exclude-standard
+   -z` under the same fsmonitor override. NUL-delimited Git records preserve
+   spaces and non-ASCII names.
+4. Loads DENY zones from `.controlcoding/cc_config.json`, with the existing
+   legacy-path fallback, and checks the active module perimeter.
+5. Emits one JSON warning/context object listing protected observations and any
+   incomplete-inspection diagnostics. Optional logs use `WARN` for observations
+   and `ERROR` for inspection failures. The Git index is left unchanged.
 
-Together they form a two-layer defense: PreToolUse catches obvious patterns (`echo > protected_file.py`), PostToolUse catches anything that slipped through.
+**Exit code**: Always 0. The command has already run. Invalid/non-object JSON
+input and non-Bash events are ignored. This hook performs no automatic recovery.
 
-**Limitation**: Requires git. If the project is not a git repository, the hook exits 0 silently.
+**Output**: `systemMessage` carries user feedback; `hookSpecificOutput` contains
+`hookEventName: "PostToolUse"` and `additionalContext` for agent feedback. See the
+[Claude Code output contract](https://code.claude.com/docs/en/hooks#posttooluse-decision-control).
+Subprocess tests cover the output shape and data preservation. Actual delivery
+in a named host version requires a separate integration check.
+
+**Relationship to other hooks**: `check_dangerous_commands.py` checks selected
+patterns before a Bash call; `check_bash_writes.py` observes the working tree
+afterward. Neither combination establishes universal shell-write prevention.
+
+**Limits and resolution**: Requires Git and a Git working tree. Configured
+`clean` and `process` filters are not executed. Raw comparison deliberately does
+not reproduce Git normalization or smudge conversion, so it can report a path
+that Git considers clean. Staged-only content whose raw bytes match the index,
+absent skip-worktree entries, ignored untracked entries and file-mode-only
+changes are outside the scan. A regular-file comparison reads at most the size
+observed on its validated open handle. Every read request is capped by the
+remaining 8 MiB per-file and shared 32 MiB event budgets; returned bytes remain
+charged if the entry later changes or fails. One root boundary is acquired before
+tracked index enumeration and retained through every tracked entry. Windows
+holds directory handles without delete sharing for the root and its ancestors,
+preventing their rename/replacement during that phase. It requires accessible
+plain directory components and refuses root-chain reparse points or acquisition
+failures. Content-handle final paths are checked against the held root handle.
+On supported POSIX systems, index Git enters an inherited `/proc/self/fd` or
+`/dev/fd` alias of the held root descriptor. Directory-relative no-follow
+traversal starts from that descriptor and uses a nonblocking leaf open. A root
+pathname replacement retains the original directory/index; missing usable
+descriptor-alias support is incomplete. Untracked enumeration and policy/config
+reads remain separate operations; the boundary is not an atomic index/content
+snapshot. Missing confinement primitives and content paths outside that held
+boundary produce an incomplete result before reading. Missing Git, timeout, nonzero or malformed
+path output, unreadable or concurrently changed entries, tracked symlinks,
+protected submodules and exceeded limits also generate an incomplete-inspection
+warning; results already obtained from another phase remain visible. These byte
+and open controls are not a universal execution-time guarantee. Review reported
+paths and diffs with the user before deciding how to resolve them; repeated
+warnings are possible. Activity that starts after a path was inspected may only
+be visible on a later event.
 
 ---
 

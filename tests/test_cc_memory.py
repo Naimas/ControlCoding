@@ -33,6 +33,7 @@ import cc_memory_lib.bootstrap as memory_bootstrap
 import cc_memory_lib.chunks as memory_chunks
 import cc_memory_lib.commands as memory_commands
 import cc_memory_lib.cross_plane as cross_plane
+import cc_memory_lib.evidence as memory_evidence
 import cc_memory_lib.export as memory_export
 import cc_memory_lib.entities as memory_entities
 import cc_memory_lib.freshness_projection as freshness_projection
@@ -41,11 +42,13 @@ import cc_memory_lib.impact as memory_impact
 import cc_memory_lib.lifecycle as memory_lifecycle
 import cc_memory_lib.ledger as memory_ledger
 import cc_memory_lib.op_index as memory_op_index
+import cc_memory_lib.privacy as memory_privacy
 import cc_memory_lib.migrations as memory_migrations
 import cc_memory_lib.rag_pack as rag_pack
 import cc_memory_lib.retrieve as memory_retrieve
 import cc_memory_lib.scanner as memory_scanner
 import cc_memory_lib.scoring as memory_scoring
+import cc_memory_lib.semantic as memory_semantic
 import cc_memory_lib.sessions as memory_sessions
 import cc_memory_lib.store as memory_store
 import cc_memory_lib.vector as memory_vector
@@ -13725,6 +13728,247 @@ def test_memory_retrieve_reports_stale_index_explicitly(tmp_path, capsys):
     assert any(match["path"] == "docs/target.md" for match in payload["matches"])
 
 
+@pytest.mark.parametrize(
+    ("category", "synthetic_value"),
+    [
+        (
+            "private_key_block",
+            "-----BEGIN PRIVATE KEY-----\nfixture-private-key-material\n-----END PRIVATE KEY-----",
+        ),
+        ("authorization_header", "Authorization: Bearer fixtureBearerValue123"),
+        ("env_secret_assignment", "FIXTURE_API_KEY=fixtureEnvValue123"),
+        ("inline_secret_assignment", "password: fixturePasswordValue123"),
+        ("openai_key", "sk-fixtureopenaisentinel1234567890"),
+        ("github_token", "ghp_fixturegithubsentinel1234567890"),
+        ("slack_token", "xoxb-fixtureslacksentinel123"),
+        ("aws_access_key", "AKIAFIXTURESENTINEL1"),
+        ("jwt", "eyJabcdefghijk.abcdefghijk.abcdefghijk"),
+    ],
+)
+def test_memory_privacy_scrub_characterizes_each_current_pattern(category, synthetic_value):
+    scrubbed, receipt = memory_privacy.scrub_text(synthetic_value)
+
+    assert synthetic_value not in scrubbed
+    assert f"[REDACTED:{category}]" in scrubbed
+    assert receipt == {
+        "schemaVersion": "cc-privacy-scrub/v1",
+        "enabled": True,
+        "replacementCount": 1,
+        "categories": {category: 1},
+        "secretValuesIncluded": False,
+    }
+
+
+def test_memory_privacy_scrub_characterizes_recursion_counts_and_detection_limits():
+    repeated_match = "sk-fixturerepeatedsentinel1234567890"
+    unmatched_fake_secret = "fixture-sensitive-opaque-value"
+    pattern_shaped_but_benign = "token=fixture-public-example-value"
+    key_that_looks_secret_shaped = "sk-fixturedictionarykey1234567890"
+    original = {
+        key_that_looks_secret_shaped: "ordinary value",
+        "password": unmatched_fake_secret,
+        "nested": [
+            repeated_match,
+            {"again": f"{repeated_match} then {repeated_match}"},
+            pattern_shaped_but_benign,
+        ],
+        "number": 17,
+        "enabled": False,
+        "missing": None,
+    }
+
+    scrubbed, receipt = memory_privacy.scrub_value(original)
+
+    assert key_that_looks_secret_shaped in scrubbed
+    assert scrubbed[key_that_looks_secret_shaped] == "ordinary value"
+    assert scrubbed["password"] == unmatched_fake_secret
+    assert scrubbed["number"] == 17
+    assert scrubbed["enabled"] is False
+    assert scrubbed["missing"] is None
+    assert repeated_match not in json.dumps(scrubbed)
+    assert pattern_shaped_but_benign not in json.dumps(scrubbed)
+    assert receipt["replacementCount"] == 4
+    assert receipt["categories"] == {
+        "env_secret_assignment": 1,
+        "openai_key": 3,
+    }
+
+    unmatched_payload, zero_receipt = memory_privacy.scrub_value({"password": unmatched_fake_secret})
+    assert unmatched_payload["password"] == unmatched_fake_secret
+    assert zero_receipt == {
+        "schemaVersion": "cc-privacy-scrub/v1",
+        "enabled": True,
+        "replacementCount": 0,
+        "categories": {},
+        "secretValuesIncluded": False,
+    }
+    assert unmatched_fake_secret not in json.dumps(zero_receipt)
+
+
+def test_memory_packet_privacy_boundary_across_builders_cli_files_and_adapter(tmp_path, capsys):
+    matched_source = "sk-e5matchedfixture1234567890"
+    matched_query = "sk-e5queryfixture1234567890"
+    unmatched_fake_secret = "fixture-sensitive-e5-opaque-value"
+    list_path_sentinel = "sk-e5listfixture1234567890"
+    output_path_sentinel = "sk-e5outputfixture1234567890"
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    source_path = docs / "privacy-boundary.md"
+    source_path.write_text(
+        "# Privacy Boundary Evidence\n\n"
+        "Privacy boundary packet retrieval fixture.\n"
+        f"Matched synthetic value: {matched_source}\n"
+        f"Opaque synthetic value: {unmatched_fake_secret}\n",
+        encoding="utf-8",
+    )
+    list_source = docs / f"{list_path_sentinel}.md"
+    list_source.write_text(
+        "# Evidence List Boundary\n\nPrivacy boundary metadata fixture.\n",
+        encoding="utf-8",
+    )
+
+    assert cc.cmd_memory_init(tmp_path, mode="document-only", project_short="Privacy") == 0
+    assert cc.cmd_memory_scan(tmp_path) == 0
+    assert cc.cmd_memory_vector_rebuild(tmp_path) == 0
+    assert cc.cmd_memory_work_init(tmp_path, project_name="Privacy Work", purpose="Privacy fixture") == 0
+    work_plan = tmp_path / ".controlwork" / "memory" / "plans" / "privacy-plan.md"
+    work_plan.write_text(
+        "# Privacy Plan\n\n"
+        "- **Area**: plans\n"
+        "- **Lifecycle**: active\n\n"
+        "## Body\n\n"
+        f"Privacy boundary includes {matched_source} and {unmatched_fake_secret}.\n",
+        encoding="utf-8",
+    )
+
+    adapter_runtime = tmp_path / "fixture-semantic-runtime.py"
+    adapter_capture = tmp_path / "fixture-semantic-capture.json"
+    adapter_runtime.write_text(
+        "import json, pathlib, sys\n"
+        "payload = json.loads(sys.stdin.read())\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(payload), encoding='utf-8')\n"
+        "scores = [\n"
+        "    {'id': item.get('id'), 'score': 0.5, 'reason': 'fixture score'}\n"
+        "    for item in payload.get('candidates', [])\n"
+        "]\n"
+        "print(json.dumps({'scores': scores}))\n",
+        encoding="utf-8",
+    )
+    semantic_config = tmp_path / ".controlcoding" / "memory" / "semantic_adapters.json"
+    semantic_config.write_text(
+        json.dumps({
+            "activeAdapter": "local_runtime_v1",
+            "localRuntime": {
+                "enabled": True,
+                "command": [sys.executable, str(adapter_runtime), str(adapter_capture)],
+                "timeoutSeconds": 10,
+                "maxCandidates": 50,
+            },
+        }),
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+
+    def memory_snapshot() -> dict[str, str]:
+        memory_root = tmp_path / ".controlcoding" / "memory"
+        return {
+            path.relative_to(memory_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(memory_root.rglob("*"))
+            if path.is_file()
+        }
+
+    def assert_scrubbed_boundary(value) -> None:
+        rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        assert matched_source not in rendered
+        assert matched_query not in rendered
+        assert "[REDACTED:openai_key]" in rendered
+        assert unmatched_fake_secret in rendered
+
+    query = f"privacy boundary {matched_query} {unmatched_fake_secret}"
+    source_before = source_path.read_bytes()
+    index_before = memory_snapshot()
+
+    rag_payload = rag_pack._build_rag_pack(tmp_path, query, "general", 20, False)
+    assert_scrubbed_boundary(rag_payload)
+    assert rag_payload["privacyReceipt"]["replacementCount"] >= 1
+    captured_request = json.loads(adapter_capture.read_text(encoding="utf-8"))
+    assert matched_query in captured_request["query"]
+    assert matched_source in json.dumps(captured_request["candidates"])
+
+    node_id = next(
+        citation["nodeId"]
+        for citation in rag_payload["citations"]
+        if citation.get("path") == "docs/privacy-boundary.md"
+    )
+    evidence_payload = memory_evidence._show_payload(tmp_path, node_id)
+    assert_scrubbed_boundary(evidence_payload)
+    assert evidence_payload["privacyReceipt"]["replacementCount"] >= 1
+
+    cross_payload = cross_plane._build_cross_pack(tmp_path, query, "general", 20, False, False)
+    assert_scrubbed_boundary(cross_payload)
+    assert cross_payload["privacyReceipt"]["enabled"] is True
+    assert source_path.read_bytes() == source_before
+    assert memory_snapshot() == index_before
+
+    rag_output = tmp_path / ".controlcoding" / "context-packets" / f"{output_path_sentinel}.md"
+    assert _run_main([
+        "memory", "rag-pack", "--project-root", str(tmp_path), query,
+        "--limit", "20", "--output", str(rag_output), "--json",
+    ]) == 0
+    rag_json_text = capsys.readouterr().out
+    assert_scrubbed_boundary(rag_json_text)
+    rag_json_payload = json.loads(rag_json_text)
+    assert rag_json_payload["privacyReceipt"]["enabled"] is True
+    assert output_path_sentinel in rag_json_payload["outputPath"]
+
+    assert _run_main([
+        "memory", "rag-pack", "--project-root", str(tmp_path), query,
+        "--limit", "20", "--output", str(rag_output),
+    ]) == 0
+    rag_text = capsys.readouterr().out
+    assert_scrubbed_boundary(rag_text)
+    assert output_path_sentinel in rag_text
+    assert_scrubbed_boundary(rag_output.read_text(encoding="utf-8"))
+
+    assert _run_main([
+        "memory", "evidence", "show", "--project-root", str(tmp_path), node_id, "--json",
+    ]) == 0
+    evidence_json_text = capsys.readouterr().out
+    assert_scrubbed_boundary(evidence_json_text)
+    assert json.loads(evidence_json_text)["privacyReceipt"]["enabled"] is True
+    assert _run_main([
+        "memory", "evidence", "show", "--project-root", str(tmp_path), node_id,
+    ]) == 0
+    assert_scrubbed_boundary(capsys.readouterr().out)
+
+    assert _run_main([
+        "memory", "evidence", "list", "--project-root", str(tmp_path), "--limit", "200", "--json",
+    ]) == 0
+    evidence_list_text = capsys.readouterr().out
+    assert list_path_sentinel in evidence_list_text
+    assert "privacyReceipt" not in evidence_list_text
+
+    cross_output = tmp_path / ".controlcoding" / "context-packets" / "cross-privacy.md"
+    assert _run_main([
+        "memory", "cross-pack", "--project-root", str(tmp_path), query,
+        "--limit", "20", "--output", str(cross_output), "--json",
+    ]) == 0
+    cross_json_text = capsys.readouterr().out
+    assert_scrubbed_boundary(cross_json_text)
+    assert json.loads(cross_json_text)["outputPath"] == ".controlcoding/context-packets/cross-privacy.md"
+    assert_scrubbed_boundary(cross_output.read_text(encoding="utf-8"))
+    assert _run_main([
+        "memory", "cross-pack", "--project-root", str(tmp_path), query, "--limit", "20",
+    ]) == 0
+    assert_scrubbed_boundary(capsys.readouterr().out)
+
+    assert source_path.read_bytes() == source_before
+    assert memory_snapshot() == index_before
+    assert adapter_capture.is_file()
+    assert rag_output.is_file()
+    assert cross_output.is_file()
+
+
 def test_memory_rag_pack_outputs_markdown_json_citations_and_edges(tmp_path, capsys):
     docs = tmp_path / "docs"
     legacy = docs / "legacy"
@@ -13996,13 +14240,28 @@ def test_memory_semantic_status_defaults_and_explicit_adapters(tmp_path, capsys,
     ]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["interfaceVersion"] == "cc-semantic-adapter/v1"
+    assert payload["requestedAdapter"] == "local_sparse_v1"
     assert payload["activeAdapter"] == "local_sparse_v1"
+    assert payload["policy"]["availableMeansExecutionEligible"] is True
     assert payload["policy"]["officialApiExplicitOnly"] is True
     adapters = {adapter["id"]: adapter for adapter in payload["adapters"]}
     assert adapters["local_sparse_v1"]["available"] is True
     assert adapters["local_runtime_v1"]["available"] is False
+    assert adapters["local_runtime_v1"]["network"] is None
+    assert adapters["local_runtime_v1"]["networkAccess"] == "unknown"
+    assert adapters["local_runtime_v1"]["networkRestrictionsImposed"] is False
     assert adapters["official_api_v1"]["available"] is False
+    assert adapters["official_api_v1"]["executionSupported"] is False
     assert adapters["official_api_v1"]["explicitOnly"] is True
+    incomplete_api = memory_semantic.OfficialApiSemanticAdapter({
+        "enabled": True,
+        "provider": "fixture-provider",
+        "model": "",
+        "apiKeyEnv": "CC_MEMORY_TEST_MISSING_KEY",
+    }).status()
+    assert incomplete_api["configured"] is False
+    assert incomplete_api["executionEligible"] is False
+    assert incomplete_api["available"] is False
 
     monkeypatch.delenv("CC_MEMORY_TEST_MISSING_KEY", raising=False)
     config_path = tmp_path / ".controlcoding" / "memory" / "semantic_adapters.json"
@@ -14035,11 +14294,274 @@ def test_memory_semantic_status_defaults_and_explicit_adapters(tmp_path, capsys,
     configured = json.loads(capsys.readouterr().out)
     configured_adapters = {adapter["id"]: adapter for adapter in configured["adapters"]}
     assert configured["activeAdapter"] == "local_runtime_v1"
+    assert configured["requestedAdapter"] == "local_runtime_v1"
     assert configured["hasConfig"] is True
     assert configured_adapters["local_runtime_v1"]["available"] is True
+    assert configured_adapters["local_runtime_v1"]["executionEligible"] is True
     assert configured_adapters["official_api_v1"]["configured"] is True
     assert configured_adapters["official_api_v1"]["available"] is False
     assert configured_adapters["official_api_v1"]["apiKeyAvailable"] is False
+
+
+def test_memory_semantic_api_selection_is_configured_but_unsupported_with_fake_key(tmp_path, capsys, monkeypatch):
+    assert cc.cmd_memory_init(tmp_path, mode="document-only", project_short="Demo") == 0
+    capsys.readouterr()
+    fake_value = "fixture-secret-value-must-not-appear"
+    monkeypatch.setenv("CC_MEMORY_E5_FAKE_KEY", fake_value)
+    config_path = tmp_path / ".controlcoding" / "memory" / "semantic_adapters.json"
+    config_path.write_text(
+        json.dumps({
+            "activeAdapter": "official_api_v1",
+            "officialApi": {
+                "enabled": True,
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "apiKeyEnv": "CC_MEMORY_E5_FAKE_KEY",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    assert _run_main(["memory", "semantic", "status", "--project-root", str(tmp_path), "--json"]) == 0
+    raw_status = capsys.readouterr().out
+    payload = json.loads(raw_status)
+    api = {adapter["id"]: adapter for adapter in payload["adapters"]}["official_api_v1"]
+    assert payload["requestedAdapter"] == "official_api_v1"
+    assert payload["activeAdapter"] == ""
+    assert "not implemented" in payload["selectionReason"]
+    assert api["configured"] is True
+    assert api["apiKeyAvailable"] is True
+    assert api["executionSupported"] is False
+    assert api["executionEligible"] is False
+    assert api["available"] is False
+    assert fake_value not in raw_status
+
+    with patch.object(memory_semantic.OfficialApiSemanticAdapter, "score", side_effect=AssertionError("API score called")):
+        scores, report = memory_semantic.semantic_score_candidates(tmp_path, "fixture query", [{"id": "one"}])
+    assert scores == {}
+    assert report["adapter"] == "official_api_v1"
+    assert report["requestedAdapter"] == "official_api_v1"
+    assert report["activeAdapter"] == ""
+    assert report["attemptedAdapter"] == ""
+    assert report["executionAttempted"] is False
+    assert report["used"] is False
+    assert "not implemented" in report["reason"]
+
+    assert _run_main(["memory", "semantic", "status", "--project-root", str(tmp_path)]) == 0
+    text_status = capsys.readouterr().out
+    assert "Requested adapter: official_api_v1" in text_status
+    assert "supported=False, eligible=False, available=False" in text_status
+    assert "not implemented" in text_status
+    assert fake_value not in text_status
+
+
+def test_memory_semantic_status_is_read_only_and_does_not_execute_runtime(tmp_path, capsys):
+    assert cc.cmd_memory_init(tmp_path, mode="document-only", project_short="Demo") == 0
+    capsys.readouterr()
+    marker = tmp_path / "semantic-status-executed.txt"
+    runtime = tmp_path / "opaque-semantic-status-runtime.py"
+    runtime.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    opaque_command = [sys.executable, str(runtime), "opaque-command-token"]
+    config_path = tmp_path / ".controlcoding" / "memory" / "semantic_adapters.json"
+    config_path.write_text(
+        json.dumps({
+            "activeAdapter": "local_runtime_v1",
+            "localRuntime": {"enabled": True, "command": opaque_command},
+        }),
+        encoding="utf-8",
+    )
+
+    def inventory(root):
+        result = {}
+        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+            relative = path.relative_to(root).as_posix()
+            result[relative + ("/" if path.is_dir() else "")] = None if path.is_dir() else path.read_bytes()
+        return result
+
+    before = inventory(tmp_path)
+    with patch.object(memory_semantic.subprocess, "run", side_effect=AssertionError("status executed adapter")):
+        assert _run_main(["memory", "semantic", "status", "--project-root", str(tmp_path), "--json"]) == 0
+        json_status = capsys.readouterr().out
+        assert _run_main(["memory", "semantic", "status", "--project-root", str(tmp_path)]) == 0
+        text_status = capsys.readouterr().out
+    assert inventory(tmp_path) == before
+    assert not marker.exists()
+    assert "opaque-command-token" not in json_status
+    assert "opaque-command-token" not in text_status
+    payload = json.loads(json_status)
+    runtime_status = {adapter["id"]: adapter for adapter in payload["adapters"]}["local_runtime_v1"]
+    assert runtime_status["network"] is None
+    assert runtime_status["networkAccess"] == "unknown"
+    assert runtime_status["networkRestrictionsImposed"] is False
+    assert runtime_status["environmentIsolationImposed"] is False
+    assert runtime_status["workingDirectoryIsolationImposed"] is False
+    assert "Network access: unknown" in text_status
+    assert "query plus bounded candidate" in text_status
+
+
+def test_memory_semantic_disabled_runtime_selection_is_not_active_or_attempted(tmp_path, capsys):
+    assert cc.cmd_memory_init(tmp_path, mode="document-only", project_short="Demo") == 0
+    capsys.readouterr()
+    config_path = tmp_path / ".controlcoding" / "memory" / "semantic_adapters.json"
+    config_path.write_text(
+        json.dumps({
+            "activeAdapter": "local_runtime_v1",
+            "localRuntime": {"enabled": False, "command": ["opaque-runtime"]},
+        }),
+        encoding="utf-8",
+    )
+    payload = memory_semantic.semantic_adapter_status_payload(tmp_path)
+    assert payload["requestedAdapter"] == "local_runtime_v1"
+    assert payload["activeAdapter"] == ""
+    scores, report = memory_semantic.semantic_score_candidates(tmp_path, "query", [{"id": "one"}])
+    assert scores == {}
+    assert report["requestedAdapter"] == "local_runtime_v1"
+    assert report["activeAdapter"] == ""
+    assert report["executionAttempted"] is False
+    assert report["used"] is False
+
+
+def test_memory_semantic_local_runtime_failure_reports_attempt_without_use(tmp_path, capsys):
+    assert cc.cmd_memory_init(tmp_path, mode="document-only", project_short="Demo") == 0
+    capsys.readouterr()
+    runtime = tmp_path / "semantic_runtime_failure.py"
+    runtime.write_text("import sys\nsys.stderr.write('fixture runtime failure')\nraise SystemExit(7)\n", encoding="utf-8")
+    config_path = tmp_path / ".controlcoding" / "memory" / "semantic_adapters.json"
+    config_path.write_text(
+        json.dumps({
+            "activeAdapter": "local_runtime_v1",
+            "localRuntime": {"enabled": True, "command": [sys.executable, str(runtime)]},
+        }),
+        encoding="utf-8",
+    )
+    scores, report = memory_semantic.semantic_score_candidates(tmp_path, "query", [{"id": "one"}])
+    assert scores == {}
+    assert report["activeAdapter"] == "local_runtime_v1"
+    assert report["attemptedAdapter"] == "local_runtime_v1"
+    assert report["executionAttempted"] is True
+    assert report["used"] is False
+    assert report["reason"] == "fixture runtime failure"
+
+
+def test_memory_semantic_local_runtime_bounds_and_describes_candidate_request(tmp_path, capsys):
+    assert cc.cmd_memory_init(tmp_path, mode="document-only", project_short="Demo") == 0
+    capsys.readouterr()
+    captured = tmp_path / "semantic-request.json"
+    runtime = tmp_path / "semantic_runtime_capture.py"
+    runtime.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "request = json.loads(sys.stdin.read())\n"
+        f"Path({str(captured)!r}).write_text(json.dumps(request), encoding='utf-8')\n"
+        "print(json.dumps({'scores': [{'id': item['id'], 'score': 0.5} for item in request['candidates']]}))\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / ".controlcoding" / "memory" / "semantic_adapters.json"
+    config_path.write_text(
+        json.dumps({
+            "activeAdapter": "local_runtime_v1",
+            "localRuntime": {
+                "enabled": True,
+                "command": [sys.executable, str(runtime)],
+                "timeoutSeconds": 5000,
+                "maxCandidates": 5000,
+            },
+        }),
+        encoding="utf-8",
+    )
+    assert _run_main(["memory", "semantic", "status", "--project-root", str(tmp_path), "--json"]) == 0
+    json_status = json.loads(capsys.readouterr().out)
+    runtime_status = {adapter["id"]: adapter for adapter in json_status["adapters"]}["local_runtime_v1"]
+
+    assert _run_main(["memory", "semantic", "status", "--project-root", str(tmp_path)]) == 0
+    text_status = capsys.readouterr().out
+
+    candidate_fields = {"id", "recordType", "type", "title", "path", "headingPath", "lifecycle", "text"}
+    candidates = [
+        {
+            "id": str(index),
+            "recordType": "semantic_chunk",
+            "type": "document",
+            "title": f"Candidate {index}",
+            "path": f"docs/{index}.md",
+            "headingPath": "Scope",
+            "lifecycle": "active",
+            "text": f"candidate text {index}",
+        }
+        for index in range(1001)
+    ]
+    with patch.object(memory_semantic.subprocess, "run", wraps=memory_semantic.subprocess.run) as run_mock:
+        scores, report = memory_semantic.semantic_score_candidates(tmp_path, "bounded query", candidates)
+    request = json.loads(captured.read_text(encoding="utf-8"))
+    assert runtime_status["timeoutSeconds"] == 300
+    assert runtime_status["maxCandidates"] == 1000
+    assert "Effective limits: maxCandidates=1000, timeoutSeconds=300" in text_status
+    assert request["query"] == "bounded query"
+    assert len(request["candidates"]) == runtime_status["maxCandidates"] == 1000
+    assert run_mock.call_args.kwargs["timeout"] == runtime_status["timeoutSeconds"] == 300
+    assert all(set(candidate) == candidate_fields for candidate in request["candidates"])
+    assert len(scores) == 1000
+    assert report["candidateCount"] == runtime_status["maxCandidates"] == 1000
+    assert report["executionAttempted"] is True
+    assert report["used"] is True
+
+
+@pytest.mark.parametrize(
+    ("timeout_value", "candidate_value", "expected_timeout", "expected_candidates"),
+    [
+        (None, None, 30, 200),
+        (0, 0, 30, 200),
+        ("0", "0", 1, 1),
+        (-5, -5, 1, 1),
+        (17, 25, 17, 25),
+        (300, 1000, 300, 1000),
+        (5000, 5000, 300, 1000),
+        ("45", "250", 45, 250),
+    ],
+    ids=["defaults", "numeric-zero", "string-zero", "negative", "in-range", "upper-bound", "above-bound", "numeric-string"],
+)
+def test_memory_semantic_local_runtime_effective_limits_match_scoring(
+    timeout_value,
+    candidate_value,
+    expected_timeout,
+    expected_candidates,
+):
+    config = {"enabled": True, "command": ["fixture-runtime"]}
+    if timeout_value is not None:
+        config["timeoutSeconds"] = timeout_value
+    if candidate_value is not None:
+        config["maxCandidates"] = candidate_value
+    adapter = memory_semantic.LocalRuntimeSemanticAdapter(config)
+    status = adapter.status()
+    candidates = [{"id": str(index)} for index in range(1001)]
+    completed = SimpleNamespace(returncode=0, stdout='{"scores": []}', stderr="")
+
+    with patch.object(memory_semantic.subprocess, "run", return_value=completed) as run_mock:
+        report = adapter.score("limit query", candidates)
+
+    request = json.loads(run_mock.call_args.kwargs["input"])
+    assert status["timeoutSeconds"] == run_mock.call_args.kwargs["timeout"] == expected_timeout
+    assert status["maxCandidates"] == len(request["candidates"]) == expected_candidates
+    assert report["candidateCount"] == expected_candidates
+
+    text_status = memory_semantic._semantic_status_text({
+        "interfaceVersion": "cc-semantic-adapter/v1",
+        "configPath": ".controlcoding/memory/semantic_adapters.json",
+        "hasConfig": True,
+        "requestedAdapter": "local_runtime_v1",
+        "activeAdapter": "local_runtime_v1",
+        "defaultAdapter": "local_sparse_v1",
+        "selectionReason": "fixture",
+        "adapters": [status],
+    })
+    assert (
+        f"Effective limits: maxCandidates={expected_candidates}, timeoutSeconds={expected_timeout}"
+        in text_status
+    )
 
 
 def test_memory_retrieve_uses_explicit_local_runtime_semantic_adapter(tmp_path, capsys):
@@ -14092,6 +14614,10 @@ def test_memory_retrieve_uses_explicit_local_runtime_semantic_adapter(tmp_path, 
     payload = json.loads(capsys.readouterr().out)
     assert payload["semanticAdapter"]["used"] is True
     assert payload["semanticAdapter"]["adapter"] == "local_runtime_v1"
+    assert payload["semanticAdapter"]["requestedAdapter"] == "local_runtime_v1"
+    assert payload["semanticAdapter"]["activeAdapter"] == "local_runtime_v1"
+    assert payload["semanticAdapter"]["attemptedAdapter"] == "local_runtime_v1"
+    assert payload["semanticAdapter"]["executionAttempted"] is True
     assert "semantic" in payload["signalsUsed"]
     assert any(match["signals"]["semantic"]["points"] > 0 for match in payload["matches"])
     assert any("fixture semantic match" in reason for match in payload["matches"] for reason in match["reasons"])

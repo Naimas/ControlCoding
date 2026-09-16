@@ -1,0 +1,8 @@
+# CI-only roots. Regenerate the hashed lock with the command in CONTRIBUTING.md.
+# Keep runtime/package prerequisites in pyproject.toml separate from this test toolchain.
+pip==25.2
+setuptools==70.2.0
+wheel==0.45.1
+pytest==9.0.2
+fastmcp==3.0.2
+PyYAML==6.0.2
