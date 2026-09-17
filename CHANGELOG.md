@@ -4,7 +4,54 @@ All notable changes to ControlCoding are documented in this file.
 
 ## Unreleased
 
-No unreleased changes.
+### Fixed
+
+- Replace automatic recovery in the optional Bash post-tool inspector with
+  protected-path observations. It no longer restores or deletes inspected files,
+  avoids Git content-conversion callbacks, and bounds tracked content reads.
+  Root and path identity checks retain explicit incomplete-inspection limits.
+- Check Core runtime prerequisites before affected setup and memory writes, and
+  propagate setup failures. Core requires Python 3.11 or later; memory also
+  requires SQLite deserialize support.
+- Preflight selected pack and init outputs, expose read-only previews, preserve
+  existing custom files, and refuse conflicts before planned writes. Preserve
+  supported zone maps and legacy hook routing. These bounds do not make the
+  complete setup/update/removal workflow transactional.
+- Quote resolved hook script operands for spaced paths while preserving supported
+  argument tails, and generate Cursor rules with leading alwaysApply metadata.
+- Retry Windows lock-file creation access denial within the existing deadline,
+  allowing a delete-pending handle to close while keeping persistent denial an
+  error. Retain richer worker diagnostics; the earlier CI incident is not
+  retrospectively attributed to this demonstrated failure mode.
+- Prevent consultation thread ID collisions from overwriting earlier decisions.
+- Restore Windows rollback permissions and timestamps through the validated,
+  locked file handle on Python 3.11 and 3.13.
+
+### Changed
+
+- Bind verification evidence to source, execution context and the complete
+  ordered selection; distinguish current complete passes from partial, stale,
+  legacy, invalid and incomplete evidence. Add public-example characterization.
+- Separate semantic-backend configuration, availability, requests and use;
+  report effective candidate/time limits. The API adapter remains unavailable,
+  and a configured local subprocess is not a network sandbox.
+- Clarify privacy/redaction, host delivery, repository-gate and approval limits;
+  strengthen tests that bind redaction assertions to retrieved source content.
+- Expand required regression coverage and configure Windows/Ubuntu CI with
+  Python 3.11/3.13, an explicit Python 3.10 rejection runtime, hashed dependency
+  pins and retained verification diagnostics.
+
+### Validation and limitations
+
+This is a development update, not a declaration of stable-release readiness.
+Independent patch approval for the Bash inspector covers only the verified
+Windows paths. Its cross-platform and host-delivery evidence remains incomplete.
+Local Windows evidence does not establish named-host delivery, POSIX/FIFO or
+real symlink-policy coverage, clean package installation or actual hosted CI
+success. Required checks, receipts and skip disposition must be reviewed on
+an exact publication candidate. Whole-setup preservation, update/removal,
+consent/data handling and representative memory evaluation remain bounded or
+unverified. ControlWork remains a separate product.
 
 ## 3.0.2
 
