@@ -17520,3 +17520,189 @@ def test_p3b2_force_output_preserves_work_review_behavior(tmp_path, capsys):
     external_failure = json.loads(capsys.readouterr().out)
     assert external_failure["ok"] is False
     assert not external_output.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows descriptor metadata control")
+@pytest.mark.parametrize("mode", [0o444, 0o666])
+@pytest.mark.parametrize("time_ns", [-100, 0, 1700000000123456700])
+def test_t13_rollback_metadata_without_fchmod_or_path_mutation(tmp_path, monkeypatch, mode, time_ns):
+    target = tmp_path / "owned.bin"
+    target.write_bytes(b"baseline")
+    native = memory_store.ctypes.WinDLL("kernel32", use_last_error=True)
+    set_attributes = native.SetFileAttributesW
+    set_attributes.argtypes = (memory_store.wintypes.LPCWSTR, memory_store.wintypes.DWORD)
+    set_attributes.restype = memory_store.wintypes.BOOL
+    assert set_attributes(str(target), 0x00000002 | 0x00000020)  # HIDDEN | ARCHIVE
+    os.utime(target, ns=(time_ns, time_ns))
+    os.chmod(target, mode)
+    before = target.stat()
+    identity = memory_store._regular_file_object_identity(target)
+    os.chmod(target, 0o666)
+    with target.open("r+b") as stream:
+        stream.truncate()
+        stream.write(b"transaction output")
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Windows metadata restoration must not use pathname chmod/utime")
+
+    try:
+        with monkeypatch.context() as patch_context:
+            patch_context.delattr(os, "fchmod", raising=False)
+            patch_context.setattr(os, "chmod", forbidden)
+            patch_context.setattr(os, "utime", forbidden)
+            restored = memory_store._restore_owned_file_bytes(
+                target, identity, b"transaction output", b"baseline",
+                mode=stat.S_IMODE(before.st_mode),
+                atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
+            )
+        after = target.stat()
+        assert restored.content == target.read_bytes() == b"baseline"
+        assert restored.identity == identity
+        assert stat.S_IMODE(after.st_mode) == stat.S_IMODE(before.st_mode)
+        assert after.st_file_attributes == before.st_file_attributes
+        assert after.st_atime_ns == before.st_atime_ns
+        assert after.st_mtime_ns == restored.mtime_ns == before.st_mtime_ns
+    finally:
+        os.chmod(target, 0o666)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows descriptor metadata control")
+def test_t13_metadata_clears_readonly_without_zero_attribute_noop(tmp_path):
+    target = tmp_path / "normal.bin"
+    target.write_bytes(b"unchanged")
+    native = memory_store.ctypes.WinDLL("kernel32", use_last_error=True)
+    set_attributes = native.SetFileAttributesW
+    set_attributes.argtypes = (memory_store.wintypes.LPCWSTR, memory_store.wintypes.DWORD)
+    set_attributes.restype = memory_store.wintypes.BOOL
+    assert set_attributes(str(target), 0x00000080)  # NORMAL, valid alone
+    before = target.stat()
+    descriptor = os.open(target, os.O_RDWR | os.O_BINARY)
+    try:
+        for mode in (0o444, 0o666):
+            memory_store._restore_windows_descriptor_metadata(
+                descriptor, mode=mode,
+                atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
+            )
+            current = target.stat()
+            assert bool(current.st_file_attributes & 1) == (mode == 0o444)
+            assert current.st_file_attributes == (1 if mode == 0o444 else 0x80)
+            assert current.st_mtime_ns == before.st_mtime_ns
+    finally:
+        os.close(descriptor)
+        os.chmod(target, 0o666)
+    assert target.read_bytes() == b"unchanged"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows descriptor metadata control")
+@pytest.mark.parametrize("operation", ["GetFileInformationByHandleEx", "SetFileInformationByHandle"])
+def test_t13_native_metadata_error_is_reported_and_descriptor_closed(tmp_path, monkeypatch, operation):
+    target = tmp_path / "owned.bin"
+    target.write_bytes(b"owned output")
+    before = target.stat()
+    identity = memory_store._regular_file_object_identity(target)
+    native = memory_store.ctypes.WinDLL("kernel32", use_last_error=True)
+    calls = []
+
+    def failure(*_args):
+        calls.append(operation)
+        memory_store.ctypes.set_last_error(5)
+        return 0
+
+    proxy = SimpleNamespace(
+        GetFileInformationByHandleEx=native.GetFileInformationByHandleEx,
+        SetFileInformationByHandle=native.SetFileInformationByHandle,
+    )
+    setattr(proxy, operation, failure)
+    opened = []
+    real_open = memory_store._open_identity_bound_regular
+
+    def capture_open(*args, **kwargs):
+        result = real_open(*args, **kwargs)
+        opened.append(result[0])
+        return result
+
+    monkeypatch.setattr(memory_store, "_open_identity_bound_regular", capture_open)
+    monkeypatch.setattr(memory_store.ctypes, "WinDLL", lambda *_args, **_kwargs: proxy)
+    with pytest.raises(OSError) as caught:
+        memory_store._restore_owned_file_bytes(
+            target, identity, b"owned output", b"baseline",
+            mode=stat.S_IMODE(before.st_mode),
+            atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
+        )
+    assert caught.value.winerror == 5
+    assert calls == [operation]
+    assert len(opened) == 1
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+    assert target.read_bytes() == b"baseline"  # Failure is reported after the owned byte restore.
+
+
+def _t13_open_delete_shared_regular(path, _flags, _mode=0o666):
+    """Give the race fixture a real Windows descriptor that permits replacement."""
+    native = memory_store.ctypes.WinDLL("kernel32", use_last_error=True)
+    create = native.CreateFileW
+    create.argtypes = (
+        memory_store.wintypes.LPCWSTR, memory_store.wintypes.DWORD,
+        memory_store.wintypes.DWORD, memory_store.wintypes.LPVOID,
+        memory_store.wintypes.DWORD, memory_store.wintypes.DWORD,
+        memory_store.wintypes.HANDLE,
+    )
+    create.restype = memory_store.wintypes.HANDLE
+    handle = create(str(path), 0x80000000 | 0x40000000, 7, None, 3, 0x00200000, None)
+    if handle == memory_store.ctypes.c_void_p(-1).value:
+        raise memory_store.ctypes.WinError(memory_store.ctypes.get_last_error())
+    try:
+        descriptor = memory_store.msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+    except BaseException:
+        close = native.CloseHandle
+        close.argtypes = (memory_store.wintypes.HANDLE,)
+        close.restype = memory_store.wintypes.BOOL
+        close(handle)
+        raise
+    return descriptor, memory_store._descriptor_identity(descriptor, path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows descriptor metadata control")
+def test_t13_real_replacement_at_metadata_boundary_preserves_foreign_file(tmp_path, monkeypatch):
+    target = tmp_path / "owned.bin"
+    displaced = tmp_path / "displaced.bin"
+    target.write_bytes(b"owned output")
+    identity = memory_store._regular_file_object_identity(target)
+    native = memory_store.ctypes.WinDLL("kernel32", use_last_error=True)
+    original_set = native.SetFileInformationByHandle
+    original_set.argtypes = (
+        memory_store.wintypes.HANDLE, memory_store.ctypes.c_int,
+        memory_store.wintypes.LPVOID, memory_store.wintypes.DWORD,
+    )
+    original_set.restype = memory_store.wintypes.BOOL
+    swapped = []
+    foreign = []
+
+    def replace_then_set(*args):
+        assert not swapped
+        os.replace(target, displaced)
+        target.write_bytes(b"foreign concurrent bytes")
+        os.utime(target, ns=(1700000050000000000, 1700000050000000000))
+        details = target.stat()
+        foreign.append((details.st_ino, details.st_file_attributes, details.st_mtime_ns))
+        swapped.append(True)
+        return original_set(*args)
+
+    proxy = SimpleNamespace(
+        CreateFileW=native.CreateFileW, CloseHandle=native.CloseHandle,
+        GetFileInformationByHandleEx=native.GetFileInformationByHandleEx,
+        SetFileInformationByHandle=replace_then_set,
+    )
+    monkeypatch.setattr(memory_store, "_open_identity_bound_regular", _t13_open_delete_shared_regular)
+    monkeypatch.setattr(memory_store.ctypes, "WinDLL", lambda *_args, **_kwargs: proxy)
+    with pytest.raises(RuntimeError, match="pathname changed after rollback"):
+        memory_store._restore_owned_file_bytes(
+            target, identity, b"owned output", b"restored original bytes",
+            mode=0o666, atime_ns=1600000000000000000, mtime_ns=1600000000000000000,
+        )
+    assert swapped == [True]
+    details = target.stat()
+    assert (details.st_ino, details.st_file_attributes, details.st_mtime_ns) == foreign[0]
+    assert target.read_bytes() == b"foreign concurrent bytes"
+    assert displaced.read_bytes() == b"restored original bytes"
+    assert displaced.stat().st_mtime_ns == 1600000000000000000

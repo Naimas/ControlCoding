@@ -748,6 +748,56 @@ def _owned_file_rollback_state(
     )
 
 
+def _restore_windows_descriptor_metadata(
+    descriptor: int,
+    *,
+    mode: int,
+    atime_ns: int,
+    mtime_ns: int,
+) -> None:
+    """Restore Windows metadata on the already validated, locked file handle."""
+    if os.name != "nt":
+        raise RuntimeError("Windows descriptor metadata is unavailable on this platform")
+
+    # FILE_BASIC_INFO uses signed 100ns ticks since 1601. Zero and negative
+    # values have special meanings; never silently convert a time into one.
+    access_ticks = atime_ns // 100 + 116444736000000000
+    write_ticks = mtime_ns // 100 + 116444736000000000
+    if not (0 < access_ticks < 2**63 and 0 < write_ticks < 2**63):
+        raise OverflowError("rollback timestamps are outside the Windows file-time range")
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_information = kernel32.GetFileInformationByHandleEx
+    set_information = kernel32.SetFileInformationByHandle
+    for function in (get_information, set_information):
+        function.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        )
+        function.restype = wintypes.BOOL
+
+    handle = msvcrt.get_osfhandle(descriptor)
+    current = _WindowsFileBasicInfo()
+    if not get_information(handle, 0, ctypes.byref(current), ctypes.sizeof(current)):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    # Windows chmod semantics affect only READONLY. Preserve other attributes;
+    # NORMAL is valid only by itself, and zero would mean "leave unchanged".
+    attributes = int(current.FileAttributes) & ~(0x00000001 | 0x00000080)
+    if not mode & stat.S_IWRITE:
+        attributes |= 0x00000001
+    restored = _WindowsFileBasicInfo()
+    restored.FileAttributes = attributes or 0x00000080
+    restored.LastAccessTime = access_ticks
+    restored.LastWriteTime = write_ticks
+    # CreationTime and ChangeTime stay zero: do not restore either identity or
+    # generation evidence. No pathname is reopened or mutated by this helper.
+    if not set_information(handle, 0, ctypes.byref(restored), ctypes.sizeof(restored)):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
 def _restore_owned_file_bytes(
     path: Path,
     expected_identity: _FileObjectIdentity,
@@ -788,15 +838,20 @@ def _restore_owned_file_bytes(
             raise RuntimeError(f"transactional memory file changed before rollback mutation: {path}")
         _write_descriptor_bytes(descriptor, replacement_content)
         os.fsync(descriptor)
-        os.fchmod(descriptor, mode)
-        if os.utime in os.supports_fd:
-            os.utime(descriptor, ns=(atime_ns, mtime_ns))
+        if os.name == "nt":
+            _restore_windows_descriptor_metadata(
+                descriptor, mode=mode, atime_ns=atime_ns, mtime_ns=mtime_ns,
+            )
         else:
-            if _regular_file_object_identity(path) != expected_identity:
-                raise RuntimeError(f"transactional memory pathname changed before metadata restore: {path}")
-            os.utime(path, ns=(atime_ns, mtime_ns))
-            if _regular_file_object_identity(path) != expected_identity:
-                raise RuntimeError(f"transactional memory pathname changed during metadata restore: {path}")
+            os.fchmod(descriptor, mode)
+            if os.utime in os.supports_fd:
+                os.utime(descriptor, ns=(atime_ns, mtime_ns))
+            else:
+                if _regular_file_object_identity(path) != expected_identity:
+                    raise RuntimeError(f"transactional memory pathname changed before metadata restore: {path}")
+                os.utime(path, ns=(atime_ns, mtime_ns))
+                if _regular_file_object_identity(path) != expected_identity:
+                    raise RuntimeError(f"transactional memory pathname changed during metadata restore: {path}")
         if _regular_file_object_identity(path) != expected_identity:
             raise RuntimeError(f"transactional memory pathname changed after rollback: {path}")
         restored = _owned_file_rollback_state(
