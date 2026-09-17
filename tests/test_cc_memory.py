@@ -13805,20 +13805,204 @@ def test_memory_privacy_scrub_characterizes_recursion_counts_and_detection_limit
     assert unmatched_fake_secret not in json.dumps(zero_receipt)
 
 
+def _assert_e5_pack_source(payload, path, marker, opaque, plane=None):
+    """Bind the scrubbed title to the selected source citation."""
+    citations = [
+        item for item in payload.get("citations", [])
+        if item.get("path") == path
+        and (plane is None or item.get("plane") == plane)
+        and item.get("recordType") == (
+            "controlwork_entry" if plane == "Project Plane" else "semantic_chunk"
+        )
+    ]
+    assert len(citations) == 1, [
+        (item.get("recordType"), item.get("headingPath"), item.get("title"))
+        for item in citations
+    ]
+    citation = citations[0]
+    title = citation["title"]
+    assert marker in title
+    assert opaque in title
+    assert "sk-e5devsourcefixture1234567890" not in title
+    assert "AKIAE5PROJECTSRC0001" not in title
+    return citation
+
+
+def _assert_e5_pack_markdown(markdown, citation, path, marker, opaque, plane=None):
+    """Check the source's own Markdown citation line, not global marker presence."""
+    citation_id = citation["citationId"]
+    if plane is None:
+        assert "## Evidence Summary\n" in markdown
+        section = markdown.split("## Evidence Summary\n", 1)[1].split("## Edges Used", 1)[0]
+        lines = [line for line in section.splitlines() if line.startswith(f"### [{citation_id}] ")]
+        assert len(lines) == 1
+        line = lines[0]
+        source_section = section.split(line, 1)[1].split("\n### [", 1)[0]
+        assert f"- Citation: `{citation['citation']}`" in source_section
+        assert path in citation["citation"]
+        title_line = line
+    else:
+        heading = "## Dev Plane Evidence" if plane == "Dev Plane" else "## Project Plane Evidence"
+        assert heading + "\n" in markdown
+        section = markdown.split(heading + "\n", 1)[1].split("\n## ", 1)[0]
+        lines = [line for line in section.splitlines() if line.startswith(f"- [{citation_id}] ")]
+        assert len(lines) == 1
+        line = lines[0]
+        expected_location = citation["citation"] if plane == "Dev Plane" else path
+        assert f"`{expected_location}`" in line
+        title_line = line.split(" - `", 1)[0]
+    assert marker in title_line
+    assert opaque in title_line
+
+
+def _assert_e5_evidence_source(payload, node_id, path, marker, opaque):
+    assert payload.get("nodeId") == node_id
+    assert payload.get("path") == path
+    source = payload.get("source") or {}
+    assert source.get("available") is True
+    assert source.get("path") == path
+    assert marker in source["text"]
+    assert opaque in source["text"]
+    assert "sk-e5devsourcefixture1234567890" not in source["text"]
+
+
+def _assert_e5_evidence_text(text, node_id, path, marker, opaque):
+    assert f"Evidence ref: {node_id}\n" in text
+    assert "\nSource\n" in text
+    source_section = text.split("\nSource\n", 1)[1].split("\nRead-only commands", 1)[0]
+    assert path in source_section
+    assert "\nExcerpt\n" in source_section
+    excerpt = source_section.split("\nExcerpt\n", 1)[1]
+    assert marker in excerpt
+    assert opaque in excerpt
+    assert "sk-e5devsourcefixture1234567890" not in excerpt
+
+
+@pytest.mark.parametrize("kind", ["rag", "cross_dev", "cross_project"])
+@pytest.mark.parametrize("omission", ["query_only", "path_only", "unrelated_source"])
+def test_memory_packet_source_assertions_reject_omission(kind, omission):
+    path = (
+        ".controlwork/memory/plans/privacy-plan.md"
+        if kind == "cross_project" else "docs/privacy-boundary.md"
+    )
+    plane = {
+        "rag": None, "cross_dev": "Dev Plane", "cross_project": "Project Plane"
+    }[kind]
+    marker = (
+        "[REDACTED:aws_access_key]" if kind == "cross_project"
+        else "[REDACTED:openai_key]"
+    )
+    opaque = (
+        "e5-project-source-opaque-value" if kind == "cross_project"
+        else "e5-dev-source-opaque-value"
+    )
+    citation_id = {"rag": "C1", "cross_dev": "D1", "cross_project": "P1"}[kind]
+    title = f"Privacy Boundary Evidence {marker} {opaque}"
+    citation = {
+        "citationId": citation_id,
+        "recordType": "controlwork_entry" if plane == "Project Plane" else "semantic_chunk",
+        "plane": plane,
+        "path": path,
+        "title": title,
+        "citation": f"{path}#Privacy Boundary Evidence",
+    }
+    payload = {
+        "query": "privacy boundary [REDACTED:github_token] e5-query-opaque-value",
+        "citations": [],
+    }
+    if omission != "query_only":
+        empty_source = dict(citation, title="Privacy Boundary Evidence")
+        payload["citations"].append(empty_source)
+    if omission == "unrelated_source":
+        other = dict(citation, path="docs/unrelated.md", title=title)
+        if plane == "Project Plane":
+            other["plane"] = "Dev Plane"
+            other["recordType"] = "semantic_chunk"
+        payload["citations"].append(other)
+    assert "e5-query-opaque-value" in payload["query"]
+    with pytest.raises(AssertionError):
+        _assert_e5_pack_source(payload, path, marker, opaque, plane)
+
+    heading = "## Evidence Summary" if plane is None else (
+        "## Project Plane Evidence" if plane == "Project Plane" else "## Dev Plane Evidence"
+    )
+    if plane is None:
+        expected_line = f"### [{citation_id}] Privacy Boundary Evidence"
+        unrelated_line = f"### [C9] {title}"
+        location_line = f"- Citation: `{citation['citation']}`"
+    else:
+        location = path if plane == "Project Plane" else citation["citation"]
+        expected_line = f"- [{citation_id}] Privacy Boundary Evidence - `{location}`"
+        unrelated_line = f"- [D9] {title} - `docs/unrelated.md`"
+        location_line = ""
+    markdown = payload["query"] + "\n\n" + heading + "\n\n"
+    if omission != "query_only":
+        markdown += expected_line + "\n" + location_line + "\n"
+    if omission == "unrelated_source":
+        markdown += unrelated_line + "\n"
+    with pytest.raises(AssertionError):
+        _assert_e5_pack_markdown(markdown, citation, path, marker, opaque, plane)
+
+
+@pytest.mark.parametrize("omission", ["query_only", "path_only", "unrelated_source"])
+def test_memory_evidence_source_assertions_reject_omission(omission):
+    node_id = "ccref:dev:semantic_chunk:fixture"
+    path = "docs/privacy-boundary.md"
+    marker = "[REDACTED:openai_key]"
+    opaque = "e5-dev-source-opaque-value"
+    payload = {"query": "privacy boundary [REDACTED:github_token] e5-query-opaque-value"}
+    if omission != "query_only":
+        payload.update({
+            "nodeId": node_id,
+            "path": path,
+            "source": {"available": True, "path": path, "text": "Privacy Boundary Evidence"},
+        })
+    if omission == "unrelated_source":
+        payload["details"] = {"contentPreview": f"{marker} {opaque}"}
+    assert "e5-query-opaque-value" in payload["query"]
+    with pytest.raises(AssertionError):
+        _assert_e5_evidence_source(payload, node_id, path, marker, opaque)
+
+    text = payload["query"] + "\n"
+    if omission != "query_only":
+        text += f"Evidence ref: {node_id}\n\nSource\n  {path}:1\n\nExcerpt\nPrivacy Boundary Evidence\n"
+    if omission == "unrelated_source":
+        text += f"\nRead-only commands\n{marker} {opaque}\n"
+    with pytest.raises(AssertionError):
+        _assert_e5_evidence_text(text, node_id, path, marker, opaque)
+
+
+def test_memory_packet_review_query_only_omission_rejected():
+    # Exact payload from the E5-B review's saved omission control.
+    payload = {
+        "query": "privacy boundary [REDACTED:openai_key] fixture-sensitive-e5-opaque-value"
+    }
+    with pytest.raises(AssertionError):
+        _assert_e5_pack_source(
+            payload, "docs/privacy-boundary.md",
+            "[REDACTED:openai_key]", "e5-dev-source-opaque-value",
+        )
+
+
 def test_memory_packet_privacy_boundary_across_builders_cli_files_and_adapter(tmp_path, capsys):
-    matched_source = "sk-e5matchedfixture1234567890"
-    matched_query = "sk-e5queryfixture1234567890"
-    unmatched_fake_secret = "fixture-sensitive-e5-opaque-value"
+    matched_source = "sk-e5devsourcefixture1234567890"
+    matched_query = "ghp_e5queryfixture12345678901234567890"
+    source_opaque = "e5-dev-source-opaque-value"
+    query_opaque = "e5-query-opaque-value"
+    project_match = "AKIAE5PROJECTSRC0001"
+    project_opaque = "e5-project-source-opaque-value"
+    dev_marker = "[REDACTED:openai_key]"
+    project_marker = "[REDACTED:aws_access_key]"
     list_path_sentinel = "sk-e5listfixture1234567890"
     output_path_sentinel = "sk-e5outputfixture1234567890"
     docs = tmp_path / "docs"
     docs.mkdir()
     source_path = docs / "privacy-boundary.md"
     source_path.write_text(
-        "# Privacy Boundary Evidence\n\n"
+        f"# Privacy Boundary Evidence {matched_source} {source_opaque}\n\n"
         "Privacy boundary packet retrieval fixture.\n"
         f"Matched synthetic value: {matched_source}\n"
-        f"Opaque synthetic value: {unmatched_fake_secret}\n",
+        f"Opaque synthetic value: {source_opaque}\n",
         encoding="utf-8",
     )
     list_source = docs / f"{list_path_sentinel}.md"
@@ -13833,11 +14017,11 @@ def test_memory_packet_privacy_boundary_across_builders_cli_files_and_adapter(tm
     assert cc.cmd_memory_work_init(tmp_path, project_name="Privacy Work", purpose="Privacy fixture") == 0
     work_plan = tmp_path / ".controlwork" / "memory" / "plans" / "privacy-plan.md"
     work_plan.write_text(
-        "# Privacy Plan\n\n"
+        f"# Privacy Plan {project_match} {project_opaque}\n\n"
         "- **Area**: plans\n"
         "- **Lifecycle**: active\n\n"
         "## Body\n\n"
-        f"Privacy boundary includes {matched_source} and {unmatched_fake_secret}.\n",
+        f"Privacy boundary includes {project_match} and {project_opaque}.\n",
         encoding="utf-8",
     )
 
@@ -13877,35 +14061,52 @@ def test_memory_packet_privacy_boundary_across_builders_cli_files_and_adapter(tm
             if path.is_file()
         }
 
-    def assert_scrubbed_boundary(value) -> None:
-        rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-        assert matched_source not in rendered
-        assert matched_query not in rendered
-        assert "[REDACTED:openai_key]" in rendered
-        assert unmatched_fake_secret in rendered
-
-    query = f"privacy boundary {matched_query} {unmatched_fake_secret}"
+    query = f"privacy boundary {matched_query} {query_opaque}"
     source_before = source_path.read_bytes()
     index_before = memory_snapshot()
 
     rag_payload = rag_pack._build_rag_pack(tmp_path, query, "general", 20, False)
-    assert_scrubbed_boundary(rag_payload)
+    assert matched_query not in json.dumps(rag_payload)
+    assert "[REDACTED:github_token]" in rag_payload["query"]
+    assert query_opaque in rag_payload["query"]
+    rag_source = _assert_e5_pack_source(
+        rag_payload, "docs/privacy-boundary.md", dev_marker, source_opaque
+    )
+    _assert_e5_pack_markdown(
+        rag_payload["packetMarkdown"], rag_source, "docs/privacy-boundary.md",
+        dev_marker, source_opaque,
+    )
     assert rag_payload["privacyReceipt"]["replacementCount"] >= 1
     captured_request = json.loads(adapter_capture.read_text(encoding="utf-8"))
     assert matched_query in captured_request["query"]
     assert matched_source in json.dumps(captured_request["candidates"])
 
-    node_id = next(
-        citation["nodeId"]
-        for citation in rag_payload["citations"]
-        if citation.get("path") == "docs/privacy-boundary.md"
-    )
+    node_id = rag_source["nodeId"]
     evidence_payload = memory_evidence._show_payload(tmp_path, node_id)
-    assert_scrubbed_boundary(evidence_payload)
+    _assert_e5_evidence_source(
+        evidence_payload, node_id, "docs/privacy-boundary.md", dev_marker, source_opaque
+    )
     assert evidence_payload["privacyReceipt"]["replacementCount"] >= 1
 
     cross_payload = cross_plane._build_cross_pack(tmp_path, query, "general", 20, False, False)
-    assert_scrubbed_boundary(cross_payload)
+    assert matched_query not in json.dumps(cross_payload)
+    assert "[REDACTED:github_token]" in cross_payload["query"]
+    assert query_opaque in cross_payload["query"]
+    cross_dev = _assert_e5_pack_source(
+        cross_payload, "docs/privacy-boundary.md", dev_marker, source_opaque, "Dev Plane"
+    )
+    cross_project = _assert_e5_pack_source(
+        cross_payload, ".controlwork/memory/plans/privacy-plan.md",
+        project_marker, project_opaque, "Project Plane",
+    )
+    for citation, path, marker, opaque, plane in (
+        (cross_dev, "docs/privacy-boundary.md", dev_marker, source_opaque, "Dev Plane"),
+        (cross_project, ".controlwork/memory/plans/privacy-plan.md",
+         project_marker, project_opaque, "Project Plane"),
+    ):
+        _assert_e5_pack_markdown(
+            cross_payload["packetMarkdown"], citation, path, marker, opaque, plane
+        )
     assert cross_payload["privacyReceipt"]["enabled"] is True
     assert source_path.read_bytes() == source_before
     assert memory_snapshot() == index_before
@@ -13916,8 +14117,21 @@ def test_memory_packet_privacy_boundary_across_builders_cli_files_and_adapter(tm
         "--limit", "20", "--output", str(rag_output), "--json",
     ]) == 0
     rag_json_text = capsys.readouterr().out
-    assert_scrubbed_boundary(rag_json_text)
     rag_json_payload = json.loads(rag_json_text)
+    rag_json_source = _assert_e5_pack_source(
+        rag_json_payload, "docs/privacy-boundary.md", dev_marker, source_opaque
+    )
+    _assert_e5_pack_markdown(
+        rag_json_payload["packetMarkdown"], rag_json_source,
+        "docs/privacy-boundary.md", dev_marker, source_opaque,
+    )
+    assert matched_query not in rag_json_text
+    assert "[REDACTED:github_token]" in rag_json_payload["query"]
+    assert query_opaque in rag_json_payload["query"]
+    _assert_e5_pack_markdown(
+        rag_output.read_text(encoding="utf-8"), rag_json_source,
+        "docs/privacy-boundary.md", dev_marker, source_opaque,
+    )
     assert rag_json_payload["privacyReceipt"]["enabled"] is True
     assert output_path_sentinel in rag_json_payload["outputPath"]
 
@@ -13926,20 +14140,34 @@ def test_memory_packet_privacy_boundary_across_builders_cli_files_and_adapter(tm
         "--limit", "20", "--output", str(rag_output),
     ]) == 0
     rag_text = capsys.readouterr().out
-    assert_scrubbed_boundary(rag_text)
+    _assert_e5_pack_markdown(
+        rag_text, rag_json_source, "docs/privacy-boundary.md", dev_marker, source_opaque
+    )
+    assert matched_query not in rag_text
+    assert "[REDACTED:github_token]" in rag_text
+    assert query_opaque in rag_text
     assert output_path_sentinel in rag_text
-    assert_scrubbed_boundary(rag_output.read_text(encoding="utf-8"))
+    _assert_e5_pack_markdown(
+        rag_output.read_text(encoding="utf-8"), rag_json_source,
+        "docs/privacy-boundary.md", dev_marker, source_opaque,
+    )
 
     assert _run_main([
         "memory", "evidence", "show", "--project-root", str(tmp_path), node_id, "--json",
     ]) == 0
     evidence_json_text = capsys.readouterr().out
-    assert_scrubbed_boundary(evidence_json_text)
-    assert json.loads(evidence_json_text)["privacyReceipt"]["enabled"] is True
+    evidence_json_payload = json.loads(evidence_json_text)
+    _assert_e5_evidence_source(
+        evidence_json_payload, node_id, "docs/privacy-boundary.md", dev_marker, source_opaque
+    )
+    assert evidence_json_payload["privacyReceipt"]["enabled"] is True
     assert _run_main([
         "memory", "evidence", "show", "--project-root", str(tmp_path), node_id,
     ]) == 0
-    assert_scrubbed_boundary(capsys.readouterr().out)
+    _assert_e5_evidence_text(
+        capsys.readouterr().out, node_id, "docs/privacy-boundary.md",
+        dev_marker, source_opaque,
+    )
 
     assert _run_main([
         "memory", "evidence", "list", "--project-root", str(tmp_path), "--limit", "200", "--json",
@@ -13954,13 +14182,36 @@ def test_memory_packet_privacy_boundary_across_builders_cli_files_and_adapter(tm
         "--limit", "20", "--output", str(cross_output), "--json",
     ]) == 0
     cross_json_text = capsys.readouterr().out
-    assert_scrubbed_boundary(cross_json_text)
-    assert json.loads(cross_json_text)["outputPath"] == ".controlcoding/context-packets/cross-privacy.md"
-    assert_scrubbed_boundary(cross_output.read_text(encoding="utf-8"))
+    cross_json_payload = json.loads(cross_json_text)
+    assert cross_json_payload["outputPath"] == ".controlcoding/context-packets/cross-privacy.md"
+    for path, marker, opaque, plane in (
+        ("docs/privacy-boundary.md", dev_marker, source_opaque, "Dev Plane"),
+        (".controlwork/memory/plans/privacy-plan.md", project_marker, project_opaque, "Project Plane"),
+    ):
+        citation = _assert_e5_pack_source(cross_json_payload, path, marker, opaque, plane)
+        _assert_e5_pack_markdown(cross_json_payload["packetMarkdown"], citation, path, marker, opaque, plane)
+        _assert_e5_pack_markdown(
+            cross_output.read_text(encoding="utf-8"), citation, path, marker, opaque, plane
+        )
+    assert matched_query not in cross_json_text
+    assert "[REDACTED:github_token]" in cross_json_payload["query"]
+    assert query_opaque in cross_json_payload["query"]
     assert _run_main([
         "memory", "cross-pack", "--project-root", str(tmp_path), query, "--limit", "20",
     ]) == 0
-    assert_scrubbed_boundary(capsys.readouterr().out)
+    cross_text = capsys.readouterr().out
+    for path, marker, opaque, plane in (
+        ("docs/privacy-boundary.md", dev_marker, source_opaque, "Dev Plane"),
+        (".controlwork/memory/plans/privacy-plan.md", project_marker, project_opaque, "Project Plane"),
+    ):
+        citation = next(
+            item for item in cross_json_payload["citations"]
+            if item.get("path") == path and item.get("plane") == plane
+        )
+        _assert_e5_pack_markdown(cross_text, citation, path, marker, opaque, plane)
+    assert matched_query not in cross_text
+    assert "[REDACTED:github_token]" in cross_text
+    assert query_opaque in cross_text
 
     assert source_path.read_bytes() == source_before
     assert memory_snapshot() == index_before
