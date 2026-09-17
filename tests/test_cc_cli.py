@@ -13883,3 +13883,526 @@ def test_s4_stat_05_fallback_chmod_failure_cleans_stage_and_preserves_target(
     assert record["cleanupState"] == "succeeded"
     assert not Path(record["path"]).exists()
     assert _s4_static_file_state(target) == target_before
+
+# --------------------------------------------------- E6-B init preservation ---
+
+
+def _init_inventory(root):
+    """Include sibling contents and stable metadata; never follow fixture links."""
+    entry = root.lstat()
+    result = {".": (entry.st_mode, entry.st_ino, entry.st_size, entry.st_mtime_ns, entry.st_ctime_ns, None)}
+    for directory, names, files in os.walk(root, followlinks=False):
+        for name in [*names, *files]:
+            path = Path(directory) / name
+            entry = path.lstat()
+            reparse = getattr(entry, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            data = path.read_bytes() if stat.S_ISREG(entry.st_mode) and not reparse else None
+            result[str(path.relative_to(root))] = (entry.st_mode, entry.st_ino, entry.st_size,
+                                                   entry.st_mtime_ns, entry.st_ctime_ns, data)
+    return result
+
+
+class TestInitPreservation:
+    @pytest.fixture(autouse=True)
+    def isolated_central(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cc, "_central_hooks_dir", lambda: tmp_path / "central fixture" / "hooks")
+
+    @pytest.mark.parametrize("central", [False, True])
+    def test_fresh_preview_repeat_preserves_bytes_metadata_constants(self, tmp_path, central, monkeypatch):
+        project = tmp_path / "project with spaces"
+        project.mkdir()
+        (tmp_path / "sibling").write_bytes(b"foreign sibling")
+        (project / ".git/hooks").mkdir(parents=True)
+        constants = json.dumps(cc.BASE_SETTINGS, sort_keys=True)
+        before = _init_inventory(tmp_path)
+        with patch.object(cc, "_apply_init", side_effect=AssertionError("preview applied")):
+            assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert _init_inventory(tmp_path) == before
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert not (project / ".claude").exists()
+        for name in ["CONTROLCODING.md", "STATUS.md", "ROADMAP.md", "BUGS.md"]:
+            (project / name).write_bytes(("custom " + name).encode())
+        for name in ["pre-commit", "post-commit"]:
+            (project / ".git/hooks" / name).write_bytes(b"#!/bin/sh\n# custom gate\n")
+        config = project / ".controlcoding/cc_config.json"
+        data = json.loads(config.read_bytes()); data["custom"] = {"keep": 17}
+        config.write_bytes(json.dumps(data, indent=4).replace("\n", "\r\n").encode())
+        settings = project / ".controlcoding/settings.json"
+        data = json.loads(settings.read_bytes()); data["foreign"] = [1, 2]; data["mcpServers"] = {"owner": {"command": "custom"}}
+        settings.write_bytes(json.dumps(data, indent=4).replace("\n", "\r\n").encode())
+        ignore = project / ".gitignore"
+        ignore.write_bytes(b"# user patterns\r\nprivate/\r\n" + ignore.read_bytes().replace(b"\n", b"\r\n") + b"tail/\r\n")
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert _init_inventory(tmp_path) == before
+        assert json.dumps(cc.BASE_SETTINGS, sort_keys=True) == constants
+        hooks = cc._central_hooks_dir() if central else project / "hooks"
+        for name in cc.INIT_HOOKS:
+            assert (hooks / name).read_bytes() == (cc.HOOKS_DIR / name).read_bytes()
+        assert (project / "tools/fitness_check.py").read_bytes() == (cc.SCRIPT_DIR / "fitness_check.py").read_bytes()
+        assert data["hooks"]
+        assert json.loads(config.read_bytes())["hooks_location"] == ("central" if central else "local")
+        assert not (project / "hooks").exists() if central else (project / "hooks").is_dir()
+
+    @pytest.mark.parametrize("destination,payload", [
+        (".controlcoding/settings.json", b'{"custom":true}'),
+        (".controlcoding/settings.json", b'{broken'),
+        (".controlcoding/settings.json", b'[]'),
+        (".controlcoding/settings.json", b'{"hooks":[]}'),
+        (".controlcoding/settings.json", b'{"hooks":{"PreToolUse":[{"hooks":[{"command":7}]}]}}'),
+        (".controlcoding/cc_config.json", b'{broken'),
+        (".controlcoding/cc_config.json", b'[]'),
+        (".controlcoding/cc_config.json", b'{"hooks_location":"central"}'),
+        (".controlcoding/cc_config.json", b'{"documentation_mode":null}'),
+        (".controlcoding/cc_config.json", b'{"cc_artifact_mode":"unknown"}'),
+        (".gitignore", b'# owner patterns\n'),
+        ("hooks/check_boundaries.py", b'# customized hook\n'),
+        ("tools/fitness_check.py", b'# customized fitness\n'),
+        (".claude/settings.json", b'[]'),
+        (".claude/cc_config.json", b'{bad'),
+    ])
+    def test_conflicts_precede_all_writes(self, tmp_path, destination, payload, monkeypatch):
+        project = tmp_path / "project"; project.mkdir()
+        path = project / destination; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(payload)
+        before = _init_inventory(tmp_path)
+        with patch.object(cc, "_apply_init", side_effect=AssertionError("conflict applied")):
+            for preview in [True, False]:
+                assert cc.cmd_init(project, preview_only=preview) == 1
+                assert _init_inventory(tmp_path) == before
+        assert not (project / "CONTROLCODING.md").exists()
+
+    @pytest.mark.parametrize("central", [False, True])
+    def test_custom_central_or_local_hook_never_uses_mtime(self, tmp_path, central):
+        project = tmp_path / "project"; project.mkdir()
+        dest = cc._central_hooks_dir() if central else project / "hooks"
+        dest.mkdir(parents=True)
+        target = dest / cc.INIT_HOOKS[0]; target.write_bytes(b"# custom oldest hook\n"); os.utime(target, (1, 1))
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central) == 1
+        assert _init_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("source", ["template", "hook", "fitness"])
+    def test_missing_required_source_is_read_only(self, tmp_path, source, monkeypatch):
+        project = tmp_path / "project"; project.mkdir()
+        missing = tmp_path / "missing source"
+        monkeypatch.setattr(cc, {"template": "TEMPLATES_DIR", "hook": "HOOKS_DIR", "fitness": "SCRIPT_DIR"}[source], missing)
+        before = _init_inventory(tmp_path)
+        for preview in [True, False]:
+            assert cc.cmd_init(project, preview_only=preview) == 1
+            assert _init_inventory(tmp_path) == before
+
+    def test_late_ignore_conflict_and_explicit_manual_reconciliation(self, tmp_path):
+        project = tmp_path / "project"; project.mkdir()
+        ignore = project / ".gitignore"; ignore.write_text(cc.GITIGNORE_MARKER_START + "\n# incomplete\n")
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project) == 1
+        assert _init_inventory(tmp_path) == before
+        ignore.write_text("# retained user pattern\nprivate/\n" + cc._build_gitignore_block(), encoding="utf-8")
+        original = ignore.read_bytes()
+        assert cc.cmd_init(project) == 0
+        assert ignore.read_bytes() == original
+
+    @pytest.mark.parametrize("central", [False, True])
+    def test_legacy_inputs_custom_fields_and_effective_policy(self, tmp_path, central):
+        project = tmp_path / "project"; project.mkdir(); legacy = project / ".claude"; legacy.mkdir()
+        (project / "CLAUDE.md").write_bytes(b"legacy context\r\n")
+        config = {"hooks_location": "central" if central else "local", "documentation_mode": "project_managed",
+                  "cc_artifact_mode": "shared_repo", "protected_zones": [], "custom": {"owner": 1}}
+        (legacy / "cc_config.json").write_text(json.dumps(config), encoding="utf-8")
+        (legacy / "settings.json").write_bytes(b'{"custom":true,"mcpServers":{"foreign":{"command":"owner"}}}\r\n')
+        before = _init_inventory(legacy)
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert _init_inventory(legacy) == before
+        assert not (project / "CONTROLCODING.md").exists()
+        assert json.loads((project / ".controlcoding/cc_config.json").read_bytes()) == config
+        settings = json.loads((project / ".controlcoding/settings.json").read_bytes())
+        assert settings["custom"] is True and settings["mcpServers"]["foreign"]["command"] == "owner"
+        assert "hooks" in settings
+        assert (project / ".gitignore").read_text() == cc._build_gitignore_block(central, "project_managed", "shared_repo")
+        # Canonical-first selection must not consume a differing ordinary legacy config.
+        (legacy / "cc_config.json").write_bytes(b'{"hooks_location":"opposite"}')
+        assert cc.cmd_init(project, central_hooks=central) == 0
+
+    @pytest.mark.parametrize("destination,kind", [
+        ("CONTROLCODING.md", "dir"), ("CLAUDE.md", "dir"), ("STATUS.md", "dir"),
+        ("ROADMAP.md", "dir"), ("BUGS.md", "dir"), ("devlog", "file"), ("hooks", "file"),
+        ("tools", "file"), (".controlcoding", "file"), (".claude", "file"),
+        (".git", "file"), (".git/hooks", "file"), (".git/hooks/pre-commit", "dir"),
+        (".controlcoding/settings.json", "dir"), ("hooks/check_boundaries.py", "dir"),
+    ])
+    def test_unsafe_types(self, tmp_path, destination, kind):
+        project = tmp_path / "project"; project.mkdir(); target = project / destination
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if kind == "dir": target.mkdir()
+        else: target.write_bytes(b"foreign file")
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project) == 1
+        assert _init_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("which", ["settings", "first_document"])
+    def test_executed_publication_race_preserves_concurrent_target(self, tmp_path, monkeypatch, record_property, capsys, which):
+        project = tmp_path / "project"; project.mkdir()
+        target = project / (".controlcoding/settings.json" if which == "settings" else "CONTROLCODING.md")
+        real = os.link; events = []; foreign = b'FOREIGN concurrent publication\r\n'
+        def link(src, dst, *args, **kwargs):
+            if Path(dst) == target:
+                events.append("actual_os_link_boundary"); target.write_bytes(foreign); events.append("concurrent_writer_executed")
+            return real(src, dst, *args, **kwargs)
+        monkeypatch.setattr(os, "link", link)
+        monkeypatch.setattr(os, "replace", lambda *a, **k: pytest.fail("unsafe overwrite fallback"))
+        assert cc.cmd_init(project) == 1
+        assert events == ["actual_os_link_boundary", "concurrent_writer_executed"]
+        assert target.read_bytes() == foreign
+        assert not list(project.rglob("*.tmp"))
+        assert "Partial initialization" in capsys.readouterr().out
+        if which == "settings": assert (project / "CONTROLCODING.md").is_file()
+        record_property("events", json.dumps(events)); record_property("returncode", 1)
+
+    @pytest.mark.parametrize("replacement", ["none", "file", "directory"])
+    def test_unsupported_publication_and_owned_stage_cleanup(self, tmp_path, monkeypatch, record_property, capsys, replacement):
+        project = tmp_path / "project"; project.mkdir(); events = []; stages = []; real = os.link
+        def link(src, dst, *args, **kwargs):
+            if Path(dst).name == "settings.json":
+                events.append("actual_link_failure"); stages.append(Path(src))
+                if replacement != "none":
+                    Path(src).unlink()
+                    if replacement == "file": Path(src).write_bytes(b"foreign stage")
+                    else: Path(src).mkdir()
+                    events.append("stage_replacement_executed")
+                raise OSError("fixture publication unsupported")
+            return real(src, dst, *args, **kwargs)
+        monkeypatch.setattr(os, "link", link)
+        monkeypatch.setattr(os, "replace", lambda *a, **k: pytest.fail("replacement fallback"))
+        assert cc.cmd_init(project) == 1
+        assert events[0] == "actual_link_failure" and len(stages) == 1
+        assert not (project / ".controlcoding/settings.json").exists()
+        assert (project / "CONTROLCODING.md").exists()
+        if replacement == "none": assert not stages[0].exists()
+        elif replacement == "file": assert stages[0].read_bytes() == b"foreign stage"
+        else: assert stages[0].is_dir()
+        assert "Partial initialization" in capsys.readouterr().out
+        record_property("events", json.dumps(events)); record_property("returncode", 1)
+
+    @pytest.mark.parametrize("which", ["skip", "legacy", "source"])
+    def test_executed_input_change_before_last_validation(self, tmp_path, monkeypatch, record_property, which):
+        project = tmp_path / "project"; project.mkdir(); events = []
+        if which == "skip":
+            assert cc.cmd_init(project) == 0; target = project / ".controlcoding/settings.json"
+        elif which == "legacy":
+            target = project / ".claude/settings.json"; target.parent.mkdir(); target.write_bytes(b'{}')
+        else:
+            source = tmp_path / "hook sources"; source.mkdir()
+            for name in cc.INIT_HOOKS: (source / name).write_bytes((cc.HOOKS_DIR / name).read_bytes())
+            monkeypatch.setattr(cc, "HOOKS_DIR", source); target = source / cc.INIT_HOOKS[0]
+        foreign = b'FOREIGN changed input\n'
+        original = cc._init_recheck; count = 0
+        # For retained settings, inject immediately before the final validation.
+        trigger = 3 + len(cc._plan_init(project)["files"]) if which == "skip" else 2
+        def recheck(observations):
+            nonlocal count
+            count += 1
+            if count == trigger:
+                events.append("last_validation_entered"); target.write_bytes(foreign); events.append("input_writer_executed")
+            return original(observations)
+        monkeypatch.setattr(cc, "_init_recheck", recheck)
+        assert cc.cmd_init(project) == 1
+        assert events == ["last_validation_entered", "input_writer_executed"]
+        assert target.read_bytes() == foreign
+        if which != "skip": assert not (project / "CONTROLCODING.md").exists()
+        record_property("events", json.dumps(events)); record_property("returncode", 1)
+
+    def test_plan_is_not_mutated_by_application(self, tmp_path):
+        from copy import deepcopy
+        plan = cc._plan_init(tmp_path)
+        before = deepcopy(plan)
+        created = []; cc._apply_init(plan, created)
+        assert plan == before and created
+
+    @pytest.mark.parametrize("preview", [False, True])
+    def test_actual_cli_from_other_cwd_and_invalid_roots(self, tmp_path, preview, record_property):
+        cwd = tmp_path / "other cwd with spaces"; cwd.mkdir()
+        project = tmp_path / "target with spaces"; project.mkdir()
+        (tmp_path / "file root").write_bytes(b"foreign")
+        outcomes = []
+        for target, expected in [(project, 0), (tmp_path / "absent root", 1), (tmp_path / "file root", 1)]:
+            argv = [sys.executable, "-B", str(CC_SCRIPT), "init", "--project-root", str(target)]
+            if preview: argv.append("--preview-only")
+            before = _init_inventory(tmp_path)
+            result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+            outcomes.append({"argv": argv, "returncode": result.returncode})
+            assert result.returncode == expected, result.stdout + result.stderr
+            if preview or expected: assert _init_inventory(tmp_path) == before
+        record_property("cli", json.dumps(outcomes))
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows junction control")
+    @pytest.mark.parametrize("kind", ["root", "ancestor", "target", "central", "legacy"])
+    def test_junctions_refused_without_following_outside(self, tmp_path, kind, record_property):
+        outside = tmp_path / "outside"; outside.mkdir(); (outside / "sentinel").write_bytes(b"outside")
+        project = tmp_path / "project"; project.mkdir()
+        junction = {"root": tmp_path / "root link", "ancestor": project / ".controlcoding",
+                    "target": project / "STATUS.md", "central": cc._central_hooks_dir(),
+                    "legacy": project / ".claude"}[kind]
+        junction.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)], capture_output=True, text=True)
+        if result.returncode: pytest.skip(f"junction unavailable: {result.stderr or result.stdout}")
+        before = _init_inventory(outside)
+        root = junction if kind == "root" else project
+        assert cc.cmd_init(root, central_hooks=kind == "central") == 1
+        if kind == "root":
+            for preview in [[], ["--preview-only"]]:
+                cli = subprocess.run([sys.executable, "-B", str(CC_SCRIPT), "init", "--project-root", str(root), *preview], capture_output=True, text=True)
+                assert cli.returncode == 1
+        assert _init_inventory(outside) == before
+        record_property("junction", kind)
+
+    @pytest.mark.parametrize("kind", ["dangling", "ancestor", "root", "central"])
+    def test_real_symlinks_refused(self, tmp_path, kind):
+        outside = tmp_path / "outside"; outside.mkdir(); (outside / "sentinel").write_bytes(b"outside")
+        project = tmp_path / "project"; project.mkdir()
+        target = {"dangling": project / "STATUS.md", "ancestor": project / ".controlcoding",
+                  "root": tmp_path / "root link", "central": cc._central_hooks_dir()}[kind]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try: target.symlink_to(outside / "absent" if kind == "dangling" else outside, target_is_directory=kind != "dangling")
+        except OSError as exc: pytest.skip(f"real symlink unavailable: {exc}")
+        before = _init_inventory(outside)
+        assert cc.cmd_init(target if kind == "root" else project, central_hooks=kind == "central") == 1
+        assert _init_inventory(outside) == before
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX FIFO control; not available on Windows")
+    def test_special_file_refused(self, tmp_path):
+        os.mkfifo(tmp_path / "STATUS.md")
+        assert cc.cmd_init(tmp_path) == 1
+
+    @pytest.mark.parametrize("condition", ["compatible", "missing_source", "late_conflict"])
+    def test_preview_audit_records_zero_mutations(self, tmp_path, monkeypatch, record_property, condition):
+        project = tmp_path / "project"; project.mkdir(); events = []; active = False
+        if condition == "missing_source": monkeypatch.setattr(cc, "SCRIPT_DIR", tmp_path / "missing")
+        if condition == "late_conflict":
+            (project / ".controlcoding").mkdir()
+            (project / ".controlcoding/settings.json").write_bytes(b'{"owner":true}')
+        before = _init_inventory(tmp_path)
+        def audit(event, args):
+            if not active: return
+            if event == "open":
+                mode, flags = args[1], args[2]
+                if (isinstance(mode, str) and any(c in mode for c in "wax+")) or (isinstance(flags, int) and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC)):
+                    events.append(event)
+            elif event in {"os.mkdir", "os.remove", "os.rmdir", "os.rename", "os.link", "os.symlink", "os.chmod", "os.utime", "shutil.copyfile"}:
+                events.append(event)
+        sys.addaudithook(audit)
+        active = True
+        try:
+            result = cc.cmd_init(project, preview_only=True)
+        finally:
+            active = False
+        assert result == (0 if condition == "compatible" else 1)
+        assert events == [] and _init_inventory(tmp_path) == before
+        record_property("mutation_events", json.dumps(events)); record_property("returncode", result)
+
+# ------------------------------------------- E6-B/R1 init compatibility ---
+
+
+def _init_hook_identities(settings):
+    from collections import Counter
+    return Counter(
+        (event, entry.get("matcher"), hook["command"])
+        for event, entries in settings["hooks"].items()
+        for entry in entries
+        for hook in entry.get("hooks", [])
+        if "command" in hook
+    )
+
+
+class TestInitCompatibility:
+    @pytest.fixture(autouse=True)
+    def detached_constants(self, tmp_path, monkeypatch):
+        # Parse pristine constants so earlier initializer calls cannot mask a trigger.
+        tree = ast.parse(CC_SCRIPT.read_bytes())
+        base = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "BASE_SETTINGS"
+                            for t in node.targets))
+        monkeypatch.setattr(cc, "BASE_SETTINGS", ast.literal_eval(base))
+        monkeypatch.setattr(cc, "_central_hooks_dir", lambda: tmp_path / "central owner's é hooks")
+
+    @pytest.mark.parametrize("location", [".controlcoding", ".claude"])
+    @pytest.mark.parametrize("zones,expected", [
+        ({"deny": ["src/core/"], "warn": ["src/shared/"]},
+         [("src/core/", "deny"), ("src/shared/", "warn")]),
+        ({"deny": [{"path": "private/", "description": "owner", "extra": 7}],
+          "warn": [{"path": "public/"}], "owner": {"keep": True}},
+         [("private/", "deny"), ("public/", "warn")]),
+        (["shared/", {"path": "core/", "level": "deny", "custom": 2}],
+         [("shared/", "warn"), ("core/", "deny")]),
+        ([], []), (None, []), ({}, []),
+        ({"deny": ["core/"]}, [("core/", "deny")]),
+        ({"warn": ["shared/"]}, [("shared/", "warn")]),
+        ({"deny": None, "warn": []}, []),
+        ({"deny": [], "warn": None}, []),
+        ({"deny": [7, {"custom": 1}], "warn": [None]}, []),
+        ("missing", []),
+    ], ids=["map", "objects", "list", "empty-list", "null", "empty-map",
+            "deny-only", "warn-only", "null-deny", "null-warn", "loose-items", "missing"])
+    def test_supported_zones(self, tmp_path, location, zones, expected, record_property):
+        project = tmp_path / "project"; project.mkdir()
+        source = project / location / "cc_config.json"; source.parent.mkdir()
+        config = {"custom": {"owner": ["retain", 17]}}
+        if zones != "missing":
+            config["protected_zones"] = zones
+        source.write_bytes((json.dumps(config, indent=3) + "\r\n").encode())
+        original = _init_inventory(source.parent)[source.name]
+        before = _init_inventory(tmp_path)
+        preview = cc.cmd_init(project, preview_only=True)
+        record_property("preview_return", preview)
+        assert _init_inventory(tmp_path) == before
+        assert preview == 0
+        applied = cc.cmd_init(project)
+        record_property("apply_return", applied)
+        assert applied == 0
+        assert _init_inventory(source.parent)[source.name] == original
+        stored = json.loads((project / ".controlcoding/cc_config.json").read_bytes())
+        assert stored["custom"] == config["custom"]
+        if zones != "missing":
+            assert stored["protected_zones"] == zones
+            actual = [(z["path"], z["level"]) for z in cc._normalize_protected_zones(stored["protected_zones"])]
+            record_property("normalized_zones", json.dumps(actual))
+            assert actual == expected
+        elif location == ".controlcoding":
+            assert "protected_zones" not in stored
+        else:
+            assert [(z["path"], z["level"]) for z in stored["protected_zones"]] == [("src/core/", "deny")]
+        after = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, preview_only=True) == 0
+        assert cc.cmd_init(project) == 0
+        assert _init_inventory(tmp_path) == after
+
+    @pytest.mark.parametrize("location", [".controlcoding", ".claude"])
+    @pytest.mark.parametrize("zones", [False, 7, "deny", {"deny": {}}, {"warn": "path"},
+                                      {"deny": False}, {"deny": [], "warn": 0}])
+    def test_malformed_zone_containers_refuse_before_writes(self, tmp_path, location, zones, capsys):
+        project = tmp_path / "project"; project.mkdir()
+        source = project / location / "cc_config.json"; source.parent.mkdir()
+        source.write_text(json.dumps({"protected_zones": zones, "custom": 7}), encoding="utf-8")
+        before = _init_inventory(tmp_path)
+        with patch.object(cc, "_apply_init", side_effect=AssertionError("invalid config applied")):
+            for preview in [True, False]:
+                assert cc.cmd_init(project, preview_only=preview) == 1
+                assert "protected_zones" in capsys.readouterr().out
+                assert _init_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("name,central", [
+        ("plain", False), ("project with spaces", False), ("progetto-é", False),
+        ("owner's-project", False), ("plain", True),
+    ], ids=["plain", "spaces", "unicode", "quote", "central-quote"])
+    @pytest.mark.parametrize("resolved", [False, True], ids=["relative", "resolved"])
+    def test_six_legacy_hooks_have_six_identities(self, tmp_path, name, central, resolved, record_property):
+        from copy import deepcopy
+        project = tmp_path / name; project.mkdir()
+        dest = cc._central_hooks_dir() if central else project / "hooks"
+        settings = deepcopy(cc.BASE_SETTINGS)
+        if resolved:
+            settings = cc._resolve_hook_commands(settings, dest)
+        legacy = project / ".claude"; legacy.mkdir()
+        (legacy / "settings.json").write_bytes((json.dumps(settings, indent=3) + "\r\n").encode())
+        if central:
+            (legacy / "cc_config.json").write_text('{"hooks_location":"central"}', encoding="utf-8")
+        retained = _init_inventory(legacy)
+        constants = deepcopy(cc.BASE_SETTINGS)
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert _init_inventory(tmp_path) == before
+        plan = cc._plan_init(project, central_hooks=central)
+        plan_before = deepcopy(plan)
+        assert cc._plan_init(project, central_hooks=central) == plan
+        assert plan == plan_before
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        actual = _init_hook_identities(json.loads((project / ".controlcoding/settings.json").read_bytes()))
+        # Build the six expected commands independently of the resolver/merge.
+        expected_settings = deepcopy(constants)
+        for entries in expected_settings["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    filename = hook["command"].removeprefix("python hooks/")
+                    hook["command"] = "python " + shlex.quote(dest.resolve().as_posix() + "/" + filename)
+        expected = _init_hook_identities(expected_settings)
+        record_property("actual_identities", json.dumps([[*key, count] for key, count in actual.items()]))
+        record_property("expected_identities", json.dumps([[*key, count] for key, count in expected.items()]))
+        assert sum(expected.values()) == 6 and all(v == 1 for v in expected.values())
+        assert actual == expected
+        assert _init_inventory(legacy) == retained
+        assert cc.BASE_SETTINGS == constants
+        after = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert _init_inventory(tmp_path) == after
+        assert cc.BASE_SETTINGS == constants and plan == plan_before
+
+    def test_partial_legacy_preserves_metadata_foreign_tails_and_duplicates(self, tmp_path):
+        from copy import deepcopy
+        from collections import Counter
+        project = tmp_path / "owner's é project"; project.mkdir()
+        base = deepcopy(cc.BASE_SETTINGS)
+        event = next(iter(base["hooks"]))
+        entry = deepcopy(base["hooks"][event][0])
+        entry["owner"] = {"timeout": 19}
+        entry["hooks"][0]["timeout"] = 23
+        tail = '  --label "a b" --literal \'x y\' > result.txt'
+        foreign = {"matcher": "Owner", "owner": [1, 2], "hooks": [
+            {"type": "command", "command": "owner-tool --keep exact", "timeout": 31},
+            {"type": "command", "command": "python /absolute/foreign.py --x"},
+            {"type": "command", "command": "python hooks/custom.py" + tail},
+        ]}
+        settings = {"hooks": {event: [entry, deepcopy(entry)], "ForeignEvent": [foreign]},
+                    "mcpServers": {"foreign": {"command": "owner", "env": {"SYNTHETIC": "value"}}},
+                    "custom": {"retain": True}}
+        legacy = project / ".claude"; legacy.mkdir()
+        source = legacy / "settings.json"; source.write_text(json.dumps(settings), encoding="utf-8")
+        before = _init_inventory(legacy)
+        expected_existing = deepcopy(settings)
+        for entries in expected_existing["hooks"].values():
+            for item in entries:
+                for hook in item["hooks"]:
+                    command = hook["command"]
+                    if command.startswith("python hooks/"):
+                        filename, sep, rest = command[len("python hooks/"):].partition(" ")
+                        hook["command"] = "python " + shlex.quote((project / "hooks" / filename).resolve().as_posix()) + (sep + rest if sep else "")
+        assert cc.cmd_init(project) == 0
+        result = json.loads((project / ".controlcoding/settings.json").read_bytes())
+        assert result["custom"] == settings["custom"] and result["mcpServers"] == settings["mcpServers"]
+        assert result["hooks"][event][:2] == expected_existing["hooks"][event]
+        assert result["hooks"]["ForeignEvent"] == expected_existing["hooks"]["ForeignEvent"]
+        expected = _init_hook_identities(expected_existing)
+        for ev, entries in base["hooks"].items():
+            for item in entries:
+                for hook in item["hooks"]:
+                    filename = hook["command"].removeprefix("python hooks/")
+                    key = (ev, item.get("matcher"), "python " + shlex.quote((project / "hooks" / filename).resolve().as_posix()))
+                    if key not in expected:
+                        expected.update([key])
+        assert _init_hook_identities(result) == expected
+        assert sum(expected.values()) == 10  # six required, one user duplicate, three foreign
+        assert _init_inventory(legacy) == before
+        after = _init_inventory(tmp_path)
+        assert cc.cmd_init(project) == 0
+        assert _init_inventory(tmp_path) == after
+
+    @pytest.mark.parametrize("resolved", [False, True], ids=["needs-rewrite", "compatible"])
+    def test_canonical_comparison_keeps_original_input(self, tmp_path, resolved, capsys):
+        from copy import deepcopy
+        project = tmp_path / "project with spaces"; project.mkdir()
+        config = project / ".controlcoding"; config.mkdir()
+        settings = deepcopy(cc.BASE_SETTINGS)
+        if resolved:
+            settings = cc._resolve_hook_commands(settings, project / "hooks")
+        settings["custom"] = {"keep": 7}
+        source = config / "settings.json"; source.write_bytes((json.dumps(settings, indent=4) + "\r\n").encode())
+        original = _init_inventory(config)["settings.json"]
+        before = _init_inventory(tmp_path)
+        for preview in [True, False]:
+            result = cc.cmd_init(project, preview_only=preview)
+            assert result == (0 if resolved else 1)
+            if not resolved:
+                assert "reconcile explicitly" in capsys.readouterr().out
+            if preview or not resolved:
+                assert _init_inventory(tmp_path) == before
+            assert _init_inventory(config)["settings.json"] == original

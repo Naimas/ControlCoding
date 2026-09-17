@@ -7326,8 +7326,15 @@ def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bo
         f"profile={gateway_payload['hostProfile']['capabilityClass']}/{gateway_payload['hostProfile']['protectionModel']})"
     )
 
-    # Run init (skips files that already exist)
-    cmd_init(project, central_hooks=use_central_hooks, quiet=True)
+    # Earlier context/config/Git stages may already have changed the project.
+    init_result = cmd_init(project, central_hooks=use_central_hooks, quiet=True)
+    if init_result != 0:
+        warn(
+            "Partial setup: minimal initialization did not complete. "
+            "Earlier context/config/Git output may remain. Inspect the reported conflict "
+            "and existing setup output before retrying; no rollback was performed."
+        )
+        return init_result
 
     launcher_files = _write_host_integration_assets(
         project,

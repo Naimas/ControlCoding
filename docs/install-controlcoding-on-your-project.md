@@ -539,6 +539,65 @@ only when you intentionally want:
 
 `init` is not the preferred first-time onboarding path for a normal project.
 
+`init --preview-only` uses the same complete preflight as application. The target
+must already be an ordinary directory. Preview reports planned creates and keeps,
+or a conflict path and reason, without creating files, directories, Git state or
+memory. Use the same `--central-hooks` choice for preview and apply:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py init --preview-only --project-root .
+python /path/to/ControlCoding/scripts/cc.py init --project-root .
+```
+
+Minimal init preserves existing context, status, roadmap, bug documents and Git
+hook scripts. Keeping a file does not validate its contents or demonstrate hook
+enforcement. A retained Git script means init did not install its generated CC
+gate there. Canonical context/config/settings take precedence; ordinary legacy
+inputs remain unchanged, and absent canonical configuration can be created using
+their custom fields. A legacy-only `CLAUDE.md` remains the context source.
+
+Hook and fitness copies must be absent or byte-identical. Different copies
+conflict regardless of mtime. Existing `cc_config.json` must be valid and
+compatible with the requested local/central mode. Existing settings must already
+contain the effective hook configuration; custom and foreign MCP entries remain
+intact. An existing `.gitignore` must contain the complete block for the selected
+config, including its artifact policy; a start marker alone is insufficient.
+Compatible files retain their exact bytes and metadata, including CRLF.
+
+This conservative policy can require manual reconciliation before init works:
+
+1. Run preview and inspect the reported file locally. Keep custom data and rules.
+2. For settings, compare the hook entries with `BASE_SETTINGS` and the selected
+   hook directory in `scripts/cc.py`. Generated shell commands use quoted absolute
+   script paths; `_resolve_hook_commands` defines their spelling. Add or reconcile
+   the required entries deliberately without removing foreign hooks or MCP data.
+3. For `.gitignore`, compare with `_build_gitignore_block` in that source, using
+   the effective `documentation_mode`, `cc_artifact_mode` and local/central choice.
+   Preserve unrelated patterns while reconciling the complete required block.
+   For configuration, review the reported mode/value conflict explicitly.
+4. Run preview again, then apply only after the conflicts are resolved.
+
+Do not delete user settings, remove custom Git hooks, or disable protection to
+bypass a conflict. Familiar filenames, markers, old shipped text and timestamps
+are not permission to replace a file. Init has no force-overwrite option.
+
+Absent files are published exclusively. A concurrent destination causes failure
+and remains intact; unsupported publication fails without a replacement fallback.
+Init rejects symlinks, junctions/reparse paths and special files in relevant
+roots, parents, inputs and destinations. A `.git` indirection file is unsupported;
+init does not follow it into another Git directory. These checks are bounded
+local preservation measures, not a universal hostile-filesystem guarantee.
+
+Preflight is not rollback: a late I/O failure can leave earlier created outputs.
+The nonzero result reports partial initialization and the recorded output paths;
+inspect those paths and any reported temporary-stage cleanup problem before
+retrying. Base `setup` stops after a nonzero init result, before host assets,
+adapter sync, memory, packs, backend settings changes and doctor. **Earlier setup
+context/config/Git work may already remain.** Canonical-context regeneration and
+other setup stages have separate behavior; whole setup is not preservation-safe
+or atomic under this minimal-init contract. Update/removal behavior is also
+outside this contract.
+
 ## Migrating A Historical Host Adapter
 
 Do not use `--force` to claim an existing adapter. Start with a preview:

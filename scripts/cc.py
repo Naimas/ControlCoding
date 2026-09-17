@@ -8134,223 +8134,320 @@ def _build_repo_postcommit_hook_script(hooks_dir: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def cmd_init(project: Path, central_hooks: bool = False, quiet: bool = False):
-    """Initialize ControlCoding in a project."""
+def _init_snapshot(path: Path, *, directory: bool = False):
+    """Inspect lexical paths without accepting symlinks, reparse or special files."""
+    from cc_setup import _pack_check_parents, _pack_safe_kind
+    _pack_check_parents(path)
+    entry = _pack_safe_kind(path, expected="dir" if directory else "file")
+    if entry is None:
+        return None
+    identity = (entry.st_dev, entry.st_ino, entry.st_mode)
+    if directory:
+        return identity
+    data = path.read_bytes()
+    after = _pack_safe_kind(path, expected="file")
+    signature = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    if after is None or signature(entry) != signature(after):
+        raise OSError(f"init input changed while reading: {path}")
+    return (*signature(after), data)
+
+
+def _init_observe(path: Path, observations: dict, *, directory: bool = False):
+    for parent in reversed(path.parents):
+        snapshot = _init_snapshot(parent, directory=True)
+        item = (True, snapshot)
+        if parent in observations and observations[parent] != item:
+            raise OSError(f"init parent changed during preflight: {parent}")
+        observations[parent] = item
+    snapshot = _init_snapshot(path, directory=directory)
+    item = (directory, snapshot)
+    if path in observations and observations[path] != item:
+        raise OSError(f"init path changed during preflight: {path}")
+    observations[path] = item
+    return snapshot
+
+
+def _init_recheck(observations: dict):
+    for path, (directory, snapshot) in observations.items():
+        if _init_snapshot(path, directory=directory) != snapshot:
+            raise OSError(f"init path changed after preflight: {path}; inspect and preview again")
+
+
+def _plan_init(project: Path, central_hooks: bool = False):
+    """Build detached init outputs, retaining every consumed input for revalidation."""
+    from copy import deepcopy
+    observations, files, directories = {}, {}, {}
+    if _init_observe(project, observations, directory=True) is None:
+        raise OSError(f"init requires an existing ordinary project directory: {project}")
+
+    def directory(path):
+        snapshot = _init_observe(path, observations, directory=True)
+        directories[path] = "keep" if snapshot is not None else "create"
+
+    def source(path):
+        snapshot = _init_observe(path, observations)
+        if snapshot is None:
+            raise OSError(f"required init source missing: {path}")
+        return snapshot[-1]
+
+    def output(path, data, *, retain=False, reason="identical bytes"):
+        snapshot = _init_observe(path, observations)
+        if snapshot is not None and not retain and snapshot[-1] != data:
+            raise OSError(f"init conflict at {path}: existing bytes differ; reconcile explicitly before init")
+        files[path] = {"data": data, "action": "keep" if snapshot is not None else "create",
+                       "reason": reason if snapshot is not None else "absent destination"}
+
+    def json_input(name):
+        target = _control_plane_path(project, name)
+        legacy = _legacy_control_plane_path(project, name)
+        canonical = _init_observe(target, observations)
+        legacy_snapshot = _init_observe(legacy, observations)
+        selected = canonical if canonical is not None else legacy_snapshot
+        read_path = target if canonical is not None else legacy
+        try:
+            value = json.loads(selected[-1].decode("utf-8")) if selected is not None else {}
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError(f"init requires valid UTF-8 JSON: {read_path}") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"init requires a JSON object: {read_path}")
+        return target, canonical, value
+
+    canonical = _canonical_context_path(project)
+    legacy = _legacy_context_path(project)
+    context_snapshot = _init_observe(canonical, observations)
+    legacy_snapshot = _init_observe(legacy, observations)
+    if context_snapshot is not None:
+        output(canonical, context_snapshot[-1], retain=True, reason="existing context retained, contents not validated")
+    if legacy_snapshot is not None:
+        output(legacy, legacy_snapshot[-1], retain=True, reason="legacy context retained, contents not validated")
+    if context_snapshot is None and legacy_snapshot is None:
+        template = source(TEMPLATES_DIR / "CLAUDE.md.template").decode("utf-8")
+        output(canonical, template.replace(LEGACY_CONTEXT_FILENAME, CANONICAL_CONTEXT_FILENAME).encode("utf-8"))
+
+    documents = {
+        "STATUS.md": (
+            '# Project Status\n'
+            '> Updated: (date) | Session: 0\n'
+            '\n'
+            '## Current State\n'
+            'Project initialized with ControlCoding.\n'
+            '\n'
+            '## Next Steps\n'
+            '- Configure CONTROLCODING.md as the canonical project context\n'
+            '- Sync the host-native context files you actually use\n'
+            '- Define module boundaries (stable/shared/features/workspace)\n'
+            '- Add domain invariants\n'
+            '\n'
+            '## Blockers\n'
+            'None\n'
+        ),
+        "ROADMAP.md": (
+            '# Project Roadmap\n'
+            '> Updated: (date)\n'
+            '\n'
+            '## Current State\n'
+            '\n'
+            'Project initialized with ControlCoding.\n'
+            '\n'
+            '## Active Items\n'
+            '\n'
+            '- [ ] Review and refine CONTROLCODING.md\n'
+            '- [ ] Define real module boundaries\n'
+            '- [ ] Build the first useful vertical slice\n'
+            '- [ ] Add invariant-oriented verification\n'
+        ),
+        "BUGS.md": (
+            '# Known Bugs\n'
+            '> Updated: (date)\n'
+            '\n'
+            'No known bugs recorded yet.\n'
+        ),
+    }
+    for name, text in documents.items():
+        output(project / name, text.encode("utf-8"), retain=True, reason="existing document retained, contents not validated")
+    directory(project / "devlog")
+    hooks_dest = Path(os.path.abspath(_central_hooks_dir())) if central_hooks else project / "hooks"
+    directory(hooks_dest)
+    for name in INIT_HOOKS:
+        output(hooks_dest / name, source(HOOKS_DIR / name))
+    directory(project / "tools")
+    fitness_dest = project / "tools" / "fitness_check.py"
+    output(fitness_dest, source(SCRIPT_DIR / "fitness_check.py"))
+
+    git_dir = project / ".git"
+    _init_observe(git_dir, observations, directory=True)
+    git_hooks = git_dir / "hooks"
+    if _init_observe(git_hooks, observations, directory=True) is not None:
+        for name, text in [("pre-commit", _build_repo_precommit_hook_script(hooks_dest, fitness_dest)),
+                           ("post-commit", _build_repo_postcommit_hook_script(hooks_dest))]:
+            output(git_hooks / name, text.encode("utf-8"), retain=True,
+                   reason="existing Git hook retained; generated CC gate not installed here or verified")
+
+    directory(_control_plane_dir(project))
+    config_path, config_snapshot, config = json_input("cc_config.json")
+    mode = "central" if central_hooks else "local"
+    for key, default, allowed in [("hooks_location", "local", {"local", "central"}),
+                                  ("documentation_mode", "managed", {"managed", "project_managed"}),
+                                  ("cc_artifact_mode", "local_only", {"local_only", "shared_repo"})]:
+        value = config.get(key, default)
+        if not isinstance(value, str) or value not in allowed:
+            raise ValueError(f"init config conflict at {config_path}: invalid {key}")
+    config_present = config_snapshot is not None or observations[_legacy_control_plane_path(project, "cc_config.json")][1] is not None
+    if config_present and config.get("hooks_location", "local") != mode:
+        raise ValueError(f"init config conflict at {config_path}: hooks_location must be {mode}; reconcile explicitly")
+    protected_zones = config.get("protected_zones", [])
+    if protected_zones is not None and not isinstance(protected_zones, (list, dict)):
+        raise ValueError(f"init config conflict at {config_path}: protected_zones must be a list or deny/warn object")
+    if isinstance(protected_zones, dict):
+        for level in ("deny", "warn"):
+            entries = protected_zones.get(level)
+            if entries is not None and not isinstance(entries, list):
+                raise ValueError(f"init config conflict at {config_path}: protected_zones.{level} must be a list")
+    if config_snapshot is None:
+        config = deepcopy(config)
+        config.setdefault("documentation_mode", "managed")
+        config.setdefault("cc_artifact_mode", "local_only")
+        config.setdefault("hooks_location", mode)
+        config.setdefault("protected_zones", [
+            {"path": "src/core/", "description": "Core modules - stable zone (example)", "level": "deny"},
+        ])
+    output(config_path, (json.dumps(config, indent=2) + "\n").encode("utf-8"),
+           retain=True, reason="compatible config retained, including custom fields")
+
+    ignore = project / ".gitignore"
+    block = _build_gitignore_block(central_hooks=central_hooks,
+                                  documentation_mode=config.get("documentation_mode", "managed"),
+                                  cc_artifact_mode=config.get("cc_artifact_mode", "local_only"))
+    ignore_snapshot = _init_observe(ignore, observations)
+    if ignore_snapshot is not None:
+        lines = ignore_snapshot[-1].decode("utf-8").splitlines()
+        required = block.splitlines()
+        if not any(lines[i:i + len(required)] == required for i in range(len(lines))):
+            raise ValueError(f"init conflict at {ignore}: complete required block missing; reconcile explicitly before init")
+    output(ignore, block.encode("utf-8"), retain=True, reason="complete required ignore block retained")
+
+    settings_path, settings_snapshot, settings = json_input("settings.json")
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError(f"init settings conflict at {settings_path}: hooks must be an object")
+    for entries in hooks.values():
+        if not isinstance(entries, list):
+            raise ValueError(f"init settings conflict at {settings_path}: hook events must contain lists")
+        for entry in entries:
+            if (not isinstance(entry, dict) or not isinstance(entry.get("matcher", ""), str)
+                    or not isinstance(entry.get("hooks", []), list)):
+                raise ValueError(f"init settings conflict at {settings_path}: invalid hook entry")
+            for hook in entry.get("hooks", []):
+                if not isinstance(hook, dict) or not isinstance(hook.get("command", ""), str):
+                    raise ValueError(f"init settings conflict at {settings_path}: invalid hook command")
+    if "mcpServers" in settings and not isinstance(settings["mcpServers"], dict):
+        raise ValueError(f"init settings conflict at {settings_path}: mcpServers must be an object")
+    # Resolve detached inputs consistently; retain settings for conflict comparison.
+    merged = _resolve_hook_commands(deepcopy(settings), hooks_dest)
+    base = _resolve_hook_commands(deepcopy(BASE_SETTINGS), hooks_dest)
+    merged["hooks"] = merge_hooks(merged.get("hooks", {}), base["hooks"])
+    if settings_snapshot is not None and merged != settings:
+        raise ValueError(f"init conflict at {settings_path}: hook configuration needs changes; reconcile explicitly before init")
+    output(settings_path, (json.dumps(merged, indent=2) + "\n").encode("utf-8"),
+           retain=True, reason="semantically compatible settings retained")
+    _init_recheck(observations)
+    return {"observations": observations, "directories": directories, "files": files}
+
+
+def _init_publish(path: Path, data: bytes, observations: dict, created: list):
+    """Publish exclusively; never replace a destination or clean up a foreign stage."""
+    import tempfile
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.init-", suffix=".tmp")
+    stage = Path(name)
+    identity = os.fstat(descriptor)
+    owned = (identity.st_dev, identity.st_ino)
+    try:
+        stream = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        with stream:
+            stream.write(data)
+            stream.flush()
+        snapshot = _init_snapshot(stage)
+        if snapshot is None or snapshot[:2] != owned or snapshot[-1] != data:
+            raise OSError(f"init stage changed: {stage}")
+        _init_recheck(observations)
+        os.link(stage, path)
+        created.append(path)
+        published = _init_snapshot(path)
+        if published is None or published[:2] != owned or published[-1] != data:
+            raise OSError(f"init publication changed: {path}")
+        observations[path] = (False, published)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        # Revalidate directory identities before accessing the lexical stage name.
+        for parent in stage.parents:
+            expected = observations.get(parent)
+            if expected is not None and _init_snapshot(parent, directory=True) != expected[1]:
+                raise OSError(f"init stage cleanup refused: parent changed; inspect {stage}")
+        from cc_setup import _pack_safe_kind
+        entry = _pack_safe_kind(stage, expected="file")
+        if entry is not None:
+            if (entry.st_dev, entry.st_ino) != owned:
+                raise OSError(f"init stage cleanup refused: foreign replacement retained at {stage}")
+            stage.unlink()
+        # Unlinking the other hard link can change the published inode's ctime.
+        if path in created:
+            current = _init_snapshot(path)
+            if current is None or current[:2] != owned or current[-1] != data:
+                raise OSError(f"init output changed during cleanup: {path}")
+            observations[path] = (False, current)
+
+
+def _apply_init(plan: dict, created: list):
+    observations = dict(plan["observations"])
+    _init_recheck(observations)
+    required = set(plan["directories"])
+    for path in [*plan["directories"], *plan["files"]]:
+        required.update(path.parents)
+    for path in sorted(required, key=lambda p: (len(p.parts), str(p))):
+        directory, snapshot = observations[path]
+        if directory and snapshot is None:
+            _init_recheck(observations)
+            path.mkdir()
+            created.append(path)
+            observations[path] = (True, _init_snapshot(path, directory=True))
+    for path, item in plan["files"].items():
+        _init_recheck(observations)
+        if item["action"] == "create":
+            _init_publish(path, item["data"], observations, created)
+    _init_recheck(observations)
+
+
+def cmd_init(project: Path, central_hooks: bool = False, quiet: bool = False, *, preview_only: bool = False):
+    """Preflight all minimal-init outputs and preserve existing files conservatively."""
+    project = Path(os.path.abspath(project))
     if not quiet:
-        print(f"\nInitializing ControlCoding in: {project}\n")
-
-    # 1. Canonical context source
-    canonical_context = _canonical_context_path(project)
-    legacy_context = _legacy_context_path(project)
-    if canonical_context.exists():
-        warn(f"{CANONICAL_CONTEXT_FILENAME} already exists, skipping canonical context creation")
-        if legacy_context.exists():
-            info("Legacy CLAUDE.md already exists; keeping it as an optional compatibility file")
-    elif legacy_context.exists():
-        warn(
-            "Legacy CLAUDE.md already exists, leaving it as the current context source. "
-            f"Migrate to {CANONICAL_CONTEXT_FILENAME} later if you want a host-neutral source of truth."
-        )
-    else:
-        template = TEMPLATES_DIR / "CLAUDE.md.template"
-        if not template.exists():
-            fail(f"Template not found: {template}")
-            return 1
-        template_text = template.read_text(encoding="utf-8")
-        canonical_text = template_text.replace(LEGACY_CONTEXT_FILENAME, CANONICAL_CONTEXT_FILENAME)
-        canonical_context.write_text(canonical_text, encoding="utf-8")
-        ok(f"Created {CANONICAL_CONTEXT_FILENAME} from template")
-
-    # 2. STATUS.md
-    status_md = project / "STATUS.md"
-    if status_md.exists():
-        warn("STATUS.md already exists, skipping")
-    else:
-        status_md.write_text(
-            "# Project Status\n"
-            "> Updated: (date) | Session: 0\n\n"
-            "## Current State\n"
-            "Project initialized with ControlCoding.\n\n"
-            "## Next Steps\n"
-            "- Configure CONTROLCODING.md as the canonical project context\n"
-            "- Sync the host-native context files you actually use\n"
-            "- Define module boundaries (stable/shared/features/workspace)\n"
-            "- Add domain invariants\n\n"
-            "## Blockers\n"
-            "None\n",
-            encoding="utf-8",
-        )
-        ok("Created STATUS.md")
-
-    # 3. devlog/
-    devlog = project / "devlog"
-    devlog.mkdir(exist_ok=True)
-    ok("Created devlog/")
-
-    # 3b. ROADMAP.md
-    roadmap_md = project / "ROADMAP.md"
-    if roadmap_md.exists():
-        warn("ROADMAP.md already exists, skipping")
-    else:
-        roadmap_md.write_text(
-            "# Project Roadmap\n"
-            "> Updated: (date)\n\n"
-            "## Current State\n\n"
-            "Project initialized with ControlCoding.\n\n"
-            "## Active Items\n\n"
-            "- [ ] Review and refine CONTROLCODING.md\n"
-            "- [ ] Define real module boundaries\n"
-            "- [ ] Build the first useful vertical slice\n"
-            "- [ ] Add invariant-oriented verification\n",
-            encoding="utf-8",
-        )
-        ok("Created ROADMAP.md")
-
-    # 3c. BUGS.md
-    bugs_md = project / "BUGS.md"
-    if bugs_md.exists():
-        warn("BUGS.md already exists, skipping")
-    else:
-        bugs_md.write_text(
-            "# Known Bugs\n"
-            "> Updated: (date)\n\n"
-            "No known bugs recorded yet.\n",
-            encoding="utf-8",
-        )
-        ok("Created BUGS.md")
-
-    # 4. hooks/
-    if central_hooks:
-        hooks_dest = _central_hooks_dir()
-        hooks_dest.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for hook_file in INIT_HOOKS:
-            src = HOOKS_DIR / hook_file
-            if not src.exists():
-                warn(f"Hook not found: {hook_file}")
-                continue
-            dest = hooks_dest / hook_file
-            if dest.exists():
-                # Update if source is newer
-                if src.stat().st_mtime > dest.stat().st_mtime:
-                    shutil.copy2(src, dest)
-                    copied += 1
-            else:
-                shutil.copy2(src, dest)
-                copied += 1
-            # Validate copied hook is syntactically valid Python
-            if hook_file.endswith(".py"):
-                try:
-                    import ast
-                    ast.parse(dest.read_text(encoding="utf-8"))
-                except SyntaxError as e:
-                    warn(f"{hook_file} has syntax error: {e}")
-        ok(f"Central hooks at {hooks_dest} ({copied} updated)")
-    else:
-        hooks_dest = project / "hooks"
-        hooks_dest.mkdir(exist_ok=True)
-        for hook_file in INIT_HOOKS:
-            src = HOOKS_DIR / hook_file
-            if not src.exists():
-                warn(f"Hook not found: {hook_file}")
-                continue
-            dest = hooks_dest / hook_file
-            if dest.exists():
-                warn(f"hooks/{hook_file} already exists, skipping")
-            else:
-                shutil.copy2(src, dest)
-                # Validate copied hook is syntactically valid Python
-                try:
-                    import ast
-                    ast.parse(dest.read_text(encoding="utf-8"))
-                except SyntaxError as e:
-                    warn(f"hooks/{hook_file} has syntax error: {e}")
-        ok(f"Copied {len(INIT_HOOKS)} hook scripts to hooks/")
-
-    # 5. Fitness check tool
-    tools_dir = project / "tools"
-    tools_dir.mkdir(exist_ok=True)
-    fitness_src = SCRIPT_DIR / "fitness_check.py"
-    fitness_dest = tools_dir / "fitness_check.py"
-    if fitness_dest.exists():
-        warn("tools/fitness_check.py already exists, skipping")
-    elif fitness_src.exists():
-        shutil.copy2(fitness_src, fitness_dest)
-        ok("Copied fitness_check.py to tools/")
-    else:
-        warn("fitness_check.py not found in scripts/ (skipping)")
-
-    # 6. Git hook baseline for repo-side enforcement
-    git_hooks_dir = project / ".git" / "hooks"
-    if git_hooks_dir.is_dir():
-        precommit_dest = git_hooks_dir / "pre-commit"
-        if precommit_dest.exists():
-            warn(".git/hooks/pre-commit already exists, skipping")
-        else:
-            precommit_dest.write_text(
-                _build_repo_precommit_hook_script(hooks_dest, fitness_dest if fitness_dest.exists() else None),
-                encoding="utf-8",
-            )
-            ok("Installed git pre-commit hook (repo boundary gate + fitness baseline)")
-
-        postcommit_dest = git_hooks_dir / "post-commit"
-        if postcommit_dest.exists():
-            warn(".git/hooks/post-commit already exists, skipping")
-        else:
-            postcommit_dest.write_text(
-                _build_repo_postcommit_hook_script(hooks_dest),
-                encoding="utf-8",
-            )
-            ok("Installed git post-commit hook (CodeWarden review gate baseline)")
-    else:
-        info("Not a git repository, skipping repo-side git hooks")
-
-    # 7. .gitignore block for CC artifacts
-    if _ensure_gitignore(project, central_hooks=central_hooks):
-        ok("Added ControlCoding block to .gitignore")
-    else:
-        info(".gitignore already has ControlCoding block")
-
-    # 8. .controlcoding/cc_config.json (shared zone configuration)  [was 7]
-    cc_config = _control_plane_path(project, "cc_config.json")
-    if cc_config.exists():
-        warn(f"{_control_plane_display_path('cc_config.json')} already exists, skipping")
-    else:
-        cc_config.parent.mkdir(parents=True, exist_ok=True)
-        cc_config.write_text(json.dumps({
-            "documentation_mode": "managed",
-            "cc_artifact_mode": "local_only",
-            "hooks_location": "local",
-            "protected_zones": [
-                {"path": "src/core/", "description": "Core modules - stable zone (example)", "level": "deny"},
-            ]
-        }, indent=2), encoding="utf-8")
-        ok(f"Created {_control_plane_display_path('cc_config.json')} (edit to define your protected zones)")
-
-    # 8b. Save hooks_location preference
-    if central_hooks:
-        _save_hooks_location(project, "central")
-        ok("Saved hooks_location=central in cc_config.json")
-
-    # 9. .controlcoding/settings.json  [was 8]
-    settings = load_settings(project)
-    if "hooks" in settings:
-        warn(f"{_control_plane_display_path('settings.json')} already has hooks, merging carefully")
-        settings["hooks"] = merge_hooks(settings["hooks"], BASE_SETTINGS["hooks"])
-    else:
-        settings["hooks"] = BASE_SETTINGS["hooks"]
-    settings = _resolve_hook_commands(settings, hooks_dest)
-    save_settings(project, settings)
-    ok(f"Configured {_control_plane_display_path('settings.json')} with hooks (absolute paths)")
-
+        print(f"\n{'Previewing' if preview_only else 'Initializing'} ControlCoding in: {project}\n")
+    try:
+        plan = _plan_init(project, central_hooks)
+    except (OSError, ValueError, UnicodeError) as exc:
+        fail(f"Init preflight conflict (no init writes): {exc}")
+        return 1
+    for path, action in plan["directories"].items():
+        info(f"{action} directory: {path}")
+    for path, item in plan["files"].items():
+        info(f"{item['action']}: {path} ({item['reason']})")
+    if preview_only:
+        return 0
+    created = []
+    try:
+        _apply_init(plan, created)
+    except (OSError, ValueError) as exc:
+        fail(f"Partial initialization: {exc}. No rollback was performed; inspect before retrying.")
+        for path in created:
+            info(f"Published/created earlier (inspect current state): {path}")
+        if not created:
+            info("No completed output creation was recorded.")
+        return 1
     if not quiet:
-        print(f"\n{green('Done!')} ControlCoding methodology baseline initialized at L1 (Documented).")
-        print("\nNext steps:")
-        print(f"  1. Edit {CANONICAL_CONTEXT_FILENAME} with your project's architecture rules")
-        print("  2. Sync the host-native context files you actually use")
-        print("  3. Define module boundaries in the [BOUNDARIES] section")
-        print("  4. Run: python cc.py doctor --project-root", str(project))
-        print("  5. Optional: python cc.py install debug-tools (adds L3 consultation)")
+        ok("Minimal initialization complete. Retained files are not an enforcement attestation.")
+        info(f"Review {CANONICAL_CONTEXT_FILENAME}, module boundaries and host configuration; then run doctor.")
     return 0
 
 
@@ -18810,6 +18907,8 @@ def main():
         help="Store hooks in ~/.controlcoding/hooks/ (shared across projects)",
     )
 
+    p_init.add_argument("--preview-only", action="store_true", help="Plan minimal init without writing files")
+
     # cc install
     p_install = sub.add_parser("install", help="Install a feature pack")
     p_install.add_argument(
@@ -21742,9 +21841,9 @@ def main():
     if extra_args and not (args.command == "surface" and getattr(args, "surface_command", "") == "run"):
         parser.error(f"unrecognized arguments: {' '.join(extra_args)}")
 
-    project = (Path(os.path.abspath(args.project_root)) if args.command == "install"
+    project = (Path(os.path.abspath(args.project_root)) if args.command in {"install", "init"}
                else args.project_root.resolve())
-    if not project.is_dir() and not (
+    if args.command != "init" and not project.is_dir() and not (
         args.command == "install" and args.preview_only and not project.exists()
     ):
         message = f"{project} is not a directory"
@@ -21760,7 +21859,7 @@ def main():
         return 1
 
     if args.command == "init":
-        return cmd_init(project, central_hooks=getattr(args, "central_hooks", False))
+        return cmd_init(project, central_hooks=getattr(args, "central_hooks", False), preview_only=args.preview_only)
     elif args.command == "setup":
         if getattr(args, "chat_guide", False):
             return cmd_setup_chat_guide(

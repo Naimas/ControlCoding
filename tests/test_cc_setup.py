@@ -4836,3 +4836,44 @@ def test_t_fs_03_real_descriptor_channel_drift(tmp_path, monkeypatch):
     assert descriptor_before[6] == descriptor_after[6] == path_before[6]
     assert type(raised.value) is cc._AdapterIdentityDriftError
     assert target.read_bytes() == payload
+
+@pytest.mark.parametrize("failure", ["returned", "planner", "publication", "success"])
+def test_cmd_setup_stops_after_init_failure(tmp_path, monkeypatch, capsys, record_property, failure):
+    project = tmp_path / "project"; project.mkdir()
+    answers = _write_base_setup_answers(tmp_path, memory_default_policy="deferred", selected_packs=[])
+    _patch_base_setup_runtime(monkeypatch)
+    calls = []
+    target = project / ".gitignore"
+    if failure == "planner": target.write_bytes(b"custom incomplete ignore\n")
+    real_init = cc.cmd_init
+    def init(*args, **kwargs):
+        calls.append("init")
+        return 7 if failure == "returned" else real_init(*args, **kwargs)
+    monkeypatch.setattr(cc_setup, "cmd_init", init)
+    def spy(name, result):
+        def call(*args, **kwargs): calls.append(name); return result
+        return call
+    monkeypatch.setattr(cc_setup, "_write_host_integration_assets", spy("host", []))
+    monkeypatch.setattr(cc_setup, "_sync_host_context_file_compat", spy("adapter", "AGENTS.md"))
+    monkeypatch.setattr(cc_setup, "_bootstrap_default_project_memory", spy("memory", {"status": "deferred"}))
+    monkeypatch.setattr(cc_setup, "cmd_install", spy("pack", 0))
+    monkeypatch.setattr(cc_setup, "save_settings", spy("backend", None))
+    monkeypatch.setattr(cc_setup, "cmd_doctor", spy("doctor", 0))
+    if failure == "publication":
+        real_link = os.link
+        def link(src, dst, *args, **kwargs):
+            if Path(dst).name == "settings.json":
+                calls.append("publication_race"); Path(dst).write_bytes(b"concurrent settings\n")
+            return real_link(src, dst, *args, **kwargs)
+        monkeypatch.setattr(os, "link", link)
+    result = cc_setup.cmd_setup(project, answers_file=answers, apply_answers=True)
+    assert result == (0 if failure == "success" else 7 if failure == "returned" else 1)
+    assert calls == (["init", "host", "adapter", "memory", "doctor"] if failure == "success"
+                     else ["init", "publication_race"] if failure == "publication" else ["init"])
+    assert (project / "CONTROLCODING.md").read_bytes() == ("# Test" + os.linesep).encode()
+    assert (project / ".controlcoding/cc_config.json").exists()
+    if failure == "planner": assert target.read_bytes() == b"custom incomplete ignore\n"
+    if failure == "publication": assert (project / ".controlcoding/settings.json").read_bytes() == b"concurrent settings\n"
+    output = capsys.readouterr().out
+    if failure != "success": assert "Partial setup" in output and "Earlier context/config/Git" in output and "no rollback" in output
+    record_property("events", json.dumps(calls)); record_property("returncode", result)
