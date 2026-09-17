@@ -328,10 +328,12 @@ def _patch_base_setup_runtime(monkeypatch) -> None:
     monkeypatch.setattr(cc_setup, "cmd_doctor", lambda project: 0)
 
 
+@pytest.mark.parametrize("real_pack_conflict", [False, True, "settings"])
 def test_cmd_setup_propagates_pack_failure_before_dependent_steps(
     tmp_path,
     monkeypatch,
     capsys,
+    real_pack_conflict,
 ):
     answers_file = tmp_path / "setup_answers.json"
     answers_file.write_text(
@@ -391,14 +393,42 @@ def test_cmd_setup_propagates_pack_failure_before_dependent_steps(
         calls.append(("doctor", None))
         return 0
 
-    monkeypatch.setattr(cc_setup, "cmd_install", fail_install)
+    if real_pack_conflict:
+        if real_pack_conflict == "settings":
+            target = tmp_path / ".controlcoding" / "settings.json"
+            target.parent.mkdir()
+            target.write_bytes(b'{"custom":true,"mcpServers":{"foreign":{"command":"owner"}}}\n')
+        else:
+            target = tmp_path / "tools" / "cc_lockfile.py"
+            target.parent.mkdir()
+            target.write_bytes(b"CUSTOM SETUP PACK\n")
+        original = target.read_bytes()
+        at_pack = []
+        def install_with_conflict(project, pack):
+            calls.append(("install", pack))
+            at_pack.append(target.read_bytes())
+            return cc.cmd_install(project, pack)
+        monkeypatch.setattr(cc_setup, "cmd_install", install_with_conflict)
+    else:
+        monkeypatch.setattr(cc_setup, "cmd_install", fail_install)
     monkeypatch.setattr(cc_setup, "cmd_doctor", unexpected_doctor)
 
     result = cc_setup.cmd_setup(tmp_path, answers_file=answers_file)
 
-    assert result == 7
+    assert result == (1 if real_pack_conflict else 7)
     assert calls == [("install", "session-manager")]
-    assert "Base setup complete!" not in capsys.readouterr().out
+    if real_pack_conflict:
+        assert at_pack == [original]
+        assert target.read_bytes() == original
+        if real_pack_conflict == "settings":
+            assert not (tmp_path / "tools").exists()
+        assert (tmp_path / "CONTROLCODING.md").is_file()
+    output = capsys.readouterr().out
+    assert "Base setup complete!" not in output
+    assert "Partial setup: pack 'session-manager' did not complete" in output
+    assert "no rollback was performed" in output
+    if real_pack_conflict == "settings":
+        assert "settings conflict" in output and "reconcile settings" in output
 
 
 def test_backend_preference_has_neutral_default_and_accepts_undetected_supported_backend(capsys):

@@ -13,9 +13,11 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
@@ -32,6 +34,7 @@ from cc import (
     CANONICAL_CONTEXT_FILENAME,
     LEGACY_CONTEXT_FILENAME,
     CONTROL_PLANE_DIRNAME,
+    LEGACY_CONTROL_PLANE_DIRNAME,
     PUBLIC_CHAT_STARTER_RELATIVE_PATH,
     load_settings, save_settings,
     cmd_init, cmd_install, cmd_doctor,
@@ -81,22 +84,287 @@ def _save_settings_atomic(path: Path, settings: dict, *, os_module=os, json_modu
 
 
 def _install_pack_files_atomic(project: Path, pack_files: dict, *, warn_callback, ok_callback):
-    for dest_dir, files in pack_files.items():
-        target = project / dest_dir
-        target.mkdir(parents=True, exist_ok=True)
-        for source in files:
-            destination = target / source.name
-            if destination.exists():
-                warn_callback(f"{dest_dir}{source.name} already exists, overwriting")
-            descriptor, temporary_name = tempfile.mkstemp(dir=target, prefix=f".{source.name}.", suffix=".tmp")
+    """Compatibility entry point for a single pack, with conservative publication."""
+    plan = _plan_pack_files(project, [pack_files])
+    _apply_pack_files(plan, ok_callback=ok_callback)
+
+
+def _pack_lstat(path: Path):
+    try:
+        return os.lstat(path)
+    except FileNotFoundError:
+        return None
+
+
+def _pack_safe_kind(path: Path, *, expected: str | None = None):
+    entry = _pack_lstat(path)
+    if entry is None:
+        return None
+    reparse = getattr(entry, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if stat.S_ISLNK(entry.st_mode) or reparse:
+        raise OSError(f"unsafe symlink or reparse path: {path}")
+    kind = "file" if stat.S_ISREG(entry.st_mode) else "dir" if stat.S_ISDIR(entry.st_mode) else "unsafe"
+    if kind == "unsafe" or (expected is not None and kind != expected):
+        raise OSError(f"unsafe {kind} path: {path} (expected {expected or 'regular file or directory'})")
+    return entry
+
+
+def _pack_check_parents(path: Path):
+    for parent in reversed(path.parents):
+        _pack_safe_kind(parent, expected="dir")
+
+
+def _pack_snapshot(path: Path, data: bytes):
+    entry = _pack_safe_kind(path, expected="file")
+    return (entry.st_dev, entry.st_ino, entry.st_size, entry.st_mtime_ns,
+            entry.st_ctime_ns, data)
+
+
+def _pack_target_decision(path: Path, wanted: bytes):
+    _pack_check_parents(path)
+    entry = _pack_safe_kind(path)
+    if entry is None:
+        return "create", None
+    _pack_safe_kind(path, expected="file")
+    current = path.read_bytes()
+    if current != wanted:
+        raise OSError(f"content conflict at {path}: existing file differs; reconcile it before install")
+    return "skip", _pack_snapshot(path, current)
+
+
+def _pack_read_source(path: Path):
+    _pack_check_parents(path)
+    _pack_safe_kind(path, expected="file")
+    if _pack_lstat(path) is None:
+        raise OSError(f"pack source missing: {path}")
+    return path.read_bytes()
+
+
+def _plan_pack_files(project: Path, pack_maps: list[dict]):
+    """Read every source and inspect every target before the first write."""
+    _pack_check_parents(project)
+    _pack_safe_kind(project, expected="dir")
+    files = {}
+    for pack_files in pack_maps:
+        for dest_dir, sources in pack_files.items():
+            relative = Path(dest_dir)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise OSError(f"unsafe pack destination: {dest_dir}")
+            for source in sources:
+                data = _pack_read_source(source)
+                target = project / relative / source.name
+                if target in files:
+                    if files[target]["data"] != data:
+                        raise OSError(f"conflicting selected pack sources for {target}")
+                    continue
+                decision, snapshot = _pack_target_decision(target, data)
+                files[target] = {"source": source, "data": data,
+                                 "decision": decision, "snapshot": snapshot}
+    return files
+
+
+def _pack_recheck_file(path: Path, item: dict):
+    decision, snapshot = _pack_target_decision(path, item["data"])
+    if decision != item["decision"] or (decision == "skip" and snapshot != item["snapshot"]):
+        raise OSError(f"pack target changed after preflight: {path}")
+
+
+def _pack_ensure_directory(path: Path):
+    _pack_check_parents(path)
+    entry = _pack_safe_kind(path)
+    if entry is None:
+        path.mkdir()
+    else:
+        _pack_safe_kind(path, expected="dir")
+
+
+def _pack_publish_file(path: Path, item: dict):
+    """Publish a staged copy only if no destination has appeared."""
+    _pack_check_parents(path)
+    if _pack_lstat(path) is not None:
+        raise OSError(f"pack target appeared after preflight: {path}")
+    descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        shutil.copy2(item["source"], temporary)
+        if temporary.read_bytes() != item["data"]:
+            raise OSError(f"pack source changed after preflight: {item['source']}")
+        _pack_check_parents(path)
+        os.link(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _apply_pack_files(files: dict, *, ok_callback):
+    for path, item in files.items():
+        _pack_recheck_file(path, item)
+    for path, item in files.items():
+        if item["decision"] == "skip":
+            ok_callback(f"Skipped identical {path}")
+            continue
+        for parent in reversed(path.parents):
+            if _pack_lstat(parent) is None:
+                _pack_ensure_directory(parent)
+        _pack_publish_file(path, item)
+        ok_callback(f"Copied {path}")
+
+
+def _plan_pack_settings(project: Path, packs: list[str], mcp_configs: dict):
+    target = project / CONTROL_PLANE_DIRNAME / "settings.json"
+    legacy = project / LEGACY_CONTROL_PLANE_DIRNAME / "settings.json"
+    _pack_check_parents(target)
+    target_entry = _pack_safe_kind(target)
+    read_path = target if target_entry is not None else legacy
+    _pack_check_parents(read_path)
+    read_entry = _pack_safe_kind(read_path)
+    original = None
+    settings = {}
+    if read_entry is not None:
+        _pack_safe_kind(read_path, expected="file")
+        original = read_path.read_bytes()
+        settings = json.loads(original.decode("utf-8"))
+        if not isinstance(settings, dict):
+            raise OSError(f"settings must be a JSON object: {read_path}")
+    merged = deepcopy(settings)
+    for pack in packs:
+        if pack in mcp_configs:
+            servers = merged.setdefault("mcpServers", {})
+            if not isinstance(servers, dict):
+                raise OSError(f"mcpServers must be a JSON object: {read_path}")
+            for name, config in mcp_configs[pack].items():
+                servers.setdefault(name, deepcopy(config))
+    if target_entry is not None and merged != settings:
+        raise OSError(
+            f"settings conflict at {target}: required MCP entries are missing; "
+            "reconcile settings explicitly before install (existing settings are never overwritten)"
+        )
+    action = "skip" if target_entry is not None else "create"
+    snapshot = _pack_snapshot(target, original) if target_entry is not None else None
+    return {"path": target, "read_path": read_path, "read_bytes": original,
+            "snapshot": snapshot, "action": action,
+            "data": (json.dumps(merged, indent=2) + "\n").encode("utf-8")}
+
+
+def _plan_pack_helper(project: Path, helper_dir: Path):
+    _pack_check_parents(helper_dir)
+    _pack_safe_kind(helper_dir, expected="dir")
+    if _pack_lstat(helper_dir) is None:
+        raise OSError(f"pack helper source missing: {helper_dir}")
+    directories = []
+    files = {}
+    for root, names, filenames in os.walk(helper_dir, followlinks=False):
+        root = Path(root)
+        for name in names:
+            source = root / name
+            _pack_safe_kind(source, expected="dir")
+            directories.append(source.relative_to(helper_dir))
+        for name in filenames:
+            source = root / name
+            files[source.relative_to(helper_dir)] = {"source": source, "data": _pack_read_source(source)}
+    destination = project.parent / (project.name + "-helper")
+    _pack_check_parents(destination)
+    existing = _pack_safe_kind(destination)
+    if existing is not None:
+        _pack_safe_kind(destination, expected="dir")
+    return {"path": destination, "action": "skip" if existing is not None else "create",
+            "snapshot": (existing.st_dev, existing.st_ino, existing.st_mtime_ns) if existing else None,
+            "directories": directories, "files": files}
+
+
+def _plan_pack_install(project: Path, packs: list[str], pack_files: dict,
+                       mcp_configs: dict, helper_dir: Path):
+    files = _plan_pack_files(project, [pack_files.get(pack, {}) for pack in packs])
+    settings = _plan_pack_settings(project, packs, mcp_configs)
+    bridge = project / ".bridge" if "multi-agent" in packs else None
+    if bridge is not None:
+        _pack_check_parents(bridge)
+        _pack_safe_kind(bridge, expected="dir")
+    helper = _plan_pack_helper(project, helper_dir) if bridge is not None else None
+    return {"files": files, "settings": settings, "bridge": bridge, "helper": helper}
+
+
+def _pack_recheck_settings(settings: dict):
+    target = settings["path"]
+    if settings["action"] not in {"skip", "create"}:
+        raise OSError(f"settings conflict at {target}: stale update plan; reconcile settings and replan")
+    _pack_check_parents(target)
+    current = _pack_safe_kind(target)
+    if settings["snapshot"] is None:
+        if current is not None:
+            raise OSError(f"settings appeared after preflight: {target}")
+    elif current is None or _pack_snapshot(target, target.read_bytes()) != settings["snapshot"]:
+        raise OSError(f"settings changed after preflight: {target}")
+    read_path = settings["read_path"]
+    if read_path != target:
+        _pack_check_parents(read_path)
+        entry = _pack_safe_kind(read_path)
+        current_bytes = read_path.read_bytes() if entry is not None else None
+        if current_bytes != settings["read_bytes"]:
+            raise OSError(f"legacy settings changed after preflight: {read_path}")
+
+
+def _pack_recheck_helper(helper: dict):
+    if helper is None:
+        return
+    path = helper["path"]
+    _pack_check_parents(path)
+    current = _pack_safe_kind(path)
+    if helper["action"] == "create" and current is not None:
+        raise OSError(f"helper target appeared after preflight: {path}")
+    if helper["action"] == "skip":
+        if current is None or (current.st_dev, current.st_ino, current.st_mtime_ns) != helper["snapshot"]:
+            raise OSError(f"helper target changed after preflight: {path}")
+
+
+def _pack_write_settings(settings: dict):
+    _pack_recheck_settings(settings)
+    if settings["action"] == "skip":
+        return
+    target = settings["path"]
+    _pack_ensure_directory(target.parent)
+    descriptor, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        stream = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        with stream:
+            stream.write(settings["data"])
+            stream.flush()
+        os.link(temporary, target)
+    finally:
+        if descriptor >= 0:
             os.close(descriptor)
-            temporary_path = Path(temporary_name)
-            try:
-                shutil.copy2(source, temporary_path)
-                os.replace(temporary_path, destination)
-            finally:
-                _cleanup_temporary_file(temporary_path)
-            ok_callback(f"Copied {dest_dir}{source.name}")
+        temporary.unlink(missing_ok=True)
+
+
+def _apply_pack_install(plan: dict, *, ok_callback):
+    files = plan["files"]
+    for path, item in files.items():
+        _pack_recheck_file(path, item)
+    _pack_recheck_settings(plan["settings"])
+    _pack_recheck_helper(plan["helper"])
+    bridge = plan["bridge"]
+    if bridge is not None:
+        _pack_check_parents(bridge)
+        _pack_safe_kind(bridge, expected="dir")
+    _apply_pack_files(files, ok_callback=ok_callback)
+    if bridge is not None:
+        _pack_ensure_directory(bridge)
+        ok_callback(f"Ready {bridge}")
+    helper = plan["helper"]
+    if helper is not None and helper["action"] == "create":
+        _pack_recheck_helper(helper)
+        helper["path"].mkdir()
+        for relative in helper["directories"]:
+            _pack_ensure_directory(helper["path"] / relative)
+        for relative, item in helper["files"].items():
+            _pack_publish_file(helper["path"] / relative,
+                               {"source": item["source"], "data": item["data"]})
+        ok_callback(f"Created helper session template at {helper['path']}")
+    elif helper is not None:
+        ok_callback(f"Skipped existing helper directory {helper['path']}")
+    _pack_write_settings(plan["settings"])
 
 
 SETUP_INTENT_FILENAME = "setup_intent.json"
@@ -7114,6 +7382,11 @@ def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bo
     for pack in selected_packs:
         install_result = cmd_install(project, pack)
         if install_result != 0:
+            warn(
+                f"Partial setup: pack '{pack}' did not complete. "
+                "Inspect the reported conflict and existing setup output before retrying; "
+                "no rollback was performed."
+            )
             return install_result
 
     # Update consultant backend env if selected

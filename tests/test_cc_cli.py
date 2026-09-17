@@ -1643,6 +1643,478 @@ class TestTransactionalPackInstall:
         assert cc.load_settings(tmp_path)["mcpServers"]["debug-consultant"] == existing_server
 
 
+def _pack_fixture_inventory(root):
+    """Include directories, metadata, and sibling helper paths in no-write checks."""
+    result = {}
+    def visit(path):
+        for entry in os.scandir(path):
+            item = Path(entry.path)
+            metadata = item.lstat()
+            relative = item.relative_to(root).as_posix()
+            result[relative] = (metadata.st_mode, metadata.st_size,
+                                metadata.st_mtime_ns, metadata.st_ctime_ns,
+                                item.read_bytes() if entry.is_file(follow_symlinks=False) else None)
+            if entry.is_dir(follow_symlinks=False):
+                visit(item)
+    visit(root)
+    return result
+
+
+class TestPackPreservation:
+    def test_rejects_custom_target_without_any_selected_pack_side_effect(self, tmp_path, capsys):
+        project = tmp_path / "adopter"
+        target = project / "tools" / "cc_lockfile.py"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"CUSTOM-SENTINEL-E6-A\n")
+        (project / "foreign.txt").write_bytes(b"FOREIGN\n")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all") == 1
+        assert "content conflict" in capsys.readouterr().out
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert not (project / ".bridge").exists()
+        assert not (tmp_path / "adopter-helper").exists()
+
+    def test_preview_reports_all_side_effects_and_writes_nothing(self, tmp_path, capsys):
+        project = tmp_path / "project with spaces"
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all", preview_only=True) == 0
+        output = capsys.readouterr().out
+        assert "create" in output and ".bridge" in output
+        assert "helper directory" in output and "settings.json" in output
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_identical_repeat_skips_files_and_settings_bytes(self, tmp_path):
+        project = tmp_path / "adopter"
+        assert cc.cmd_install(project, "all") == 0
+        settings = project / ".controlcoding" / "settings.json"
+        custom = project / "custom.txt"
+        custom.write_bytes(b"FOREIGN\n")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all") == 0
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert settings.read_bytes() == before["adopter/.controlcoding/settings.json"][-1]
+
+    def test_late_pack_and_side_effect_conflicts_precede_writes(self, tmp_path, capsys):
+        for conflict in ("late-file", "bridge", "helper", "settings"):
+            project = tmp_path / conflict / "adopter"
+            project.mkdir(parents=True)
+            if conflict == "late-file":
+                target = project / "tools" / "mcp_vision.py"
+                target.parent.mkdir()
+                target.write_bytes(b"FOREIGN VISION\n")
+            elif conflict == "bridge":
+                (project / ".bridge").write_bytes(b"FOREIGN BRIDGE\n")
+            elif conflict == "helper":
+                (project.parent / "adopter-helper").write_bytes(b"FOREIGN HELPER\n")
+            else:
+                settings = project / ".controlcoding" / "settings.json"
+                settings.parent.mkdir()
+                settings.mkdir()
+            before = _pack_fixture_inventory(project.parent)
+            assert cc.cmd_install(project, "all") == 1
+            assert _pack_fixture_inventory(project.parent) == before
+            assert not (project / "tools" / "mcp_consultant.py").exists()
+            assert "preflight failed" in capsys.readouterr().out.lower()
+
+    def test_late_missing_source_and_shared_destination_conflict_precede_writes(self, tmp_path, monkeypatch):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        (project / "foreign.txt").write_bytes(b"KEEP\n")
+        before = _pack_fixture_inventory(tmp_path)
+        monkeypatch.setitem(cc.PACK_FILES, "visual-check", {"tools/": [tmp_path / "missing.py"]})
+        assert cc.cmd_install(project, "all") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+
+        first = tmp_path / "one" / "same.py"
+        second = tmp_path / "two" / "same.py"
+        first.parent.mkdir()
+        second.parent.mkdir()
+        first.write_bytes(b"FIRST\n")
+        second.write_bytes(b"SECOND\n")
+        monkeypatch.setitem(cc.PACK_FILES, "debug-tools", {"tools/": [first]})
+        monkeypatch.setitem(cc.PACK_FILES, "multi-agent", {"tools/": [second]})
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_preserves_custom_settings_and_existing_helper(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        helper = tmp_path / "adopter-helper"
+        helper.mkdir()
+        (helper / "custom.txt").write_bytes(b"KEEP\n")
+        settings = project / ".controlcoding" / "settings.json"
+        settings.parent.mkdir()
+        settings.write_bytes(b'{"mcpServers":{"bridge":{"command":"custom"},"foreign":{"x":1}},"custom":true}\n')
+        assert cc.cmd_install(project, "multi-agent") == 0
+        merged = json.loads(settings.read_bytes())
+        assert merged["mcpServers"]["bridge"] == {"command": "custom"}
+        assert merged["mcpServers"]["foreign"] == {"x": 1}
+        assert merged["custom"] is True
+        assert (helper / "custom.txt").read_bytes() == b"KEEP\n"
+
+    def test_legacy_settings_are_read_without_changing_legacy_file(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        legacy = project / ".claude" / "settings.json"
+        legacy.parent.mkdir()
+        original = b'{"mcpServers":{"foreign":{"command":"custom"}},"custom":true}\n'
+        legacy.write_bytes(original)
+        assert cc.cmd_install(project, "debug-tools") == 0
+        assert legacy.read_bytes() == original
+        central = json.loads((project / ".controlcoding" / "settings.json").read_bytes())
+        assert central["mcpServers"]["foreign"] == {"command": "custom"}
+        assert "debug-consultant" in central["mcpServers"]
+
+    def test_target_appearance_and_change_after_preflight_are_not_replaced(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        original = cc_setup._apply_pack_install
+        target = project / "tools" / "cc_lockfile.py"
+        def appear(plan, *, ok_callback):
+            target.parent.mkdir()
+            target.write_bytes(b"CONCURRENT\n")
+            return original(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", appear)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert target.read_bytes() == b"CONCURRENT\n"
+        assert not (project / ".controlcoding").exists()
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", original)
+        target.write_bytes(cc.PACK_FILES["session-manager"]["tools/"][0].read_bytes())
+        def change(plan, *, ok_callback):
+            target.write_bytes(b"CHANGED\n")
+            return original(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", change)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert target.read_bytes() == b"CHANGED\n"
+        assert not (project / ".controlcoding").exists()
+
+    def test_settings_appearance_after_preflight_stops_before_pack_files(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        original = cc_setup._apply_pack_install
+        settings = project / ".controlcoding" / "settings.json"
+        def appear(plan, *, ok_callback):
+            settings.parent.mkdir()
+            settings.write_bytes(b'{"foreign":true}\n')
+            return original(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", appear)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert settings.read_bytes() == b'{"foreign":true}\n'
+        assert not (project / "tools").exists()
+
+    def test_publication_failure_cleans_stage_without_touching_foreign_file(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        (project / "foreign.txt").write_bytes(b"KEEP\n")
+        def fail_link(source, destination):
+            raise OSError("injected publication failure")
+        monkeypatch.setattr(cc_setup.os, "link", fail_link)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert (project / "foreign.txt").read_bytes() == b"KEEP\n"
+        assert list((project / "tools").iterdir()) == []
+        assert not (project / ".controlcoding").exists()
+
+    def test_copy_failure_cleans_partial_stage_and_keeps_foreign_file(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        foreign = project / "foreign.txt"
+        foreign.write_bytes(b"KEEP\n")
+        def partial_copy(source, destination):
+            Path(destination).write_bytes(b"PARTIAL\n")
+            raise OSError("injected copy failure")
+        monkeypatch.setattr(cc_setup.shutil, "copy2", partial_copy)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert foreign.read_bytes() == b"KEEP\n"
+        assert list((project / "tools").iterdir()) == []
+        assert not (project / ".controlcoding").exists()
+
+    def test_later_publication_failure_reports_partial_install_without_cleanup_loss(self, tmp_path, monkeypatch, capsys):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        (project / "foreign.txt").write_bytes(b"KEEP\n")
+        link = cc_setup.os.link
+        calls = 0
+        def fail_second(source, destination):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected second publication failure")
+            return link(source, destination)
+        monkeypatch.setattr(cc_setup.os, "link", fail_second)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert "partial changes possible" in capsys.readouterr().out
+        assert (project / "foreign.txt").read_bytes() == b"KEEP\n"
+        assert (project / "tools" / "cc_lockfile.py").is_file()
+        assert not (project / "tools" / "mcp_session.py").exists()
+        assert not list((project / "tools").glob("*.tmp"))
+
+    def test_symlink_target_and_ancestor_preserve_outside_sentinel(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        sentinel = outside / "cc_lockfile.py"
+        sentinel.write_bytes(b"OUTSIDE\n")
+        try:
+            (project / "tools").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"directory symlink unavailable: {exc}")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert sentinel.read_bytes() == b"OUTSIDE\n"
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows junction control")
+    def test_sibling_helper_junction_is_rejected(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        sentinel = outside / "foreign.txt"
+        sentinel.write_bytes(b"OUTSIDE\n")
+        helper = tmp_path / "adopter-helper"
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(helper), str(outside)],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            pytest.skip(f"junction unavailable: {result.stderr or result.stdout}")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "multi-agent") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert sentinel.read_bytes() == b"OUTSIDE\n"
+
+    def test_real_cli_preview_then_apply_from_other_cwd(self, tmp_path):
+        project = tmp_path / "project with spaces"
+        other = tmp_path / "other cwd"
+        other.mkdir()
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        command = [sys.executable, str(Path(cc.__file__)), "install", "multi-agent",
+                   "--project-root", str(project)]
+        before = _pack_fixture_inventory(tmp_path)
+        preview = subprocess.run(command + ["--preview-only"], cwd=other, env=env,
+                                 capture_output=True, text=True)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert not project.exists()
+        project.mkdir()
+        applied = subprocess.run(command, cwd=other, env=env, capture_output=True, text=True)
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert (project / "tools" / "mcp_bridge.py").is_file()
+        assert (tmp_path / "project with spaces-helper").is_dir()
+
+    @pytest.mark.parametrize("preview_only", [False, True])
+    @pytest.mark.parametrize("pack", ["debug-tools", "all"])
+    def test_existing_settings_additions_conflict_before_any_write(self, tmp_path, capsys, preview_only, pack):
+        project = tmp_path / "adopter"
+        settings = project / ".controlcoding" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        original = b'{"custom":true,"mcpServers":{"foreign":{"command":"owner"}}}\n'
+        settings.write_bytes(original)
+        (tmp_path / "sibling.txt").write_bytes(b"KEEP\n")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, pack, preview_only=preview_only) == 1
+        output = capsys.readouterr().out
+        assert "settings conflict" in output and str(settings) in output
+        assert "reconcile settings" in output and "Done!" not in output
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_sequential_addition_requires_reconciliation_then_skips_exact_settings(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        assert cc.cmd_install(project, "session-manager") == 0
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "debug-tools") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+        settings = project / ".controlcoding" / "settings.json"
+        reconciled = json.loads(settings.read_bytes())
+        reconciled["custom"] = {"owner": True}
+        reconciled["mcpServers"].update(cc.MCP_CONFIGS["debug-tools"])
+        reconciled["mcpServers"]["foreign"] = {"command": "owner"}
+        settings.write_text(json.dumps(reconciled, separators=(",", ":")) + "\n", encoding="utf-8")
+        original = settings.read_bytes()
+        metadata = settings.stat()
+        assert cc.cmd_install(project, "debug-tools") == 0
+        assert settings.read_bytes() == original
+        assert settings.stat().st_mtime_ns == metadata.st_mtime_ns
+        assert settings.stat().st_ctime_ns == metadata.st_ctime_ns
+        assert (project / "tools" / "mcp_consultant.py").is_file()
+
+    @pytest.mark.parametrize("direct_writer", [False, True])
+    def test_stale_settings_update_plan_refuses_before_side_effects(self, tmp_path, direct_writer):
+        import cc_setup
+        project = tmp_path / "adopter"
+        settings = project / ".controlcoding" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"mcpServers": cc.MCP_CONFIGS["multi-agent"], "custom": True}), encoding="utf-8")
+        plan = cc_setup._plan_pack_install(project, ["multi-agent"], cc.PACK_FILES, cc.MCP_CONFIGS, cc.HELPER_DIR)
+        plan["settings"]["action"] = "update"
+        plan["settings"]["data"] = b'{"unwanted":"replacement"}\n'
+        before = _pack_fixture_inventory(tmp_path)
+        with pytest.raises(OSError, match="stale update plan"):
+            if direct_writer:
+                cc_setup._pack_write_settings(plan["settings"])
+            else:
+                cc_setup._apply_pack_install(plan, ok_callback=lambda message: None)
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("action", ["skip", "create"])
+    def test_settings_final_boundary_concurrent_write_is_executed_and_preserved(self, tmp_path, monkeypatch, capsys, action):
+        import cc_setup
+        project = tmp_path / "adopter"
+        settings = project / ".controlcoding" / "settings.json"
+        project.mkdir()
+        if action == "skip":
+            settings.parent.mkdir()
+            settings.write_text(json.dumps({"custom": "original", "mcpServers": cc.MCP_CONFIGS["debug-tools"]}), encoding="utf-8")
+        concurrent = b'{"custom":"CONCURRENT-OWNER","foreign":true,"mcpServers":{"foreign":{"command":"owner"}}}\n'
+        events = []
+        if action == "create":
+            link = cc_setup.os.link
+            def final_link(source, target):
+                if Path(target) == settings:
+                    settings.write_bytes(concurrent)
+                    events.append("concurrent_written_at_link")
+                return link(source, target)
+            monkeypatch.setattr(cc_setup.os, "link", final_link)
+        else:
+            write = cc_setup._pack_write_settings
+            def final_skip(item):
+                assert item["action"] == "skip"
+                settings.write_bytes(concurrent)
+                events.append("concurrent_written_before_final_skip_check")
+                return write(item)
+            monkeypatch.setattr(cc_setup, "_pack_write_settings", final_skip)
+        assert cc.cmd_install(project, "debug-tools") == 1
+        assert len(events) == 1, "the concurrent writer must actually execute"
+        assert settings.read_bytes() == concurrent
+        assert list(settings.parent.iterdir()) == [settings]
+        assert (project / "tools" / "mcp_consultant.py").is_file()
+        assert not list(project.rglob("*.tmp"))
+        assert "partial changes possible" in capsys.readouterr().out
+
+    def test_legacy_change_after_preflight_is_preserved_without_pack_writes(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        legacy = project / ".claude" / "settings.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'{"custom":"original"}\n')
+        apply = cc_setup._apply_pack_install
+        events = []
+        concurrent = b'{"custom":"CONCURRENT","mcpServers":{"foreign":{"command":"owner"}}}\n'
+        def changed(plan, *, ok_callback):
+            legacy.write_bytes(concurrent)
+            events.append("legacy_written")
+            return apply(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", changed)
+        assert cc.cmd_install(project, "debug-tools") == 1
+        assert events == ["legacy_written"]
+        assert legacy.read_bytes() == concurrent
+        assert not (project / "tools").exists()
+        assert not (project / ".controlcoding").exists()
+
+    def test_pack_final_link_destination_is_not_clobbered_or_cleaned(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        target = project / "tools" / "cc_lockfile.py"
+        link = cc_setup.os.link
+        events = []
+        def concurrent_link(source, destination):
+            assert Path(destination) == target
+            target.write_bytes(b"CONCURRENT PACK OWNER\n")
+            events.append("pack_destination_written_at_link")
+            return link(source, destination)
+        monkeypatch.setattr(cc_setup.os, "link", concurrent_link)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert events == ["pack_destination_written_at_link"]
+        assert target.read_bytes() == b"CONCURRENT PACK OWNER\n"
+        assert list(target.parent.iterdir()) == [target]
+        assert not (project / ".controlcoding").exists()
+
+    def test_changed_source_after_planning_leaves_no_target_or_stage(self, tmp_path):
+        import cc_setup
+        project = tmp_path / "adopter"
+        source = tmp_path / "synthetic.py"
+        source.write_bytes(b"ORIGINAL\n")
+        plan = cc_setup._plan_pack_files(project, [{"tools/": [source]}])
+        source.write_bytes(b"CHANGED\n")
+        with pytest.raises(OSError, match="source changed after preflight"):
+            cc_setup._apply_pack_files(plan, ok_callback=lambda message: None)
+        assert list((project / "tools").iterdir()) == []
+
+    def test_real_cli_missing_root_apply_refuses_without_writes(self, tmp_path):
+        project = tmp_path / "missing project"
+        other = tmp_path / "other cwd with spaces"
+        other.mkdir()
+        (tmp_path / "sibling.txt").write_bytes(b"KEEP")
+        before = _pack_fixture_inventory(tmp_path)
+        result = subprocess.run([sys.executable, str(Path(cc.__file__)), "install", "session-manager",
+                                 "--project-root", str(project)], cwd=other, capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "is not a directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_real_cli_missing_root_preview_is_read_only(self, tmp_path):
+        project = tmp_path / "missing project"
+        other = tmp_path / "other cwd with spaces"
+        other.mkdir()
+        (tmp_path / "sibling.txt").write_bytes(b"KEEP")
+        before = _pack_fixture_inventory(tmp_path)
+        result = subprocess.run([sys.executable, str(Path(cc.__file__)), "install", "all", "--preview-only",
+                                 "--project-root", str(project)], cwd=other, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert ".bridge" in result.stdout and "helper directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("command", [["setup"], ["setup", "--chat-guide"], ["setup-project", "--chat-guide"]])
+    def test_real_cli_other_missing_root_gates_are_unchanged(self, tmp_path, command):
+        other = tmp_path / "other cwd with spaces"
+        other.mkdir()
+        before = _pack_fixture_inventory(tmp_path)
+        result = subprocess.run([sys.executable, str(Path(cc.__file__)), *command,
+                                 "--project-root", str(tmp_path / "missing project")], cwd=other, capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "is not a directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("preview_only", [False, True])
+    def test_real_cli_file_root_is_rejected_without_writes(self, tmp_path, preview_only):
+        target = tmp_path / "file root"
+        target.write_bytes(b"FOREIGN ROOT\n")
+        before = _pack_fixture_inventory(tmp_path)
+        command = [sys.executable, str(Path(cc.__file__)), "install", "all", "--project-root", str(target)]
+        result = subprocess.run(command + (["--preview-only"] if preview_only else []), cwd=tmp_path,
+                                capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "is not a directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows junction control")
+    @pytest.mark.parametrize("preview_only", [False, True])
+    def test_real_cli_preserves_lexical_junction_root(self, tmp_path, preview_only):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_bytes(b"OUTSIDE\n")
+        project = tmp_path / "linked project"
+        linked = subprocess.run(["cmd", "/c", "mklink", "/J", str(project), str(outside)], capture_output=True, text=True)
+        if linked.returncode:
+            pytest.skip(f"junction unavailable: {linked.stderr or linked.stdout}")
+        before = _pack_fixture_inventory(tmp_path)
+        command = [sys.executable, str(Path(cc.__file__)), "install", "session-manager", "--project-root", str(project)]
+        result = subprocess.run(command + (["--preview-only"] if preview_only else []), cwd=tmp_path,
+                                capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "reparse" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+
+
 # ---------------------------------------------------------- TestMergeHooks ---
 
 

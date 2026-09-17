@@ -8354,8 +8354,9 @@ def cmd_init(project: Path, central_hooks: bool = False, quiet: bool = False):
     return 0
 
 
-def cmd_install(project: Path, pack: str):
-    """Install a feature pack."""
+def cmd_install(project: Path, pack: str, *, preview_only: bool = False):
+    """Plan every selected pack before applying any of its side effects."""
+    project = Path(os.path.abspath(project))
     if pack == "all":
         packs = ALL_PACKS
     elif pack in ALL_PACKS:
@@ -8365,56 +8366,31 @@ def cmd_install(project: Path, pack: str):
         print(f"  Available packs: {', '.join(ALL_PACKS)}, all")
         return 1
 
-    print(f"\nInstalling pack(s): {', '.join(packs)}")
+    print(f"\n{'Previewing' if preview_only else 'Installing'} pack(s): {', '.join(packs)}")
     print(f"Project: {project}\n")
-
-    settings = load_settings(project)
-
-    for p in packs:
-        print(f"--- {p} ---")
-        pack_files = PACK_FILES.get(p, {})
-        missing_sources = [src for files in pack_files.values() for src in files if not src.is_file()]
-        if missing_sources:
-            fail(f"Pack preflight failed: source is missing or not a file: {missing_sources[0]}")
-            return 1
-        if p == "multi-agent" and not HELPER_DIR.is_dir():
-            fail(f"Pack preflight failed: helper source is missing or not a directory: {HELPER_DIR}")
-            return 1
-
-        try:
-            from cc_setup import _install_pack_files_atomic
-            _install_pack_files_atomic(project, pack_files, warn_callback=warn, ok_callback=ok)
-
-            if p == "multi-agent":
-                bridge_dir = project / ".bridge"
-                bridge_dir.mkdir(exist_ok=True)
-                ok("Created .bridge/ directory")
-
-                helper_dest = project.parent / (project.name + "-helper")
-                if helper_dest.exists():
-                    warn(f"Helper directory already exists: {helper_dest.name}")
-                else:
-                    shutil.copytree(HELPER_DIR, helper_dest)
-                    ok(f"Created helper session template at {helper_dest.name}/")
-        except OSError as exc:
-            fail(f"Failed to install pack '{p}': {exc}")
-            return 1
-
-        if p in MCP_CONFIGS:
-            if "mcpServers" not in settings:
-                settings["mcpServers"] = {}
-            settings["mcpServers"] = merge_mcp_servers(settings["mcpServers"], MCP_CONFIGS[p])
-
-        if p == "dashboard":
-            print("\n  Run dashboard with: python tools/cc_dashboard.py --project-root .")
-
-        print()
-
     try:
-        save_settings(project, settings)
-    except OSError as exc:
-        fail(f"Failed to save settings: {exc}")
+        from cc_setup import _plan_pack_install, _apply_pack_install
+        plan = _plan_pack_install(project, packs, PACK_FILES, MCP_CONFIGS, HELPER_DIR)
+    except (OSError, ValueError, UnicodeError) as exc:
+        fail(f"Pack preflight failed: {exc}")
         return 1
+
+    for path, item in plan["files"].items():
+        info(f"{item['decision']}: {path}")
+    if plan["bridge"] is not None:
+        info(f"{'skip' if plan['bridge'].is_dir() else 'create'} directory: {plan['bridge']}")
+    if plan["helper"] is not None:
+        info(f"{plan['helper']['action']} helper directory: {plan['helper']['path']}")
+    info(f"{plan['settings']['action']} settings: {plan['settings']['path']}")
+    if preview_only:
+        return 0
+    try:
+        _apply_pack_install(plan, ok_callback=ok)
+    except (OSError, ValueError) as exc:
+        fail(f"Pack install stopped with partial changes possible: {exc}")
+        return 1
+    if "dashboard" in packs:
+        print("\n  Run dashboard with: python tools/cc_dashboard.py --project-root .")
     print(f"{green('Done!')} Installed: {', '.join(packs)}")
     return 0
 
@@ -18844,6 +18820,10 @@ def main():
         "--project-root", type=Path, default=Path.cwd(),
         help="Project root directory (default: current directory)",
     )
+    p_install.add_argument(
+        "--preview-only", action="store_true",
+        help="Inspect all selected pack changes and conflicts without writing",
+    )
 
     # cc chat-start
     p_chat_start = sub.add_parser("chat-start", help="Print one AI-ready startup packet for host AI project startup")
@@ -21762,8 +21742,11 @@ def main():
     if extra_args and not (args.command == "surface" and getattr(args, "surface_command", "") == "run"):
         parser.error(f"unrecognized arguments: {' '.join(extra_args)}")
 
-    project = args.project_root.resolve()
-    if not project.is_dir():
+    project = (Path(os.path.abspath(args.project_root)) if args.command == "install"
+               else args.project_root.resolve())
+    if not project.is_dir() and not (
+        args.command == "install" and args.preview_only and not project.exists()
+    ):
         message = f"{project} is not a directory"
         if getattr(args, "json_output", False):
             print(json.dumps({
@@ -21864,7 +21847,7 @@ def main():
         p_consult_result.print_help()
         return 1
     elif args.command == "install":
-        return cmd_install(project, args.pack)
+        return cmd_install(project, args.pack, preview_only=args.preview_only)
     elif args.command == "chat-start":
         return cmd_chat_start(
             project,
