@@ -43,15 +43,27 @@ All notable changes to ControlCoding are documented in this file.
 
 ### Validation and limitations
 
-This is a development update, not a declaration of stable-release readiness.
-Independent patch approval for the Bash inspector covers only the verified
-Windows paths. Its cross-platform and host-delivery evidence remains incomplete.
-Local Windows evidence does not establish named-host delivery, POSIX/FIFO or
-real symlink-policy coverage, clean package installation or actual hosted CI
-success. Required checks, receipts and skip disposition must be reviewed on
-an exact publication candidate. Whole-setup preservation, update/removal,
-consent/data handling and representative memory evaluation remain bounded or
-unverified. ControlWork remains a separate product.
+The Core update was merged into `master` on September 20, 2026 as
+[`75e2dd67`](https://github.com/Naimas/ControlCoding/commit/75e2dd67b805fe34d7ca587b23459a84a2d6d073).
+Its [post-merge CI run](https://github.com/Naimas/ControlCoding/actions/runs/35520938199)
+passed all four Windows/Ubuntu and Python 3.11/3.13 jobs on the first attempt.
+Each job accounted for the same 2,078 canonical test cases and passed all ten
+required checks. Windows reported 2,069 passes/nine platform skips per runtime;
+Ubuntu reported 2,047 passes/31 platform skips. Every skipped case passed on
+the opposite OS in the same runtime. Locked dependency and candidate installation
+passed, with complete verification and invariant receipts. Applicable POSIX/FIFO,
+symlink-policy and unsupported-Python-3.10 rejection controls were executed.
+
+These results are bound to that exact commit and the maintained required
+contract, which is a subset of the repository tests. They do not constitute
+stable-release approval or named editor-host loading/event-delivery evidence.
+Whole-setup preservation, update/removal, consent/data handling and representative
+memory evaluation remain bounded or unverified. ControlWork remains separate.
+
+The [current Core download](README.md#download-current-core) includes these
+updates. The `v3.0.2` tagged archives predate them. Entry-point documentation and
+the historical release notice now distinguish those downloads explicitly;
+no new version, tag or release is introduced by this documentation update.
 
 ## 3.0.2
 

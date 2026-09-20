@@ -1,5 +1,9 @@
 # ControlCoding Quick Start
 
+> **Get the updated code:** [Download current Core (ZIP)](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip).
+> The `v3.0.2` archives under GitHub Releases predate the September 2026 updates.
+> This is development source; see [download status and validation](../README.md#download-current-core).
+
 > If you just downloaded ControlCoding and want to apply it to your own project, this is the correct path.
 >
 > Requires: Python 3.11+ for Core and Git. Memory also requires a working SQLite deserialize API. Use the PowerShell or Bash variant in the installation guide for your shell.

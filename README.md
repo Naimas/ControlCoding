@@ -9,6 +9,20 @@ keeping AI-assisted changes inside explicit architectural, authorization, and
 verification boundaries. It operates alongside a project during development;
 it is not a runtime dependency of the software being built.
 
+## Download Current Core
+
+**[Download current Core (ZIP)](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip)** · [Installation guide](docs/install-controlcoding-on-your-project.md)
+
+**Status: development source. Requires Python 3.11+.** This download follows
+`master` and includes the September 2026 preservation, setup and verification
+updates. A new numbered release has not been published.
+
+> **The `v3.0.2` files under GitHub Releases are an older snapshot.** They do not
+> contain these updates. Use the current Core download above for the updated code.
+
+The verified Core update and its remaining limits are described under
+[Unreleased Development Work](#unreleased-development-work).
+
 ## Who It Is For
 
 | Use ControlCoding when | The full framework is usually unnecessary when |
@@ -100,10 +114,24 @@ the [Release Model](docs/release-model.md) and [LICENSE](LICENSE).
 ## Unreleased Development Work
 
 The [Unreleased changelog](CHANGELOG.md#unreleased) describes the Core changes
-under development after 3.0.2: preservation fixes for hook inspection and setup,
-runtime prerequisite checks, and verification receipts bound to source,
-execution context and the complete required selection. These changes do not
-constitute a new tagged release or stable-release approval.
+integrated into `master` after 3.0.2: preservation fixes for hook inspection and
+setup, runtime prerequisite checks, and verification receipts bound to source,
+execution context and the complete required selection. Use the
+[current Core download](#download-current-core) to obtain them.
+
+On September 20, 2026, the [merged Core update](https://github.com/Naimas/ControlCoding/commit/75e2dd67b805fe34d7ca587b23459a84a2d6d073)
+passed all four jobs in its [post-merge CI run](https://github.com/Naimas/ControlCoding/actions/runs/35520938199):
+Windows and Ubuntu, with Python 3.11 and 3.13. Every job accounted for 2,078
+canonical test cases and passed all ten required checks. Windows: 2,069 passed
+and nine platform skips per runtime; Ubuntu: 2,047 passed and 31 platform skips.
+Every skipped case passed on the opposite OS in the same runtime. Dependency
+and candidate installation also passed. These results belong to that exact
+commit; later commits have their own workflow results.
+
+This is a verified development update. Named editor-host loading and event
+delivery, broader setup/update/removal behavior, consent/data handling and
+representative memory evaluation remain separate validation requirements.
+A new tagged release and stable-release approval have not been declared.
 
 Validation follows [controlcoding.verification.json](controlcoding.verification.json)
 and the [contribution guide](CONTRIBUTING.md#running-tests). The required contract
@@ -115,7 +143,9 @@ available in the [verification workflow](https://github.com/Naimas/ControlCoding
 
 ## 3.0.2 Public Release
 
-ControlCoding V1/Core `3.0.2` is the current public release. It applies
+ControlCoding V1/Core `3.0.2` is the latest **tagged** release and is retained as
+an older snapshot. It predates the updates in the [current Core download](#download-current-core).
+The following notes describe `3.0.2` only. It applies
 PolyForm Shield 1.0.0 consistently to current ControlCoding and embedded
 ControlWork material, including documentation and templates. It also retains
 the deterministic stage identity regression test introduced in `3.0.1`.

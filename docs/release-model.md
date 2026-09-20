@@ -3,6 +3,18 @@
 This page defines the public package boundary for the current ControlCoding
 V1/Core release.
 
+## Current Download and Tagged Releases
+
+The [current Core source ZIP](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip) follows `master` and contains the
+September 2026 preservation, setup and verification updates. It is development
+source; [download status and the exact verified baseline](../README.md#download-current-core)
+are maintained in the README.
+
+`v3.0.2` is the latest tagged release, retained as an older snapshot. Its release
+assets predate those updates. A new numbered release has not been published.
+Use the current source download for the updated code; keep historical release
+results associated with their original tag.
+
 ## Current Package
 
 The current public package is **Core**, distributed as source. Users run it
@@ -22,7 +34,8 @@ Core includes:
 
 ## 3.0.2 Release Position
 
-ControlCoding `3.0.2` is the current published V1/Core release. It belongs to
+ControlCoding `3.0.2` is the latest tagged V1/Core release, preceding the current
+source update described above. It belongs to
 the Version 3 major release line because the public CLI is incompatible with the
 stable `v2.5.2` line in four ways: `cc replace start/status/complete` was
 removed, `cc benchmark` changed its interface and default output names,

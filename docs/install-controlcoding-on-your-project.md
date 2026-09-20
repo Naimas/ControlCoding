@@ -1,5 +1,9 @@
 # Install ControlCoding On Your Project
 
+> **Get the updated code:** [Download current Core (ZIP)](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip).
+> The `v3.0.2` archives under GitHub Releases predate the September 2026 updates.
+> This is development source; see [download status and validation](../README.md#download-current-core).
+
 This guide is for a human developer. It explains what ControlCoding installs,
 which files it changes, what is optional, and how to verify that the install is
 actually active.
