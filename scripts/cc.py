@@ -2260,11 +2260,11 @@ def _default_verification_contract(project: Path) -> dict:
         if (project / "tests" / "test_cc_cli.py").exists()
         else "tests"
     )
-    if pytest_targets != "tests" and (project / "tests/test_ci_configuration.py").is_file():
-        pytest_targets += " tests/test_ci_configuration.py"
-    for evidence_test in ("test_cc_evidence.py", "test_cc_evidence_process.py", "test_cc_public_examples.py"):
-        if pytest_targets != "tests" and (project / "tests" / evidence_test).is_file():
-            pytest_targets += f" tests/{evidence_test}"
+    support_targets = []
+    for support_test in ("test_ci_configuration.py", "test_cc_evidence.py",
+                         "test_cc_evidence_process.py", "test_cc_public_examples.py"):
+        if pytest_targets != "tests" and (project / "tests" / support_test).is_file():
+            support_targets.append(f"tests/{support_test}")
     core_regression_targets = (
         "tests/test_cc_memory.py "
         "tests/test_check_boundaries.py "
@@ -2312,6 +2312,16 @@ def _default_verification_contract(project: Path) -> dict:
             "description": "Run the focused CLI and repository hygiene regression suite.",
         },
     ]
+    if support_targets:
+        suites.append({
+            "id": "verification-support-regression",
+            "kind": "regression",
+            "required": True,
+            "command": pytest_command(
+                " ".join(support_targets), "verification-support-regression", "pytest-support"
+            ),
+            "description": "Run verification evidence, CI configuration, and public-example regressions.",
+        })
     if core_regression_targets:
         suites.append(
             {

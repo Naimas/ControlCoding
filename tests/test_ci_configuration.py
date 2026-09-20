@@ -60,12 +60,12 @@ def test_generated_catalog_target_requires_existing_file(tmp_path):
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_cc_cli.py").write_text("", encoding="utf-8")
-    def cli_command():
-        return next(s["command"] for s in cc._default_verification_contract(tmp_path)["suites"]
-                    if s["id"] == "cli-regression")
-    assert "tests/test_cc_public_examples.py" not in cli_command()
+    def support_command():
+        return next((s["command"] for s in cc._default_verification_contract(tmp_path)["suites"]
+                     if s["id"] == "verification-support-regression"), "")
+    assert "tests/test_cc_public_examples.py" not in support_command()
     (tests / "test_cc_public_examples.py").write_text("", encoding="utf-8")
-    assert "tests/test_cc_public_examples.py" in cli_command()
+    assert "tests/test_cc_public_examples.py" in support_command()
 
 
 def test_failed_pytest_junit_survives_verifier_temp_cleanup(tmp_path, capsys):
@@ -156,3 +156,119 @@ def test_ci_environment_output_is_explicit_and_does_not_export_secrets(tmp_path)
     assert len(data["inputs"]["controlcoding.verification.json"]) == 64
     assert "not-for-artifacts" not in output.read_text(encoding="utf-8")
     assert data["distributions"] and "environment" not in data
+
+
+@pytest.mark.parametrize("source", ["tracked", "generated"])
+def test_cli_groups_have_disjoint_targets_and_reports(source):
+    contract = (json.loads((ROOT / "controlcoding.verification.json").read_text(encoding="utf-8"))
+                if source == "tracked" else cc._default_verification_contract(ROOT))
+    selected, issues = cc._select_verification_suites(contract, [], [], False)
+    assert not issues
+    groups = {suite["id"]: suite for suite in selected}
+    expected = {
+        "cli-regression": {"tests/test_cc_cli.py", "tests/test_gitignore.py"},
+        "verification-support-regression": {
+            "tests/test_ci_configuration.py", "tests/test_cc_evidence.py",
+            "tests/test_cc_evidence_process.py", "tests/test_cc_public_examples.py",
+        },
+    }
+    seen = set()
+    reports = set()
+    for group_id, targets in expected.items():
+        suite = groups[group_id]
+        tokens = shlex.split(suite["command"])
+        actual = [token for token in tokens if token.startswith("tests/")]
+        assert len(actual) == len(set(actual)) and set(actual) == targets
+        assert not seen.intersection(actual)
+        seen.update(actual)
+        assert suite["required"] is True and suite["kind"] == "regression"
+        assert suite["timeoutSeconds"] == (390 if group_id == "cli-regression" else 300)
+        report = tokens[tokens.index("--junitxml") + 1]
+        assert report == "{project}/.controlcoding/verification_receipts/" + group_id + ".xml"
+        reports.add(report)
+    assert len(reports) == 2
+    for suite in selected:
+        if suite["id"] not in expected:
+            assert not seen.intersection(shlex.split(suite["command"]))
+
+
+@pytest.mark.parametrize("available", [
+    (), ("test_cc_evidence.py",), ("test_cc_public_examples.py",),
+    ("test_ci_configuration.py", "test_cc_evidence.py", "test_cc_evidence_process.py",
+     "test_cc_public_examples.py"),
+])
+def test_generated_support_group_only_covers_available_files(tmp_path, available):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    for name in ("test_cc_cli.py", "test_gitignore.py", *available):
+        (tests / name).write_text("", encoding="utf-8")
+    selected, issues = cc._select_verification_suites(
+        cc._default_verification_contract(tmp_path), [], [], False)
+    assert not issues
+    groups = {suite["id"]: suite for suite in selected}
+    cli_targets = [t for t in shlex.split(groups["cli-regression"]["command"])
+                   if t.startswith("tests/")]
+    assert cli_targets == ["tests/test_cc_cli.py", "tests/test_gitignore.py"]
+    if available:
+        support = groups["verification-support-regression"]
+        assert [t for t in shlex.split(support["command"]) if t.startswith("tests/")] == [
+            "tests/" + name for name in available]
+        assert support["required"] is True
+    else:
+        assert "verification-support-regression" not in groups
+
+
+def test_generated_tests_fallback_does_not_duplicate_support_group(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_cc_public_examples.py").write_text("", encoding="utf-8")
+    groups = {s["id"]: s for s in cc._default_verification_contract(tmp_path)["suites"]}
+    assert "verification-support-regression" not in groups
+    assert shlex.split(groups["cli-regression"]["command"])[3] == "tests"
+
+
+@pytest.mark.parametrize("outcome", ["passed", "subset", "support-failure"])
+def test_split_cli_real_receipts_require_both_groups(tmp_path, capsys, outcome):
+    project = tmp_path / "split project with spaces"
+    project.mkdir()
+    policy = cc._default_verification_contract(ROOT)
+    groups = [dict(s) for s in policy["suites"]
+              if s["id"] in {"cli-regression", "verification-support-regression"}]
+    assert len(groups) == 2
+    for suite in groups:
+        tokens = shlex.split(suite["command"])
+        for token in tokens:
+            if token.startswith("tests/"):
+                path = project / token
+                path.parent.mkdir(exist_ok=True)
+                should_fail = outcome == "support-failure" and path.name == "test_cc_evidence.py"
+                path.write_text("def test_present():\n    assert " + str(not should_fail) + "\n",
+                                encoding="utf-8")
+        suite["command"] = '"' + sys.executable.replace("\\", "/") + '"' + suite["command"][len("python"):]
+    (project / "controlcoding.verification.json").write_text(json.dumps({
+        "schemaVersion": 1, "requiredKinds": ["regression"], "suites": groups,
+    }), encoding="utf-8")
+    code = cc.cmd_verify_run(project, suite_ids=["cli-regression"] if outcome == "subset" else [],
+                             json_output=True)
+    result = json.loads(capsys.readouterr().out)
+    assert code == (1 if outcome == "support-failure" else 0)
+    assert result["status"] == {"passed": "passed", "subset": "passed_subset",
+                                "support-failure": "failed"}[outcome]
+    receipt = result["receipt"]
+    ids = [s["id"] for s in groups]
+    assert receipt["selection"]["required"] == ids
+    assert receipt["selection"]["executed"] == (ids[:1] if outcome == "subset" else ids)
+    assert not (project / receipt["tempDir"]).exists()
+    reports = project / ".controlcoding/verification_receipts"
+    first = ET.parse(reports / "cli-regression.xml").findall(".//testcase")
+    assert len(first) == 2 and all(c.find("failure") is None for c in first)
+    support = reports / "verification-support-regression.xml"
+    assert support.exists() is (outcome != "subset")
+    if support.exists():
+        cases = ET.parse(support).findall(".//testcase")
+        assert len(cases) == 4
+        assert sum(c.find("failure") is not None for c in cases) == (outcome == "support-failure")
+    strict = cc.cmd_verify_status(project, json_output=True, require_current=True)
+    status = json.loads(capsys.readouterr().out)
+    assert strict == (0 if outcome == "passed" else 1)
+    assert status["evidence"]["assessment"]["currentRequiredPass"] is (outcome == "passed")

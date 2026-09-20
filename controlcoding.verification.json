@@ -39,8 +39,15 @@
       "timeoutSeconds": 390,
       "kind": "regression",
       "required": true,
-      "command": "python -m pytest tests/test_cc_cli.py tests/test_gitignore.py tests/test_ci_configuration.py tests/test_cc_evidence.py tests/test_cc_evidence_process.py tests/test_cc_public_examples.py -q --junitxml {project}/.controlcoding/verification_receipts/cli-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "command": "python -m pytest tests/test_cc_cli.py tests/test_gitignore.py -q --junitxml {project}/.controlcoding/verification_receipts/cli-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
       "description": "Run the focused CLI and repository hygiene regression suite."
+    },
+    {
+      "id": "verification-support-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_ci_configuration.py tests/test_cc_evidence.py tests/test_cc_evidence_process.py tests/test_cc_public_examples.py -q --junitxml {project}/.controlcoding/verification_receipts/verification-support-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Run verification evidence, CI configuration, and public-example regressions."
     },
     {
       "id": "core-governance-regression",

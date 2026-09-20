@@ -48,6 +48,15 @@ selects required suites only; `--all` also selects optional checks. This contrac
 is a maintained subset of `tests/`, not the full test suite. Generated contracts
 include the setup/runtime and optional-hook targets only when those files exist.
 
+CLI/repository-hygiene tests run in `cli-regression` with a 390-second limit.
+Verification evidence, CI configuration, and public-example tests run separately
+in required `verification-support-regression`, using the 300-second default.
+Each group keeps its own JUnit report; both must pass for a complete required gate.
+Generated contracts add the support group only for available supporting files
+when selecting CLI-specific targets. A generic `tests` fallback does not add a
+second support group. This split bounds each process independently; it is not a
+guarantee of hosted timing or evidence that an interrupted run passed.
+
 Quick smoke test (fastest subset):
 
 ```bash
