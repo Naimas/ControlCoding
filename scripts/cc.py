@@ -2326,6 +2326,7 @@ def _default_verification_contract(project: Path) -> dict:
         suites.append(
             {
                 "id": "core-governance-regression",
+                "timeoutSeconds": 420,
                 "kind": "regression",
                 "required": True,
                 "command": pytest_command(

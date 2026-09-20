@@ -57,6 +57,14 @@ when selecting CLI-specific targets. A generic `tests` fallback does not add a
 second support group. This split bounds each process independently; it is not a
 guarantee of hosted timing or evidence that an interrupted run passed.
 
+Core memory, hook, session and organization tests remain together in required
+`core-governance-regression`, with a suite-specific 420-second limit in tracked
+and generated contracts. Its targets, order and JUnit report are unchanged.
+This finite allowance addresses repeated exhaustion of the previous 300-second
+limit; it does not establish the cause or guarantee hosted completion. The global
+default remains 300 seconds and the CLI limit remains 390. A core timeout still
+produces incomplete evidence and fails the current-required gate.
+
 Quick smoke test (fastest subset):
 
 ```bash

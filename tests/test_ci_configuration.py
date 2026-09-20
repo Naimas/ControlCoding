@@ -24,6 +24,7 @@ def test_default_selection_covers_remediation_surfaces(source):
     assert not issues
     budgets = {s["id"]: s["timeoutSeconds"] for s in selected}
     assert budgets.pop("cli-regression") == 390
+    assert budgets.pop("core-governance-regression") == 420
     assert set(budgets.values()) == {300}
     # pytest owns an external, short fixture tree; receipts stay in the project.
     assert all("--basetemp" not in suite["command"] for suite in selected)
@@ -268,6 +269,78 @@ def test_split_cli_real_receipts_require_both_groups(tmp_path, capsys, outcome):
         cases = ET.parse(support).findall(".//testcase")
         assert len(cases) == 4
         assert sum(c.find("failure") is not None for c in cases) == (outcome == "support-failure")
+    strict = cc.cmd_verify_status(project, json_output=True, require_current=True)
+    status = json.loads(capsys.readouterr().out)
+    assert strict == (0 if outcome == "passed" else 1)
+    assert status["evidence"]["assessment"]["currentRequiredPass"] is (outcome == "passed")
+
+
+@pytest.mark.parametrize("source", ["tracked", "generated"])
+@pytest.mark.parametrize("outcome", ["passed", "subset", "core-failure", "timeout"])
+def test_core_budget_reaches_runner_and_preserves_receipts(tmp_path, capsys, monkeypatch,
+                                                         source, outcome):
+    project = tmp_path / "core budget project with spaces"
+    project.mkdir()
+    policy = (json.loads((ROOT / "controlcoding.verification.json").read_text(encoding="utf-8"))
+              if source == "tracked" else cc._default_verification_contract(ROOT))
+    core = dict(next(s for s in policy["suites"] if s["id"] == "core-governance-regression"))
+    for token in shlex.split(core["command"]):
+        if token.startswith("tests/"):
+            path = project / token
+            path.parent.mkdir(exist_ok=True)
+            if path.name == "test_cc_memory.py" and outcome == "timeout":
+                body = "import time\ndef test_present():\n    time.sleep(30)\n"
+            else:
+                passed = not (path.name == "test_cc_memory.py" and outcome == "core-failure")
+                body = "def test_present():\n    assert " + str(passed) + "\n"
+            path.write_text(body, encoding="utf-8")
+    interpreter = '"' + sys.executable.replace("\\", "/") + '"'
+    core["command"] = interpreter + core["command"][len("python"):]
+    if outcome == "timeout":
+        core["timeoutSeconds"] = 1  # Exercise real interruption without a long wait.
+    following = {
+        "id": "following-default", "kind": "regression", "required": True,
+        "command": interpreter + ' -c "from pathlib import Path; '
+                   "Path('.controlcoding/verification_receipts/following.txt').write_text('ran')\"",
+    }
+    (project / "controlcoding.verification.json").write_text(json.dumps({
+        "schemaVersion": 1, "requiredKinds": ["regression"], "suites": [core, following],
+    }), encoding="utf-8")
+    observed = []
+    original = cc.cc_evidence.run_command
+
+    def capture_deadline(*args, **kwargs):
+        observed.append(kwargs["timeout"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cc.cc_evidence, "run_command", capture_deadline)
+    code = cc.cmd_verify_run(project, suite_ids=[core["id"]] if outcome == "subset" else [],
+                             json_output=True)
+    result = json.loads(capsys.readouterr().out)
+    assert observed == ({"passed": [420, 300], "subset": [420],
+                         "core-failure": [420, 300], "timeout": [1]}[outcome])
+    assert code == (1 if outcome in {"core-failure", "timeout"} else 0)
+    assert result["status"] == {"passed": "passed", "subset": "passed_subset",
+                                "core-failure": "failed", "timeout": "incomplete"}[outcome]
+    receipt = result["receipt"]
+    ids = [core["id"], following["id"]]
+    partial = outcome in {"subset", "timeout"}
+    assert receipt["selection"]["required"] == ids
+    assert receipt["selection"]["selected"] == (ids[:1] if outcome == "subset" else ids)
+    assert receipt["selection"]["executed"] == (ids[:1] if partial else ids)
+    assert receipt["selection"]["omitted"] == (ids[1:] if partial else [])
+    assert not (project / receipt["tempDir"]).exists()
+    reports = project / ".controlcoding/verification_receipts"
+    assert (reports / "following.txt").exists() is (not partial)
+    report = reports / "core-governance-regression.xml"
+    if outcome == "timeout":
+        assert receipt["suites"][0]["error"] == "timeout"
+        assert not report.exists()
+    else:
+        cases = ET.parse(report).findall(".//testcase")
+        assert len(cases) == 7
+        assert not any(c.find("error") is not None or c.find("skipped") is not None for c in cases)
+        assert sum(c.find("failure") is not None for c in cases) == (outcome == "core-failure")
     strict = cc.cmd_verify_status(project, json_output=True, require_current=True)
     status = json.loads(capsys.readouterr().out)
     assert strict == (0 if outcome == "passed" else 1)

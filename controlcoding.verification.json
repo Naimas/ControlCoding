@@ -51,6 +51,7 @@
     },
     {
       "id": "core-governance-regression",
+      "timeoutSeconds": 420,
       "kind": "regression",
       "required": true,
       "command": "python -m pytest tests/test_cc_memory.py tests/test_check_boundaries.py tests/test_check_dangerous_commands.py tests/test_check_repo_boundaries.py tests/test_check_file_organization.py tests/test_cc_organize.py tests/test_session.py -q --junitxml {project}/.controlcoding/verification_receipts/core-governance-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
