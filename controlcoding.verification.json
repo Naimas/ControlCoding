@@ -36,17 +36,40 @@
     },
     {
       "id": "cli-regression",
+      "timeoutSeconds": 390,
       "kind": "regression",
       "required": true,
-      "command": "python -m pytest tests/test_cc_cli.py tests/test_gitignore.py -q --basetemp {temp}/pytest",
+      "command": "python -m pytest tests/test_cc_cli.py tests/test_gitignore.py -q --junitxml {project}/.controlcoding/verification_receipts/cli-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
       "description": "Run the focused CLI and repository hygiene regression suite."
     },
     {
-      "id": "core-governance-regression",
+      "id": "verification-support-regression",
       "kind": "regression",
       "required": true,
-      "command": "python -m pytest tests/test_cc_memory.py tests/test_check_boundaries.py tests/test_check_dangerous_commands.py tests/test_check_repo_boundaries.py tests/test_check_file_organization.py tests/test_cc_organize.py tests/test_session.py -q --basetemp {temp}/pytest-core-governance",
+      "command": "python -m pytest tests/test_ci_configuration.py tests/test_cc_evidence.py tests/test_cc_evidence_process.py tests/test_cc_public_examples.py -q --junitxml {project}/.controlcoding/verification_receipts/verification-support-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Run verification evidence, CI configuration, and public-example regressions."
+    },
+    {
+      "id": "core-governance-regression",
+      "timeoutSeconds": 420,
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_memory.py tests/test_check_boundaries.py tests/test_check_dangerous_commands.py tests/test_check_repo_boundaries.py tests/test_check_file_organization.py tests/test_cc_organize.py tests/test_session.py -q --junitxml {project}/.controlcoding/verification_receipts/core-governance-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
       "description": "Run V1/Core memory, hook, session, and organization regressions."
+    },
+    {
+      "id": "setup-runtime-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_setup.py tests/test_cc_runtime.py -q --junitxml {project}/.controlcoding/verification_receipts/setup-runtime-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Run installation workflow and Core/runtime prerequisite regressions."
+    },
+    {
+      "id": "optional-hooks-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_new_hooks.py -q --junitxml {project}/.controlcoding/verification_receipts/optional-hooks-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Run optional hook and Bash observation safety regressions."
     },
     {
       "id": "invariant-manifest",

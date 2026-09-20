@@ -5,9 +5,10 @@ ControlCoding. It helps an AI-assisted development session remember project
 context across time without mixing that context with the application's own
 runtime memory.
 
-It is not required for the base ControlCoding install. Install it when you want
-session continuity, decision history, document indexing, handoff views, and
-impact/context lookup.
+Minimal `init` does not initialize memory. Guided `setup` uses the reviewed
+handoff's memory policy: `governed_scope` initializes local memory and scans only
+governed surfaces; `deferred` leaves memory uninitialized. See the
+[complete installation example](install-controlcoding-on-your-project.md#complete-fresh-project-example).
 
 ## The Short Version
 
@@ -71,11 +72,14 @@ This creates local runtime state under `.controlcoding/`, including:
 - `.controlcoding/views/`
 - `.controlcoding/module_manifest.json`
 
-The database is SQLite. The implementation uses Python stdlib only.
+The database is SQLite. Core requires Python 3.11+; memory also needs a working
+SQLite deserialize API. Initialization probes that operation using a private
+in-memory image before creating project state. The implementation uses Python
+stdlib only. Existing read-side snapshot, lock and sidecar checks still apply.
 
-Memory is not initialized automatically by the base install. This is deliberate:
-some projects only need context files and hooks, while others need persistent
-workflow memory.
+Guided setup defaults to `governed_scope` if the handoff omits the memory policy.
+Choose `deferred` explicitly if the project only needs context files and hooks.
+A deferred setup can write a policy receipt without creating a memory database.
 
 ## Install Modes
 
@@ -383,7 +387,7 @@ Use this public terminology consistently:
 | Session GraphRAG | `cc memory session`, `cc memory session-pack`, `cc memory retrieve` | Explicit session traceability for chats and work sessions. Storage, CLI, views, RAG-O status, Dev GraphRAG retrieval, and packets are implemented in ControlCoding. |
 | Dev GraphRAG | `cc memory retrieve` and `cc memory rag-pack` | ControlCoding Dev Plane retrieval and packet building over `.controlcoding/memory/`. |
 | Evidence refs | `cc memory evidence` | Read-only drill-down from packet `nodeId` or `evidenceRefId` back to local indexed source evidence. Refs are derived from the memory index and do not create a new source of truth. |
-| MemoryEval | `cc memory eval` | Small executable fixture that checks retrieval, demotions, evidence refs, privacy scrub, cross-plane boundaries, and RAG-O routing. |
+| MemoryEval | `cc memory eval` | Small fixed synthetic fixture that checks selected retrieval, demotion, evidence-ref, privacy-scrub, cross-plane, and RAG-O behaviors. It is not a project-corpus audit or privacy certification. |
 | Work GraphRAG | `cc memory work-context-pack`, standalone `cw.py retrieve`, and standalone `cw.py rag-pack` | Project Plane retrieval and packet building over ControlWork memory. |
 | Cross-Plane GraphRAG Packet | `cc memory cross-pack` | Federated read-only packet that combines Dev GraphRAG, Work GraphRAG, Session GraphRAG, and RAG-O routes without merging sources of truth. |
 | ControlWork | `CONTROLWORK.md` and `.controlwork/` | Portable Project Plane memory contract, embedded in ControlCoding or standalone. |
@@ -505,9 +509,34 @@ python scripts/cc.py memory evidence list --project-root . --limit 20
 
 Evidence refs are read-only and derived from `.controlcoding/memory/`. They do
 not capture raw chat transcripts, replay sessions, sync ControlWork, or promote
-Project Plane material. Evidence previews and packets pass through a local
-privacy scrub that redacts common secret shapes and returns only count-based
-receipt metadata, not secret values.
+Project Plane material. Successful `rag-pack`, `evidence show`, and `cross-pack`
+payloads pass through a pattern-based local privacy scrub. Packet Markdown is
+assembled before that scrub, and an explicitly written packet uses the scrubbed
+Markdown. The current patterns cover private-key blocks, authorization headers,
+environment and inline secret assignments, OpenAI-shaped keys, GitHub tokens,
+Slack tokens, AWS access-key IDs, and JWT-shaped values.
+
+The scrub recursively examines string values in lists and dictionaries. It does
+not inspect dictionary keys or infer sensitivity from a key such as `password`,
+and non-string values pass through unchanged. Each matched occurrence is counted,
+including repeated text in structured fields and packet Markdown. Pattern-shaped
+benign text can therefore be replaced, while sensitive values with an unmatched
+shape can remain in the returned payload.
+
+The `cc-privacy-scrub/v1` receipt is metadata: it reports whether the helper ran,
+replacement and category counts, and the constant field
+`secretValuesIncluded: false`. A zero replacement count, or that constant field,
+does not establish that the returned payload is free of sensitive content. The
+receipt does not inspect all possible secrets, record consent, or certify
+encryption, deletion, storage cleanliness, or export safety.
+
+This scrub is an output-processing step after retrieval. An enabled local
+semantic adapter can receive the query and bounded candidate fields before the
+packet is assembled and scrubbed. Scrubbing a returned packet does not rewrite
+the source document or memory index. `evidence list` follows a separate,
+unscreened metadata path, while `outputPath` and the text `Written:` line are
+added after packet scrubbing. Treat paths and every CLI surface not named above
+as outside this measured output boundary.
 
 Run the local MemoryEval fixture when you need a quick regression signal for the
 Phase 1 memory behavior:
@@ -520,10 +549,12 @@ python scripts/cc.py memory eval --project-root . --json
 `memory eval` creates an isolated fixture under `.controlcoding/tmp`, initializes
 the memory planes inside that fixture, checks retrieval ranking, stale and
 application-owned demotions, Session GraphRAG demotion, GraphRAG evidence refs,
-privacy scrubbing, cross-plane packet boundaries, and the RAG-O evidence route,
-then removes the fixture by default. Use `--keep-fixture` only when you need to
-inspect the generated fixture. The command is a small regression check, not a
-benchmark claim or application RAG quality score.
+one fixed synthetic secret shape, cross-plane packet boundaries, and the RAG-O
+evidence route, then removes the fixture by default. Use `--keep-fixture` only
+when you need to inspect the generated fixture. It does not inspect the active
+project corpus for secrets or test universal detection, consent, storage, or
+export handling. The command is a small regression check, not a benchmark claim
+or application RAG quality score.
 
 Use `cross-pack` when the chat needs a single federated packet across Dev
 GraphRAG, Project Plane ControlWork context, Session GraphRAG continuity, and
@@ -735,15 +766,44 @@ Inspect optional semantic adapter configuration with:
 python scripts/cc.py memory semantic status --project-root .
 ```
 
-The default adapter is the local sparse index. Optional local runtime scoring
-is available only when `semantic_adapters.json` explicitly enables
-`local_runtime_v1` with a command. `cc memory retrieve` then sends a bounded
-JSON payload to that local command and uses returned scores as an additional
-ranking signal. `cc memory semantic status` still does not execute adapters.
+The default adapter is the rebuildable local sparse index. In status output,
+`requestedAdapter` is the configured selection and `activeAdapter` is that
+selection only when this build supports it and its required configuration makes
+it eligible for an execution attempt. An empty `activeAdapter` means the request
+was rejected; sparse retrieval remains available as the baseline. Retrieval
+reports separately identify the requested adapter, the adapter eligible for
+dispatch, whether an adapter process was attempted, and whether returned scores
+were used. Configuration or eligibility does not prove that a command exists,
+will succeed, or was used.
 
-Official API adapters remain explicit-only and disabled unless configured with
-official API credentials. The included status and retrieval paths do not reuse
-consumer login sessions or tokens.
+Optional local runtime scoring is eligible only when `semantic_adapters.json`
+explicitly enables `local_runtime_v1` with a command. `cc memory retrieve` sends
+the child process a JSON object containing the interface version, adapter ID,
+query, and candidates. Each candidate contains `id`, `recordType`, `type`,
+`title`, `path`, `headingPath`, `lifecycle`, and `text`; candidate text is
+truncated to 4,000 characters before this step. The effective `maxCandidates`
+shown by JSON and text status defaults to 200 and is clamped to 1 through 1,000.
+The effective `timeoutSeconds` shown in both formats defaults to 30 seconds and
+is clamped to 1 through 300 seconds. Numeric `0` selects the default; string
+`"0"` converts to zero and then clamps to 1. The count limit is not a total-byte
+limit or a confidentiality boundary.
+
+The local command runs with the ambient environment, current working directory,
+network access, filesystem access, and other process permissions provided by
+the operating system. This module does not impose a network sandbox, environment
+isolation, or working-directory isolation. Explicit project configuration is
+required, but it does not establish per-call human consent, secret filtering,
+safe storage, host delivery, or network isolation. Review the command and the
+data it can receive before opting in. `cc memory semantic status` reads
+configuration only: it does not probe or execute the command, validate it, or
+create memory state to support its report.
+
+`official_api_v1` scoring is unimplemented in this build and is always
+unavailable, even when provider, model, environment-variable name, and a value
+for that variable are present. Status reports the non-secret configuration and
+environment-variable presence without printing the value or treating it as a
+valid credential. No API request is made, and consumer login sessions or tokens
+are not reused.
 
 Export a derived graph projection or lightweight HTML viewer with:
 

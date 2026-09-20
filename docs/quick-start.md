@@ -2,7 +2,7 @@
 
 > If you just downloaded ControlCoding and want to apply it to your own project, this is the correct path.
 >
-> Requires: Python 3.10+ and a git repository. Windows users can run the commands below from PowerShell.
+> Requires: Python 3.11+ for Core and Git. Memory also requires a working SQLite deserialize API. Use the PowerShell or Bash variant in the installation guide for your shell.
 
 Primary onboarding page: [install-controlcoding-on-your-project.md](./install-controlcoding-on-your-project.md)
 Public packaging split: [release-model.md](./release-model.md)
@@ -21,12 +21,16 @@ Ask one question at a time.
 
 Only use raw commands yourself when the host truly cannot execute local commands.
 
-Backend apply sequence from the project root:
+Before applying, review the [complete handoff](install-controlcoding-on-your-project.md#complete-fresh-project-example)
+and save the confirmed `setup` and `engagement` sections as `handoff.json`.
+Inspect existing context/configuration conflicts before running the fresh-target
+example. Supplying answers applies immediately with or without `--apply-answers`.
+The guide contains both PowerShell and Bash variants. Bash apply sequence:
 
 ```bash
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+python "/path/to/ControlCoding/scripts/cc.py" setup --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --engagement --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" doctor --project-root .
 ```
 
 If ControlCoding lives on a different path on your machine, replace `/path/to/ControlCoding/` with the real location of the downloaded repository.

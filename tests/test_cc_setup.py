@@ -3,8 +3,11 @@
 import hashlib
 import json
 import os
+import re
+import shutil
 import sqlite3
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +19,228 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 import cc  # noqa: E402
 import cc_setup  # noqa: E402
+
+
+def _f3_broken_sqlite(monkeypatch, failure):
+    """Fail only the private capability probe; never open project storage."""
+    class BrokenProbe:
+        def __init__(self):
+            if failure != "missing":
+                self.deserialize = None if failure == "noncallable" else self.fail
+
+        def fail(self, image):
+            raise sqlite3.NotSupportedError("probe deliberately unavailable")
+
+        def execute(self, *args):
+            return self
+
+        def close(self):
+            pass
+
+    def connect(database, *args, **kwargs):
+        assert database == ":memory:", "preflight opened persistent storage"
+        return BrokenProbe()
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+
+
+@pytest.mark.parametrize("failure", ["missing", "noncallable", "operation"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_f3_setup_capability_failure_precedes_writes(tmp_path, monkeypatch, capsys, failure, existing):
+    project = tmp_path / "target"
+    project.mkdir()
+    if existing:
+        (project / "CONTROLCODING.md").write_bytes(b"custom context\n")
+        (project / ".controlcoding").mkdir()
+        (project / ".controlcoding" / "cc_config.json").write_bytes(b"{}\n")
+    answers = _write_base_setup_answers(tmp_path, memory_default_policy="governed_scope")
+    before = {str(p.relative_to(project)): p.read_bytes() if p.is_file() else None
+              for p in project.rglob("*")}
+    _f3_broken_sqlite(monkeypatch, failure)
+
+    def reached_writer(*args):
+        pytest.fail("setup reached its first write boundary before runtime rejection")
+
+    monkeypatch.setattr(cc_setup, "_ensure_setup_repo_boundary", reached_writer)
+    assert cc_setup.cmd_setup(project, answers_file=answers) == 1
+    assert "deserialize" in capsys.readouterr().out
+    assert before == {str(p.relative_to(project)): p.read_bytes() if p.is_file() else None
+                      for p in project.rglob("*")}
+
+
+@pytest.mark.parametrize("failure", ["missing", "noncallable", "operation"])
+@pytest.mark.parametrize("mode", ["full", "document-only"])
+def test_f3_direct_memory_init_rejects_before_writer(tmp_path, monkeypatch, capsys, failure, mode):
+    from cc_memory_lib import commands
+    _f3_broken_sqlite(monkeypatch, failure)
+
+    def reached_writer(*args, **kwargs):
+        pytest.fail("memory init entered the writer before runtime rejection")
+
+    monkeypatch.setattr(commands, "_memory_connection", reached_writer)
+    assert commands.cmd_memory_init(tmp_path, mode=mode, json_output=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "deserialize" in payload["message"]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("status", ["memory_init_failed", "governed_scan_failed"])
+def test_f3_setup_memory_failure_is_not_success(tmp_path, monkeypatch, capsys, status):
+    answers = _write_base_setup_answers(tmp_path, memory_default_policy="governed_scope")
+    _patch_base_setup_runtime(monkeypatch)
+    monkeypatch.setattr(cc_setup, "_sync_host_context_file", lambda *args, **kwargs: "AGENTS.md")
+    monkeypatch.setattr(cc_setup, "_bootstrap_default_project_memory", lambda *args: {"status": status})
+    assert cc_setup.cmd_setup(tmp_path, answers_file=answers) == 1
+    out = capsys.readouterr().out
+    assert status in out
+    assert "partial" in out.lower()
+    assert "Base setup complete!" not in out
+
+
+@pytest.mark.parametrize("stage", ["init", "scan"])
+def test_f3_partial_setup_keeps_accurate_failure_receipt(tmp_path, monkeypatch, capsys, stage):
+    answers = _write_base_setup_answers(tmp_path, memory_default_policy="governed_scope")
+    bootstrap = cc_setup._bootstrap_default_project_memory
+    _patch_base_setup_runtime(monkeypatch)
+    monkeypatch.setattr(cc_setup, "_bootstrap_default_project_memory", bootstrap)
+    monkeypatch.setattr(cc_setup, "_sync_host_context_file", lambda *args, **kwargs: "AGENTS.md")
+    if stage == "init":
+        monkeypatch.setattr(cc_setup, "cmd_memory_init", lambda *args, **kwargs: 1)
+    else:
+        monkeypatch.setattr(cc_setup, "cmd_memory_scan", lambda *args, **kwargs: 1)
+    assert cc_setup.cmd_setup(tmp_path, answers_file=answers) == 1
+    receipt = json.loads((tmp_path / ".controlcoding/memory_bootstrap_receipt.json").read_text(encoding="utf-8"))
+    assert receipt["status"] == ("memory_init_failed" if stage == "init" else "governed_scan_failed")
+    assert receipt["initialized"] == (stage == "scan")
+    assert receipt["scanned"] is False
+    assert "Base setup complete!" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("failure", ["missing", "noncallable", "operation"])
+def test_f3_existing_memory_runtime_rejection_preserves_files(tmp_path, monkeypatch, capsys, failure):
+    assert cc.cmd_memory_init(tmp_path) == 0
+    capsys.readouterr()
+    def snapshot():
+        return {str(p.relative_to(tmp_path)): (p.read_bytes(), p.stat().st_mtime_ns) if p.is_file() else None
+                for p in tmp_path.rglob("*")}
+    before = snapshot()
+    _f3_broken_sqlite(monkeypatch, failure)
+    assert cc.cmd_memory_init(tmp_path, json_output=True) == 1
+    assert json.loads(capsys.readouterr().out)["error"] == "memory_runtime_unavailable"
+    assert snapshot() == before
+
+
+def test_f3_bootstrap_exception_reports_partial_setup(tmp_path, monkeypatch, capsys):
+    answers = _write_base_setup_answers(tmp_path)
+    _patch_base_setup_runtime(monkeypatch)
+    def fail(*args):
+        raise OSError("synthetic bootstrap failure")
+    monkeypatch.setattr(cc_setup, "_bootstrap_default_project_memory", fail)
+    assert cc_setup.cmd_setup(tmp_path, answers_file=answers) == 1
+    out = capsys.readouterr().out
+    assert "Partial setup" in out and "synthetic bootstrap failure" in out
+    assert "Base setup complete!" not in out
+
+
+def _f1_document_block(marker, language):
+    guide = Path(__file__).resolve().parents[1] / "docs" / "install-controlcoding-on-your-project.md"
+    match = re.search(r"<!-- " + marker + r" -->\s+```" + language + r"\n(.*?)```",
+                      guide.read_text(encoding="utf-8"), re.S)
+    assert match, f"missing published example: {marker}"
+    return match.group(1)
+
+
+def _f1_cli_env():
+    env = os.environ.copy()
+    env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1", GIT_CONFIG_COUNT="0",
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_CONFIG_SYSTEM=os.devnull, GIT_OPTIONAL_LOCKS="0")
+    env.pop("PYTHONPATH", None)
+    return env
+
+
+@pytest.mark.parametrize("shell", ["powershell", "bash"])
+@pytest.mark.parametrize("policy", ["governed_scope", "deferred"])
+@pytest.mark.parametrize("explicit_apply", [True, False])
+def test_f1_published_installation_flow(tmp_path, shell, policy, explicit_apply):
+    """Execute the actual published script and handoff without installer mocks."""
+    if shell == "powershell":
+        executable = shutil.which("powershell") or shutil.which("pwsh")
+    elif os.name == "nt":
+        executable = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/usr/bin/bash.exe")
+        if not Path(executable).is_file():
+            executable = None
+    else:
+        executable = shutil.which("bash")
+    if not executable:
+        pytest.skip(f"{shell} is not installed")
+    project = tmp_path / "example project-caf\u00e9"
+    project.mkdir()
+    (project / "src").mkdir()
+    (project / "src/app.py").write_bytes(b"# application must stay unchanged\n")
+    handoff = tmp_path / "reviewed handoff-caf\u00e9.json"
+    payload = json.loads(_f1_document_block("cc-install-handoff", "json"))
+    payload["setup"]["memory_default_policy"] = policy
+    handoff.write_text(json.dumps(payload), encoding="utf-8")
+    repo = Path(__file__).resolve().parents[1]
+    body = _f1_document_block("cc-install-" + shell, shell)
+    values = [sys.executable, str(repo / "scripts/cc.py"), str(project), str(handoff)]
+    placeholders = (["C:/path/to/python.exe", "C:/path/to/ControlCoding/scripts/cc.py",
+                     "C:/path/to/your-project", "C:/path/to/handoff.json"]
+                    if shell == "powershell" else
+                    ["/path/to/python", "/path/to/ControlCoding/scripts/cc.py",
+                     "/path/to/your-project", "/path/to/handoff.json"])
+    for placeholder, value in zip(placeholders, values):
+        value = Path(value).as_posix()
+        quoted = "'" + (value.replace("'", "''") if shell == "powershell"
+                        else value.replace("'", "'\"'\"'")) + "'"
+        body = body.replace("'" + placeholder + "'", quoted)
+    if not explicit_apply:
+        body = body.replace(" --apply-answers", "")
+    script = tmp_path / ("run-example.ps1" if shell == "powershell" else "run-example.sh")
+    script.write_text(body, encoding="utf-8-sig" if shell == "powershell" else "utf-8")
+    command = ([executable, "-NoProfile", "-NonInteractive", "-File", str(script)]
+               if shell == "powershell" else [executable, "--noprofile", "--norc", str(script)])
+    result = subprocess.run(command, cwd=tmp_path, env=_f1_cli_env(), capture_output=True,
+                            text=True, encoding="utf-8", errors="replace", timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (project / "src/app.py").read_bytes() == b"# application must stay unchanged\n"
+    config = json.loads((project / ".controlcoding/cc_config.json").read_text(encoding="utf-8"))
+    gateway = json.loads((project / ".controlcoding/gateway_config.json").read_text(encoding="utf-8"))
+    engagement = json.loads((project / ".controlcoding/cc_engagement.json").read_text(encoding="utf-8"))
+    receipt = json.loads((project / ".controlcoding/memory_bootstrap_receipt.json").read_text(encoding="utf-8"))
+    assert config["memory_default_policy"] == policy
+    assert gateway["userHost"] == "codex_cli"
+    assert engagement["tier"] == "core" and engagement["backend_policy"] == "local_only"
+    assert "controlcoding-managed:" in (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert receipt["fullRepoScan"] is False
+    assert receipt["status"] == ("completed" if policy == "governed_scope" else "deferred")
+    database = project / ".controlcoding/memory/memory.db"
+    assert database.exists() == (policy == "governed_scope")
+    if policy == "governed_scope":
+        from cc_memory_lib.store import _connect_readonly_db
+        conn = _connect_readonly_db(database)
+        try:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        finally:
+            conn.close()
+
+
+def test_f1_generated_guide_command_preserves_arguments(tmp_path, monkeypatch):
+    source = tmp_path / "source with spaces-caf\u00e9's"
+    source.mkdir()
+    (source / "cc.py").write_text("import json,sys; print(json.dumps(sys.argv[1:]))", encoding="utf-8")
+    target = tmp_path / "target with spaces-caf\u00e9's"
+    monkeypatch.setattr(cc_setup, "SCRIPT_DIR", source)
+    command = cc_setup._setup_guide_command(target, "setup", "--answers-file", "./reviewed handoff.json")
+    shell = (["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
+             if os.name == "nt" else ["/bin/sh", "-c", command])
+    result = subprocess.run(shell, env=_f1_cli_env(), capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == ["setup", "--answers-file", "./reviewed handoff.json",
+                                       "--project-root", str(target.resolve())]
 
 
 def _write_base_setup_answers(project: Path, **overrides) -> Path:
@@ -103,10 +328,12 @@ def _patch_base_setup_runtime(monkeypatch) -> None:
     monkeypatch.setattr(cc_setup, "cmd_doctor", lambda project: 0)
 
 
+@pytest.mark.parametrize("real_pack_conflict", [False, True, "settings"])
 def test_cmd_setup_propagates_pack_failure_before_dependent_steps(
     tmp_path,
     monkeypatch,
     capsys,
+    real_pack_conflict,
 ):
     answers_file = tmp_path / "setup_answers.json"
     answers_file.write_text(
@@ -166,14 +393,42 @@ def test_cmd_setup_propagates_pack_failure_before_dependent_steps(
         calls.append(("doctor", None))
         return 0
 
-    monkeypatch.setattr(cc_setup, "cmd_install", fail_install)
+    if real_pack_conflict:
+        if real_pack_conflict == "settings":
+            target = tmp_path / ".controlcoding" / "settings.json"
+            target.parent.mkdir()
+            target.write_bytes(b'{"custom":true,"mcpServers":{"foreign":{"command":"owner"}}}\n')
+        else:
+            target = tmp_path / "tools" / "cc_lockfile.py"
+            target.parent.mkdir()
+            target.write_bytes(b"CUSTOM SETUP PACK\n")
+        original = target.read_bytes()
+        at_pack = []
+        def install_with_conflict(project, pack):
+            calls.append(("install", pack))
+            at_pack.append(target.read_bytes())
+            return cc.cmd_install(project, pack)
+        monkeypatch.setattr(cc_setup, "cmd_install", install_with_conflict)
+    else:
+        monkeypatch.setattr(cc_setup, "cmd_install", fail_install)
     monkeypatch.setattr(cc_setup, "cmd_doctor", unexpected_doctor)
 
     result = cc_setup.cmd_setup(tmp_path, answers_file=answers_file)
 
-    assert result == 7
+    assert result == (1 if real_pack_conflict else 7)
     assert calls == [("install", "session-manager")]
-    assert "Base setup complete!" not in capsys.readouterr().out
+    if real_pack_conflict:
+        assert at_pack == [original]
+        assert target.read_bytes() == original
+        if real_pack_conflict == "settings":
+            assert not (tmp_path / "tools").exists()
+        assert (tmp_path / "CONTROLCODING.md").is_file()
+    output = capsys.readouterr().out
+    assert "Base setup complete!" not in output
+    assert "Partial setup: pack 'session-manager' did not complete" in output
+    assert "no rollback was performed" in output
+    if real_pack_conflict == "settings":
+        assert "settings conflict" in output and "reconcile settings" in output
 
 
 def test_backend_preference_has_neutral_default_and_accepts_undetected_supported_backend(capsys):
@@ -4581,3 +4836,44 @@ def test_t_fs_03_real_descriptor_channel_drift(tmp_path, monkeypatch):
     assert descriptor_before[6] == descriptor_after[6] == path_before[6]
     assert type(raised.value) is cc._AdapterIdentityDriftError
     assert target.read_bytes() == payload
+
+@pytest.mark.parametrize("failure", ["returned", "planner", "publication", "success"])
+def test_cmd_setup_stops_after_init_failure(tmp_path, monkeypatch, capsys, record_property, failure):
+    project = tmp_path / "project"; project.mkdir()
+    answers = _write_base_setup_answers(tmp_path, memory_default_policy="deferred", selected_packs=[])
+    _patch_base_setup_runtime(monkeypatch)
+    calls = []
+    target = project / ".gitignore"
+    if failure == "planner": target.write_bytes(b"custom incomplete ignore\n")
+    real_init = cc.cmd_init
+    def init(*args, **kwargs):
+        calls.append("init")
+        return 7 if failure == "returned" else real_init(*args, **kwargs)
+    monkeypatch.setattr(cc_setup, "cmd_init", init)
+    def spy(name, result):
+        def call(*args, **kwargs): calls.append(name); return result
+        return call
+    monkeypatch.setattr(cc_setup, "_write_host_integration_assets", spy("host", []))
+    monkeypatch.setattr(cc_setup, "_sync_host_context_file_compat", spy("adapter", "AGENTS.md"))
+    monkeypatch.setattr(cc_setup, "_bootstrap_default_project_memory", spy("memory", {"status": "deferred"}))
+    monkeypatch.setattr(cc_setup, "cmd_install", spy("pack", 0))
+    monkeypatch.setattr(cc_setup, "save_settings", spy("backend", None))
+    monkeypatch.setattr(cc_setup, "cmd_doctor", spy("doctor", 0))
+    if failure == "publication":
+        real_link = os.link
+        def link(src, dst, *args, **kwargs):
+            if Path(dst).name == "settings.json":
+                calls.append("publication_race"); Path(dst).write_bytes(b"concurrent settings\n")
+            return real_link(src, dst, *args, **kwargs)
+        monkeypatch.setattr(os, "link", link)
+    result = cc_setup.cmd_setup(project, answers_file=answers, apply_answers=True)
+    assert result == (0 if failure == "success" else 7 if failure == "returned" else 1)
+    assert calls == (["init", "host", "adapter", "memory", "doctor"] if failure == "success"
+                     else ["init", "publication_race"] if failure == "publication" else ["init"])
+    assert (project / "CONTROLCODING.md").read_bytes() == ("# Test" + os.linesep).encode()
+    assert (project / ".controlcoding/cc_config.json").exists()
+    if failure == "planner": assert target.read_bytes() == b"custom incomplete ignore\n"
+    if failure == "publication": assert (project / ".controlcoding/settings.json").read_bytes() == b"concurrent settings\n"
+    output = capsys.readouterr().out
+    if failure != "success": assert "Partial setup" in output and "Earlier context/config/Git" in output and "no rollback" in output
+    record_property("events", json.dumps(calls)); record_property("returncode", result)

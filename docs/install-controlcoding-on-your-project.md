@@ -46,7 +46,7 @@ business logic, publish anything, or enable remote AI calls.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+ for Core; memory also requires a working SQLite deserialize API
 - git
 - a local checkout of the ControlCoding repository
 - an authorized AI host or manual shell access
@@ -72,10 +72,13 @@ Only fall back to raw commands if the host truly cannot execute local commands.
 Backend apply sequence from the project root:
 
 ```bash
-python /path/to/ControlCoding/scripts/cc.py setup --project-root .
-python /path/to/ControlCoding/scripts/cc.py setup --engagement --project-root .
-python /path/to/ControlCoding/scripts/cc.py doctor --project-root .
+python "/path/to/ControlCoding/scripts/cc.py" setup --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" setup --engagement --answers-file "./handoff.json" --apply-answers --project-root . &&
+python "/path/to/ControlCoding/scripts/cc.py" doctor --project-root .
 ```
+
+This Bash sequence requires the reviewed handoff below. It is not a terminal
+questionnaire. Use the PowerShell variant below when working in PowerShell.
 
 Replace `/path/to/ControlCoding/` with the real path where you downloaded this repository.
 
@@ -126,6 +129,112 @@ The V1/Core package does not include a bundled desktop installer or Studio UI.
 Use the same chat-guided or CLI setup logic documented here. Project setup
 remains a separate second flow after installation.
 For the public packaging split, see [release-model.md](./release-model.md).
+
+## Complete Fresh-Project Example
+
+Selected-memory setup probes deserialize in private memory before writing to the
+target. Unsupported Python or SQLite capability produces an actionable error.
+If initialization or scanning fails later, setup reports partial completion and
+returns nonzero; already-created files remain for inspection. It does not roll
+back the whole installation. Optional package/runtime installation is separate.
+
+Use an existing ControlCoding checkout and a separate adopter directory. Before
+applying, inspect the target for `CONTROLCODING.md`, host instruction files,
+`.controlcoding/`, `.claude/`, `hooks/` and custom Git hooks. If any conflict with
+existing work, stop this fresh-install example and review ownership and changes
+first. Direct apply can replace canonical context; foreign adapters can cause
+partial setup. It is not a transactional installer or an automatic merge of
+arbitrary customizations. Repeated setup is not a preservation guarantee.
+
+Review the following choices and save the JSON as `handoff.json` outside any
+protected target folder. It deliberately selects Core, a Codex configuration,
+local hooks and no specialist agents or extra backend activation. `local_only`
+is the policy for extra backends, not a claim about the user's host running
+locally. No live host session or model call is needed to apply this handoff.
+
+<!-- cc-install-handoff -->
+```json
+{
+  "setup": {
+    "name": "Example Project",
+    "user_host": "codex_cli",
+    "documentation_mode": "managed",
+    "host_instruction_mode": "recommended",
+    "host_custom_notes": [],
+    "hooks_location": "local",
+    "memory_default_policy": "governed_scope",
+    "planning": {"tier": "core", "manual_consultation_allowed": false},
+    "configure_advanced_packs": false,
+    "selected_packs": [],
+    "stable": [],
+    "shared": [],
+    "features": [],
+    "behavioral_rules": [],
+    "project_definition_mode": "skip"
+  },
+  "engagement": {
+    "tier": "core",
+    "manual_consultation_allowed": false,
+    "backend_policy": "local_only",
+    "tandem": {"mode": "off"},
+    "specialist_paths": []
+  }
+}
+```
+
+The empty boundary lists classify no application folders; review and fill them
+for your project. Governed memory indexes only the surfaces described above.
+To postpone memory, explicitly change `memory_default_policy` to `deferred`:
+setup records that choice without creating a memory database. Minimal `init`
+also leaves memory uninitialized. Some handoff fields have defaults; this sample
+is not a claim that every omitted field will be rejected.
+
+Set the four absolute paths in the appropriate block. The target must already
+exist. The interpreter must meet the requirements above. The first command only
+prints guidance; review the handoff before executing the two apply commands.
+**An answers file applies immediately, even without `--apply-answers`.** There
+is no setup dry-run; the review step is a human inspection of choices and effects.
+Setup can initialize a target Git repository and write context, configuration,
+hooks, local launchers and the selected memory state.
+
+PowerShell:
+
+<!-- cc-install-powershell -->
+```powershell
+$CcPython = 'C:/path/to/python.exe'
+$CcScript = 'C:/path/to/ControlCoding/scripts/cc.py'
+$CcTarget = 'C:/path/to/your-project'
+$CcHandoff = 'C:/path/to/handoff.json'
+& $CcPython $CcScript setup --chat-guide --host-hint codex_cli --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Setup guide failed' }
+& $CcPython $CcScript setup --answers-file $CcHandoff --apply-answers --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Base setup failed; inspect the output before continuing' }
+& $CcPython $CcScript setup --engagement --answers-file $CcHandoff --apply-answers --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Engagement setup failed' }
+& $CcPython $CcScript doctor --project-root $CcTarget
+if ($LASTEXITCODE -ne 0) { throw 'Doctor reported a failure' }
+```
+
+Bash (including Git Bash on Windows, with paths readable by that shell):
+
+<!-- cc-install-bash -->
+```bash
+CC_PYTHON='/path/to/python'
+CC_SCRIPT='/path/to/ControlCoding/scripts/cc.py'
+CC_TARGET='/path/to/your-project'
+CC_HANDOFF='/path/to/handoff.json'
+"$CC_PYTHON" "$CC_SCRIPT" setup --chat-guide --host-hint codex_cli --project-root "$CC_TARGET" || exit $?
+"$CC_PYTHON" "$CC_SCRIPT" setup --answers-file "$CC_HANDOFF" --apply-answers --project-root "$CC_TARGET" || exit $?
+"$CC_PYTHON" "$CC_SCRIPT" setup --engagement --answers-file "$CC_HANDOFF" --apply-answers --project-root "$CC_TARGET" || exit $?
+"$CC_PYTHON" "$CC_SCRIPT" doctor --project-root "$CC_TARGET" || exit $?
+```
+
+Check the actual files and all command exit codes. Confirm the selected host and
+memory policy in local configuration, the Core engagement choice, and the memory
+bootstrap receipt when requested. A completed receipt must report governed scope
+without a full scan. If any step fails, inspect partial output before retrying.
+Doctor and generated `AGENTS.md` do not prove that a live host loads context or
+executes hooks. The optional Bash observation hook is not enabled by minimal init.
 
 ## Step 1: Installation Contract
 
@@ -430,6 +539,65 @@ only when you intentionally want:
 
 `init` is not the preferred first-time onboarding path for a normal project.
 
+`init --preview-only` uses the same complete preflight as application. The target
+must already be an ordinary directory. Preview reports planned creates and keeps,
+or a conflict path and reason, without creating files, directories, Git state or
+memory. Use the same `--central-hooks` choice for preview and apply:
+
+```bash
+python /path/to/ControlCoding/scripts/cc.py init --preview-only --project-root .
+python /path/to/ControlCoding/scripts/cc.py init --project-root .
+```
+
+Minimal init preserves existing context, status, roadmap, bug documents and Git
+hook scripts. Keeping a file does not validate its contents or demonstrate hook
+enforcement. A retained Git script means init did not install its generated CC
+gate there. Canonical context/config/settings take precedence; ordinary legacy
+inputs remain unchanged, and absent canonical configuration can be created using
+their custom fields. A legacy-only `CLAUDE.md` remains the context source.
+
+Hook and fitness copies must be absent or byte-identical. Different copies
+conflict regardless of mtime. Existing `cc_config.json` must be valid and
+compatible with the requested local/central mode. Existing settings must already
+contain the effective hook configuration; custom and foreign MCP entries remain
+intact. An existing `.gitignore` must contain the complete block for the selected
+config, including its artifact policy; a start marker alone is insufficient.
+Compatible files retain their exact bytes and metadata, including CRLF.
+
+This conservative policy can require manual reconciliation before init works:
+
+1. Run preview and inspect the reported file locally. Keep custom data and rules.
+2. For settings, compare the hook entries with `BASE_SETTINGS` and the selected
+   hook directory in `scripts/cc.py`. Generated shell commands use quoted absolute
+   script paths; `_resolve_hook_commands` defines their spelling. Add or reconcile
+   the required entries deliberately without removing foreign hooks or MCP data.
+3. For `.gitignore`, compare with `_build_gitignore_block` in that source, using
+   the effective `documentation_mode`, `cc_artifact_mode` and local/central choice.
+   Preserve unrelated patterns while reconciling the complete required block.
+   For configuration, review the reported mode/value conflict explicitly.
+4. Run preview again, then apply only after the conflicts are resolved.
+
+Do not delete user settings, remove custom Git hooks, or disable protection to
+bypass a conflict. Familiar filenames, markers, old shipped text and timestamps
+are not permission to replace a file. Init has no force-overwrite option.
+
+Absent files are published exclusively. A concurrent destination causes failure
+and remains intact; unsupported publication fails without a replacement fallback.
+Init rejects symlinks, junctions/reparse paths and special files in relevant
+roots, parents, inputs and destinations. A `.git` indirection file is unsupported;
+init does not follow it into another Git directory. These checks are bounded
+local preservation measures, not a universal hostile-filesystem guarantee.
+
+Preflight is not rollback: a late I/O failure can leave earlier created outputs.
+The nonzero result reports partial initialization and the recorded output paths;
+inspect those paths and any reported temporary-stage cleanup problem before
+retrying. Base `setup` stops after a nonzero init result, before host assets,
+adapter sync, memory, packs, backend settings changes and doctor. **Earlier setup
+context/config/Git work may already remain.** Canonical-context regeneration and
+other setup stages have separate behavior; whole setup is not preservation-safe
+or atomic under this minimal-init contract. Update/removal behavior is also
+outside this contract.
+
 ## Migrating A Historical Host Adapter
 
 Do not use `--force` to claim an existing adapter. Start with a preview:
@@ -514,9 +682,10 @@ To diagnose the operational state of the invariant gate, use:
 python /path/to/ControlCoding/scripts/cc.py invariants doctor --project-root .
 ```
 
-This reports whether invariants are missing, only documented, executable only
-on the local machine, or wired into CI. It also reports the current control
-level so you do not confuse a principle with an enforced gate.
+This reports local manifest configuration and recognized CI command text patterns.
+Legacy state/control-level labels do not establish execution or enforcement.
+Current local receipt assessment is separate; hosted execution and required
+server checks remain unverified.
 
 To prepare CI enforcement for the invariant gate, use a dry run first:
 
@@ -530,9 +699,9 @@ Then write the GitHub Actions workflow when the command and manifest are correct
 python /path/to/ControlCoding/scripts/cc.py invariants wire-ci --write --project-root .
 ```
 
-This creates `.github/workflows/controlcoding-invariants.yml`. The gate becomes
-mechanical only after that workflow is committed and enabled by the repository
-host. Until then, it is a generated CI plan.
+This creates `.github/workflows/controlcoding-invariants.yml`, a generated CI plan.
+Review and commit the workflow, then separately verify successful hosted execution
+and required server checks. Generating or detecting the file proves neither.
 
 For hosts without native inline hooks, the project should not be considered
 healthy until the repo-side boundary path is actually wired.
@@ -595,6 +764,49 @@ If that merged topic becomes conflicted, `cc consult resolution` shows the
 generated resolution artifact and prompt path for the next bounded manual chat.
 
 ## After Base Install
+
+### Optional feature packs and existing files
+
+Preview a pack before installing it, including all packs at once:
+
+```bash
+python scripts/cc.py install all --preview-only --project-root "/path/to/project"
+python scripts/cc.py install session-manager --project-root "/path/to/project"
+```
+
+The preview reads sources and the target project but creates no files or
+directories, even when the target project does not exist. Mutating installation
+requires an existing project directory. Preview reports proposed files, identical-file skips, settings actions,
+and the `multi-agent` `.bridge` and sibling helper paths. A conflict returns a
+nonzero result. Installation checks every selected pack before writing. An
+existing pack file with identical bytes is left untouched; a differing file or
+unsafe path blocks installation, even if its name matches a shipped template.
+Reconcile such a file explicitly before retrying. There is no force overwrite or
+automatic upgrade of edited pack files. Existing helper directories are left
+intact, and existing MCP server entries are retained.
+
+Pack installation never rewrites an existing `.controlcoding/settings.json`.
+If all required MCP entries are already present, it skips that file and preserves
+its exact bytes and metadata, including custom configuration. If entries are
+missing, both preview and apply return a settings conflict before any selected
+pack file, directory, bridge or helper is created. Sequential pack additions and
+some advanced-pack `setup` flows therefore require explicit settings reconciliation.
+Review the selected pack's entries in `MCP_CONFIGS` in `scripts/cc.py` and deliberately
+add the needed configuration to your settings while retaining custom/MCP data,
+then preview again. Do not delete settings to bypass this conflict. No force
+overwrite or automatic merge is provided. When canonical settings are absent,
+installation retains legacy settings as input, leaves the legacy file untouched,
+and creates canonical settings exclusively.
+
+The preflight prevents known conflicts in later selected packs from changing
+earlier ones. An I/O failure during application can leave a partial install;
+inspect the reported paths before retrying. New pack files and canonical settings
+use exclusive publication: a concurrent destination is not replaced. Existing
+settings are only checked and skipped; changed snapshots cause a conflict.
+These checks do not establish protection against every hostile process,
+filesystem or platform race. Base `setup` can already have written other output
+before a pack conflict; it stops dependent steps and reports partial setup without
+rollback. Base `init`, and later update/removal work, have separate boundaries.
 
 - If you only want the structured baseline, stop after `Core` and start working.
 - If you want the optional specialist/runtime layers after base setup, continue with [ecosystem-quickstart.md](./ecosystem-quickstart.md).

@@ -6,7 +6,9 @@ V1/Core release.
 ## Current Package
 
 The current public package is **Core**, distributed as source. Users run it
-from a checkout or archive with Python 3.10 or later. It is not represented as
+from a checkout or archive with Python 3.11 or later. Memory additionally requires
+a working SQLite deserialize API, checked before initialization. The Core
+minimum is separate from any hook-only compatibility claim. It is not represented as
 a bundled desktop application.
 
 Core includes:
@@ -120,6 +122,13 @@ python scripts/cc.py verify run --project-root .
 ```
 
 ## Related Pages
+
+Schema-v2 receipts distinguish complete required execution from passing subsets
+and compare the observed inputs and runtime with the current checkout. Use
+`verify status --require-current` when a current complete pass is required.
+Ordinary status and doctor validity are configuration checks. Receipt identity
+does not establish hosted matrix success or server-side enforcement; see
+[verification evidence](./verification-evidence.md).
 
 - [Install ControlCoding On Your Project](./install-controlcoding-on-your-project.md)
 - [Quick Start](./quick-start.md)

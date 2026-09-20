@@ -11,6 +11,12 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 
 @pytest.fixture
+def tmp_path(tmp_path_factory):
+    """Keep fixture paths short enough for Git on Windows, even in spaced roots."""
+    return tmp_path_factory.mktemp("t")
+
+
+@pytest.fixture
 def tmp_project(tmp_path):
     """Create a minimal project structure in a temp directory."""
     # Set environment variables for the session manager

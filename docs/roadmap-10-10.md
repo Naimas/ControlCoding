@@ -45,9 +45,10 @@ its own route and evidence checks as mechanical.
   findings.
 - Strict doctor mode can include the resulting claim-integrity state.
 
-These checks establish structural consistency. Route validation proves that a
-documented command reaches an implemented handler; it does not prove the
-handler's functional correctness. The prose check requires operational context
+These checks report `scope: structural` and explicit limitations. Route recognition
+checks recognized route structure only; it does not validate complete arguments
+or preconditions, execute the example, or prove behavior. Evidence references
+are declarations; their existence and adequacy are not verified. The prose check requires operational context
 for strong claims, but it is not a general natural-language fact checker.
 
 ## Verification Contracts and Invariants

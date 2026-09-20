@@ -647,7 +647,15 @@ class TestPackagingMetadata:
         expected_commands = [
             (
                 "Install test dependencies",
-                ["python", "-m", "pip", "install", "--upgrade", "pip", "pytest", ".[mcp]"],
+                ["python", "-m", "pip", "install", "--require-hashes", "--only-binary=:all:", "-r", ".github/requirements-ci.lock"],
+            ),
+            (
+                "Install candidate without dependency resolution",
+                ["python", "-m", "pip", "install", "--no-deps", "--no-build-isolation", ".[mcp]"],
+            ),
+            (
+                "Record verification environment",
+                ["python", ".github/scripts/record_ci_environment.py", "--output", ".controlcoding/ci-environment.json"],
             ),
             (
                 "Check verification contract",
@@ -1135,10 +1143,10 @@ class TestPackagingMetadata:
         assert_workflow_contract(workflow)
 
         equivalent_workflows = {
-            "unquoted mcp extra": replace_step_run(
+            "quoted requirements path": replace_step_run(
                 workflow,
                 "Install test dependencies",
-                "python -m pip install --upgrade pip pytest .[mcp]",
+                "python -m pip install --require-hashes --only-binary=:all: -r '.github/requirements-ci.lock'",
             ),
             "double-quoted CI step names": quote_step_names(workflow, '"'),
             "single-quoted CI step names": quote_step_names(workflow, "'"),
@@ -1377,6 +1385,103 @@ class TestHostProfileDerivation:
         assert by_id["review_gate"]["nature"] == "conditional"
 
 
+
+class TestHostCoverageDescriptions:
+    @pytest.mark.parametrize("host", cc.BENCHMARK_HOST_ORDER)
+    def test_profile_and_gate_describe_cc_not_vendor_absence(self, host):
+        profile = cc._derive_host_profile(host)
+        assert profile.get("profileScope") == "cc_integration_model"
+        assert "unverified" in profile["summary"]
+        assert "without native inline hooks" not in profile["summary"]
+        assert "without inline file hooks" not in profile["summary"]
+        gates = cc._derive_host_gate_contract(profile)
+        assert all(gate.get("scope") == "cc_integration_model" for gate in gates)
+        assert "host does not expose" not in json.dumps(gates)
+
+    @pytest.mark.parametrize("supported", [False, True])
+    def test_cline_branch_is_cc_policy_not_host_detection(self, supported):
+        with patch.object(cc, "_cline_inline_hooks_supported", return_value=supported):
+            profile = cc._derive_host_profile("cline")
+        assert profile["inlineBoundaryGate"] == ("native_hooks" if supported else "none")
+        assert profile["protectionModel"] == ("inline_first" if supported else "repo_side")
+        assert "CC" in profile["summary"] and "unverified" in profile["summary"]
+        assert "Cline hooks are not available" not in profile["summary"]
+
+    @pytest.mark.parametrize("host", ["claude_code", "codex_cli", "cursor", "cline"])
+    def test_persisted_old_description_does_not_require_regeneration(self, host):
+        expected = cc._derive_host_profile(host)
+        persisted = dict(expected)
+        persisted.pop("profileScope", None)
+        persisted["summary"] = "Historical descriptive text, not execution evidence."
+        assert cc._host_profile_matches(persisted, expected)
+        for key in ("inlineBoundaryGate", "permissionGate", "userHost", "schemaVersion"):
+            invalid = dict(persisted, **{key: "inconsistent"})
+            assert not cc._host_profile_matches(invalid, expected)
+
+    @pytest.mark.parametrize("host", ["claude_code", "cursor"])
+    @pytest.mark.parametrize("state", ["absent", "generated_only", "declared", "forged_evidence"])
+    def test_real_status_does_not_promote_files_or_claims_to_host_evidence(self, tmp_path, host, state):
+        control = tmp_path / ".controlcoding"
+        control.mkdir()
+        gateway = {}
+        if state in {"declared", "forged_evidence"}:
+            gateway["userHost"] = host
+        if state == "forged_evidence":
+            gateway["hostCoverage"] = {"testedIntegration": {"status": "verified"}}
+            gateway["hostProfile"] = {"summary": "verified on all hosts"}
+        (control / "gateway_config.json").write_text(json.dumps(gateway), encoding="utf-8")
+        if state != "absent":
+            context = cc._derive_host_profile(host)["contextFile"]
+            target = tmp_path / context
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("Generated instructions; no host has loaded these.", encoding="utf-8")
+        before = {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+        result = _run_cc("host", "status", "--project-root", tmp_path, "--json")
+        assert result.returncode == 0, result.stderr
+        payload = _assert_pure_json_object(result.stdout)
+        coverage = payload.get("hostCoverage", {})
+        assert coverage.get("testedIntegration") == {"status": "unverified", "artifacts": []}
+        assert coverage["platformCapability"]["status"] == "documented_separately"
+        expected = "declared_unverified" if state in {"declared", "forged_evidence"} else "not_declared"
+        assert coverage["projectConfiguration"]["status"] == expected
+        assert {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+    @pytest.mark.parametrize("host", ["claude_code", "codex_cli"])
+    def test_doctor_native_model_does_not_attest_delivery(self, tmp_path, capsys, host):
+        _make_healthy_project(tmp_path)
+        _write_gateway_config(tmp_path, user_host=host)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            cc.cmd_doctor(tmp_path, json_output=True)
+        report = _assert_pure_json_object(capsys.readouterr().out)
+        assert report.get("hostCoverage", {}).get("testedIntegration", {}).get("status") == "unverified"
+        messages = json.dumps(report["checks"])
+        assert "mechanical via native host hooks" not in messages
+        assert "no true pre-write host hook" not in messages
+
+    def test_matrix_and_generated_instructions_preserve_evidence_scope(self, tmp_path, capsys):
+        rows = cc._build_benchmark_matrix_rows()
+        for row in rows:
+            coverage = row.get("hostCoverage", {})
+            assert coverage.get("testedIntegration", {}).get("status") == "unverified"
+            assert coverage["projectConfiguration"]["status"] == "not_inspected"
+        text = cc._render_benchmark_matrix_markdown(rows)
+        assert "CC integration model" in text and "unverified" in text
+        for host in cc.BENCHMARK_HOST_ORDER:
+            generated = cc._build_host_instructions_document(host, "claim", False, False, None)
+            assert "unverified" in generated and "CC integration model" in generated
+        cc.cmd_host_status(tmp_path)
+        output = capsys.readouterr().out
+        assert "Named-host integration: unverified" in output
+
+    def test_compare_reports_static_scope_without_project_claims(self, tmp_path, capsys):
+        cc.cmd_host_compare(tmp_path, "codex_cli", "claude_code", json_output=True)
+        result = _assert_pure_json_object(capsys.readouterr().out)
+        for side in ("left", "right"):
+            assert result[side].get("profileScope") == "cc_integration_model"
+            assert "unverified" in result[side]["summary"]
+
+
 # ----------------------------------------------------- TestLoadSaveSettings ---
 
 
@@ -1538,6 +1643,478 @@ class TestTransactionalPackInstall:
         assert cc.load_settings(tmp_path)["mcpServers"]["debug-consultant"] == existing_server
 
 
+def _pack_fixture_inventory(root):
+    """Include directories, metadata, and sibling helper paths in no-write checks."""
+    result = {}
+    def visit(path):
+        for entry in os.scandir(path):
+            item = Path(entry.path)
+            metadata = item.lstat()
+            relative = item.relative_to(root).as_posix()
+            result[relative] = (metadata.st_mode, metadata.st_size,
+                                metadata.st_mtime_ns, metadata.st_ctime_ns,
+                                item.read_bytes() if entry.is_file(follow_symlinks=False) else None)
+            if entry.is_dir(follow_symlinks=False):
+                visit(item)
+    visit(root)
+    return result
+
+
+class TestPackPreservation:
+    def test_rejects_custom_target_without_any_selected_pack_side_effect(self, tmp_path, capsys):
+        project = tmp_path / "adopter"
+        target = project / "tools" / "cc_lockfile.py"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"CUSTOM-SENTINEL-E6-A\n")
+        (project / "foreign.txt").write_bytes(b"FOREIGN\n")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all") == 1
+        assert "content conflict" in capsys.readouterr().out
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert not (project / ".bridge").exists()
+        assert not (tmp_path / "adopter-helper").exists()
+
+    def test_preview_reports_all_side_effects_and_writes_nothing(self, tmp_path, capsys):
+        project = tmp_path / "project with spaces"
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all", preview_only=True) == 0
+        output = capsys.readouterr().out
+        assert "create" in output and ".bridge" in output
+        assert "helper directory" in output and "settings.json" in output
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_identical_repeat_skips_files_and_settings_bytes(self, tmp_path):
+        project = tmp_path / "adopter"
+        assert cc.cmd_install(project, "all") == 0
+        settings = project / ".controlcoding" / "settings.json"
+        custom = project / "custom.txt"
+        custom.write_bytes(b"FOREIGN\n")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all") == 0
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert settings.read_bytes() == before["adopter/.controlcoding/settings.json"][-1]
+
+    def test_late_pack_and_side_effect_conflicts_precede_writes(self, tmp_path, capsys):
+        for conflict in ("late-file", "bridge", "helper", "settings"):
+            project = tmp_path / conflict / "adopter"
+            project.mkdir(parents=True)
+            if conflict == "late-file":
+                target = project / "tools" / "mcp_vision.py"
+                target.parent.mkdir()
+                target.write_bytes(b"FOREIGN VISION\n")
+            elif conflict == "bridge":
+                (project / ".bridge").write_bytes(b"FOREIGN BRIDGE\n")
+            elif conflict == "helper":
+                (project.parent / "adopter-helper").write_bytes(b"FOREIGN HELPER\n")
+            else:
+                settings = project / ".controlcoding" / "settings.json"
+                settings.parent.mkdir()
+                settings.mkdir()
+            before = _pack_fixture_inventory(project.parent)
+            assert cc.cmd_install(project, "all") == 1
+            assert _pack_fixture_inventory(project.parent) == before
+            assert not (project / "tools" / "mcp_consultant.py").exists()
+            assert "preflight failed" in capsys.readouterr().out.lower()
+
+    def test_late_missing_source_and_shared_destination_conflict_precede_writes(self, tmp_path, monkeypatch):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        (project / "foreign.txt").write_bytes(b"KEEP\n")
+        before = _pack_fixture_inventory(tmp_path)
+        monkeypatch.setitem(cc.PACK_FILES, "visual-check", {"tools/": [tmp_path / "missing.py"]})
+        assert cc.cmd_install(project, "all") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+
+        first = tmp_path / "one" / "same.py"
+        second = tmp_path / "two" / "same.py"
+        first.parent.mkdir()
+        second.parent.mkdir()
+        first.write_bytes(b"FIRST\n")
+        second.write_bytes(b"SECOND\n")
+        monkeypatch.setitem(cc.PACK_FILES, "debug-tools", {"tools/": [first]})
+        monkeypatch.setitem(cc.PACK_FILES, "multi-agent", {"tools/": [second]})
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "all") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_preserves_custom_settings_and_existing_helper(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        helper = tmp_path / "adopter-helper"
+        helper.mkdir()
+        (helper / "custom.txt").write_bytes(b"KEEP\n")
+        settings = project / ".controlcoding" / "settings.json"
+        settings.parent.mkdir()
+        settings.write_bytes(b'{"mcpServers":{"bridge":{"command":"custom"},"foreign":{"x":1}},"custom":true}\n')
+        assert cc.cmd_install(project, "multi-agent") == 0
+        merged = json.loads(settings.read_bytes())
+        assert merged["mcpServers"]["bridge"] == {"command": "custom"}
+        assert merged["mcpServers"]["foreign"] == {"x": 1}
+        assert merged["custom"] is True
+        assert (helper / "custom.txt").read_bytes() == b"KEEP\n"
+
+    def test_legacy_settings_are_read_without_changing_legacy_file(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        legacy = project / ".claude" / "settings.json"
+        legacy.parent.mkdir()
+        original = b'{"mcpServers":{"foreign":{"command":"custom"}},"custom":true}\n'
+        legacy.write_bytes(original)
+        assert cc.cmd_install(project, "debug-tools") == 0
+        assert legacy.read_bytes() == original
+        central = json.loads((project / ".controlcoding" / "settings.json").read_bytes())
+        assert central["mcpServers"]["foreign"] == {"command": "custom"}
+        assert "debug-consultant" in central["mcpServers"]
+
+    def test_target_appearance_and_change_after_preflight_are_not_replaced(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        original = cc_setup._apply_pack_install
+        target = project / "tools" / "cc_lockfile.py"
+        def appear(plan, *, ok_callback):
+            target.parent.mkdir()
+            target.write_bytes(b"CONCURRENT\n")
+            return original(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", appear)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert target.read_bytes() == b"CONCURRENT\n"
+        assert not (project / ".controlcoding").exists()
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", original)
+        target.write_bytes(cc.PACK_FILES["session-manager"]["tools/"][0].read_bytes())
+        def change(plan, *, ok_callback):
+            target.write_bytes(b"CHANGED\n")
+            return original(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", change)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert target.read_bytes() == b"CHANGED\n"
+        assert not (project / ".controlcoding").exists()
+
+    def test_settings_appearance_after_preflight_stops_before_pack_files(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        original = cc_setup._apply_pack_install
+        settings = project / ".controlcoding" / "settings.json"
+        def appear(plan, *, ok_callback):
+            settings.parent.mkdir()
+            settings.write_bytes(b'{"foreign":true}\n')
+            return original(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", appear)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert settings.read_bytes() == b'{"foreign":true}\n'
+        assert not (project / "tools").exists()
+
+    def test_publication_failure_cleans_stage_without_touching_foreign_file(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        (project / "foreign.txt").write_bytes(b"KEEP\n")
+        def fail_link(source, destination):
+            raise OSError("injected publication failure")
+        monkeypatch.setattr(cc_setup.os, "link", fail_link)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert (project / "foreign.txt").read_bytes() == b"KEEP\n"
+        assert list((project / "tools").iterdir()) == []
+        assert not (project / ".controlcoding").exists()
+
+    def test_copy_failure_cleans_partial_stage_and_keeps_foreign_file(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        foreign = project / "foreign.txt"
+        foreign.write_bytes(b"KEEP\n")
+        def partial_copy(source, destination):
+            Path(destination).write_bytes(b"PARTIAL\n")
+            raise OSError("injected copy failure")
+        monkeypatch.setattr(cc_setup.shutil, "copy2", partial_copy)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert foreign.read_bytes() == b"KEEP\n"
+        assert list((project / "tools").iterdir()) == []
+        assert not (project / ".controlcoding").exists()
+
+    def test_later_publication_failure_reports_partial_install_without_cleanup_loss(self, tmp_path, monkeypatch, capsys):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        (project / "foreign.txt").write_bytes(b"KEEP\n")
+        link = cc_setup.os.link
+        calls = 0
+        def fail_second(source, destination):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected second publication failure")
+            return link(source, destination)
+        monkeypatch.setattr(cc_setup.os, "link", fail_second)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert "partial changes possible" in capsys.readouterr().out
+        assert (project / "foreign.txt").read_bytes() == b"KEEP\n"
+        assert (project / "tools" / "cc_lockfile.py").is_file()
+        assert not (project / "tools" / "mcp_session.py").exists()
+        assert not list((project / "tools").glob("*.tmp"))
+
+    def test_symlink_target_and_ancestor_preserve_outside_sentinel(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        sentinel = outside / "cc_lockfile.py"
+        sentinel.write_bytes(b"OUTSIDE\n")
+        try:
+            (project / "tools").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"directory symlink unavailable: {exc}")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert sentinel.read_bytes() == b"OUTSIDE\n"
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows junction control")
+    def test_sibling_helper_junction_is_rejected(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        sentinel = outside / "foreign.txt"
+        sentinel.write_bytes(b"OUTSIDE\n")
+        helper = tmp_path / "adopter-helper"
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(helper), str(outside)],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            pytest.skip(f"junction unavailable: {result.stderr or result.stdout}")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "multi-agent") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert sentinel.read_bytes() == b"OUTSIDE\n"
+
+    def test_real_cli_preview_then_apply_from_other_cwd(self, tmp_path):
+        project = tmp_path / "project with spaces"
+        other = tmp_path / "other cwd"
+        other.mkdir()
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        command = [sys.executable, str(Path(cc.__file__)), "install", "multi-agent",
+                   "--project-root", str(project)]
+        before = _pack_fixture_inventory(tmp_path)
+        preview = subprocess.run(command + ["--preview-only"], cwd=other, env=env,
+                                 capture_output=True, text=True)
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        assert _pack_fixture_inventory(tmp_path) == before
+        assert not project.exists()
+        project.mkdir()
+        applied = subprocess.run(command, cwd=other, env=env, capture_output=True, text=True)
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert (project / "tools" / "mcp_bridge.py").is_file()
+        assert (tmp_path / "project with spaces-helper").is_dir()
+
+    @pytest.mark.parametrize("preview_only", [False, True])
+    @pytest.mark.parametrize("pack", ["debug-tools", "all"])
+    def test_existing_settings_additions_conflict_before_any_write(self, tmp_path, capsys, preview_only, pack):
+        project = tmp_path / "adopter"
+        settings = project / ".controlcoding" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        original = b'{"custom":true,"mcpServers":{"foreign":{"command":"owner"}}}\n'
+        settings.write_bytes(original)
+        (tmp_path / "sibling.txt").write_bytes(b"KEEP\n")
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, pack, preview_only=preview_only) == 1
+        output = capsys.readouterr().out
+        assert "settings conflict" in output and str(settings) in output
+        assert "reconcile settings" in output and "Done!" not in output
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_sequential_addition_requires_reconciliation_then_skips_exact_settings(self, tmp_path):
+        project = tmp_path / "adopter"
+        project.mkdir()
+        assert cc.cmd_install(project, "session-manager") == 0
+        before = _pack_fixture_inventory(tmp_path)
+        assert cc.cmd_install(project, "debug-tools") == 1
+        assert _pack_fixture_inventory(tmp_path) == before
+        settings = project / ".controlcoding" / "settings.json"
+        reconciled = json.loads(settings.read_bytes())
+        reconciled["custom"] = {"owner": True}
+        reconciled["mcpServers"].update(cc.MCP_CONFIGS["debug-tools"])
+        reconciled["mcpServers"]["foreign"] = {"command": "owner"}
+        settings.write_text(json.dumps(reconciled, separators=(",", ":")) + "\n", encoding="utf-8")
+        original = settings.read_bytes()
+        metadata = settings.stat()
+        assert cc.cmd_install(project, "debug-tools") == 0
+        assert settings.read_bytes() == original
+        assert settings.stat().st_mtime_ns == metadata.st_mtime_ns
+        assert settings.stat().st_ctime_ns == metadata.st_ctime_ns
+        assert (project / "tools" / "mcp_consultant.py").is_file()
+
+    @pytest.mark.parametrize("direct_writer", [False, True])
+    def test_stale_settings_update_plan_refuses_before_side_effects(self, tmp_path, direct_writer):
+        import cc_setup
+        project = tmp_path / "adopter"
+        settings = project / ".controlcoding" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"mcpServers": cc.MCP_CONFIGS["multi-agent"], "custom": True}), encoding="utf-8")
+        plan = cc_setup._plan_pack_install(project, ["multi-agent"], cc.PACK_FILES, cc.MCP_CONFIGS, cc.HELPER_DIR)
+        plan["settings"]["action"] = "update"
+        plan["settings"]["data"] = b'{"unwanted":"replacement"}\n'
+        before = _pack_fixture_inventory(tmp_path)
+        with pytest.raises(OSError, match="stale update plan"):
+            if direct_writer:
+                cc_setup._pack_write_settings(plan["settings"])
+            else:
+                cc_setup._apply_pack_install(plan, ok_callback=lambda message: None)
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("action", ["skip", "create"])
+    def test_settings_final_boundary_concurrent_write_is_executed_and_preserved(self, tmp_path, monkeypatch, capsys, action):
+        import cc_setup
+        project = tmp_path / "adopter"
+        settings = project / ".controlcoding" / "settings.json"
+        project.mkdir()
+        if action == "skip":
+            settings.parent.mkdir()
+            settings.write_text(json.dumps({"custom": "original", "mcpServers": cc.MCP_CONFIGS["debug-tools"]}), encoding="utf-8")
+        concurrent = b'{"custom":"CONCURRENT-OWNER","foreign":true,"mcpServers":{"foreign":{"command":"owner"}}}\n'
+        events = []
+        if action == "create":
+            link = cc_setup.os.link
+            def final_link(source, target):
+                if Path(target) == settings:
+                    settings.write_bytes(concurrent)
+                    events.append("concurrent_written_at_link")
+                return link(source, target)
+            monkeypatch.setattr(cc_setup.os, "link", final_link)
+        else:
+            write = cc_setup._pack_write_settings
+            def final_skip(item):
+                assert item["action"] == "skip"
+                settings.write_bytes(concurrent)
+                events.append("concurrent_written_before_final_skip_check")
+                return write(item)
+            monkeypatch.setattr(cc_setup, "_pack_write_settings", final_skip)
+        assert cc.cmd_install(project, "debug-tools") == 1
+        assert len(events) == 1, "the concurrent writer must actually execute"
+        assert settings.read_bytes() == concurrent
+        assert list(settings.parent.iterdir()) == [settings]
+        assert (project / "tools" / "mcp_consultant.py").is_file()
+        assert not list(project.rglob("*.tmp"))
+        assert "partial changes possible" in capsys.readouterr().out
+
+    def test_legacy_change_after_preflight_is_preserved_without_pack_writes(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        legacy = project / ".claude" / "settings.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'{"custom":"original"}\n')
+        apply = cc_setup._apply_pack_install
+        events = []
+        concurrent = b'{"custom":"CONCURRENT","mcpServers":{"foreign":{"command":"owner"}}}\n'
+        def changed(plan, *, ok_callback):
+            legacy.write_bytes(concurrent)
+            events.append("legacy_written")
+            return apply(plan, ok_callback=ok_callback)
+        monkeypatch.setattr(cc_setup, "_apply_pack_install", changed)
+        assert cc.cmd_install(project, "debug-tools") == 1
+        assert events == ["legacy_written"]
+        assert legacy.read_bytes() == concurrent
+        assert not (project / "tools").exists()
+        assert not (project / ".controlcoding").exists()
+
+    def test_pack_final_link_destination_is_not_clobbered_or_cleaned(self, tmp_path, monkeypatch):
+        import cc_setup
+        project = tmp_path / "adopter"
+        project.mkdir()
+        target = project / "tools" / "cc_lockfile.py"
+        link = cc_setup.os.link
+        events = []
+        def concurrent_link(source, destination):
+            assert Path(destination) == target
+            target.write_bytes(b"CONCURRENT PACK OWNER\n")
+            events.append("pack_destination_written_at_link")
+            return link(source, destination)
+        monkeypatch.setattr(cc_setup.os, "link", concurrent_link)
+        assert cc.cmd_install(project, "session-manager") == 1
+        assert events == ["pack_destination_written_at_link"]
+        assert target.read_bytes() == b"CONCURRENT PACK OWNER\n"
+        assert list(target.parent.iterdir()) == [target]
+        assert not (project / ".controlcoding").exists()
+
+    def test_changed_source_after_planning_leaves_no_target_or_stage(self, tmp_path):
+        import cc_setup
+        project = tmp_path / "adopter"
+        source = tmp_path / "synthetic.py"
+        source.write_bytes(b"ORIGINAL\n")
+        plan = cc_setup._plan_pack_files(project, [{"tools/": [source]}])
+        source.write_bytes(b"CHANGED\n")
+        with pytest.raises(OSError, match="source changed after preflight"):
+            cc_setup._apply_pack_files(plan, ok_callback=lambda message: None)
+        assert list((project / "tools").iterdir()) == []
+
+    def test_real_cli_missing_root_apply_refuses_without_writes(self, tmp_path):
+        project = tmp_path / "missing project"
+        other = tmp_path / "other cwd with spaces"
+        other.mkdir()
+        (tmp_path / "sibling.txt").write_bytes(b"KEEP")
+        before = _pack_fixture_inventory(tmp_path)
+        result = subprocess.run([sys.executable, str(Path(cc.__file__)), "install", "session-manager",
+                                 "--project-root", str(project)], cwd=other, capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "is not a directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    def test_real_cli_missing_root_preview_is_read_only(self, tmp_path):
+        project = tmp_path / "missing project"
+        other = tmp_path / "other cwd with spaces"
+        other.mkdir()
+        (tmp_path / "sibling.txt").write_bytes(b"KEEP")
+        before = _pack_fixture_inventory(tmp_path)
+        result = subprocess.run([sys.executable, str(Path(cc.__file__)), "install", "all", "--preview-only",
+                                 "--project-root", str(project)], cwd=other, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert ".bridge" in result.stdout and "helper directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("command", [["setup"], ["setup", "--chat-guide"], ["setup-project", "--chat-guide"]])
+    def test_real_cli_other_missing_root_gates_are_unchanged(self, tmp_path, command):
+        other = tmp_path / "other cwd with spaces"
+        other.mkdir()
+        before = _pack_fixture_inventory(tmp_path)
+        result = subprocess.run([sys.executable, str(Path(cc.__file__)), *command,
+                                 "--project-root", str(tmp_path / "missing project")], cwd=other, capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "is not a directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("preview_only", [False, True])
+    def test_real_cli_file_root_is_rejected_without_writes(self, tmp_path, preview_only):
+        target = tmp_path / "file root"
+        target.write_bytes(b"FOREIGN ROOT\n")
+        before = _pack_fixture_inventory(tmp_path)
+        command = [sys.executable, str(Path(cc.__file__)), "install", "all", "--project-root", str(target)]
+        result = subprocess.run(command + (["--preview-only"] if preview_only else []), cwd=tmp_path,
+                                capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "is not a directory" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows junction control")
+    @pytest.mark.parametrize("preview_only", [False, True])
+    def test_real_cli_preserves_lexical_junction_root(self, tmp_path, preview_only):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_bytes(b"OUTSIDE\n")
+        project = tmp_path / "linked project"
+        linked = subprocess.run(["cmd", "/c", "mklink", "/J", str(project), str(outside)], capture_output=True, text=True)
+        if linked.returncode:
+            pytest.skip(f"junction unavailable: {linked.stderr or linked.stdout}")
+        before = _pack_fixture_inventory(tmp_path)
+        command = [sys.executable, str(Path(cc.__file__)), "install", "session-manager", "--project-root", str(project)]
+        result = subprocess.run(command + (["--preview-only"] if preview_only else []), cwd=tmp_path,
+                                capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "reparse" in result.stdout
+        assert _pack_fixture_inventory(tmp_path) == before
+
+
+
 # ---------------------------------------------------------- TestMergeHooks ---
 
 
@@ -1611,8 +2188,53 @@ class TestResolveHookCommands:
         }
         result = cc._resolve_hook_commands(settings, hooks_dir)
         cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        assert str(hooks_dir.resolve()).replace("\\", "/") in cmd
-        assert "check_boundaries.py" in cmd
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check_boundaries.py"
+        assert cmd == f"python {shlex.quote(expected_script)}"
+
+    @pytest.mark.parametrize("directory_name", ["plain", "spaced hooks", "hòoks é & '$"])
+    def test_quotes_generated_script_path_for_posix_shell(self, tmp_path, directory_name):
+        hooks_dir = tmp_path / directory_name / "hooks"
+        hooks_dir.mkdir(parents=True)
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"hooks": [{"command": "python hooks/check_boundaries.py"}]}
+                ]
+            }
+        }
+
+        result = cc._resolve_hook_commands(settings, hooks_dir)
+        cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check_boundaries.py"
+        assert cmd == f"python {shlex.quote(expected_script)}"
+
+    def test_preserves_generated_command_arguments(self, tmp_path):
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"hooks": [{"command": "python hooks/check.py --mode strict --label 'two words'"}]}
+                ]
+            }
+        }
+
+        result = cc._resolve_hook_commands(settings, hooks_dir)
+        cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check.py"
+        assert cmd == f"python {shlex.quote(expected_script)} --mode strict --label 'two words'"
+
+    def test_resolves_local_and_central_hook_directories(self, tmp_path):
+        local_hooks = tmp_path / "project hooks" / "hooks"
+        central_hooks = tmp_path / "central hooks" / "hooks"
+        local_hooks.mkdir(parents=True)
+        central_hooks.mkdir(parents=True)
+
+        for hooks_dir in (local_hooks, central_hooks):
+            settings = {"hooks": {"Stop": [{"hooks": [{"command": "python hooks/stop.py"}]}]}}
+            command = cc._resolve_hook_commands(settings, hooks_dir)["hooks"]["Stop"][0]["hooks"][0]["command"]
+            expected_script = f"{hooks_dir.resolve().as_posix()}/stop.py"
+            assert command == f"python {shlex.quote(expected_script)}"
 
     def test_ignores_already_absolute(self, tmp_path):
         hooks_dir = tmp_path / "hooks"
@@ -1627,6 +2249,29 @@ class TestResolveHookCommands:
         result = cc._resolve_hook_commands(settings, hooks_dir)
         cmd = result["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         assert cmd == "python /abs/path/check.py"
+
+    def test_ignores_custom_commands_and_repeated_resolution(self, tmp_path):
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"hooks": [
+                        {"command": "custom-run hooks/check.py"},
+                        {"command": "python /abs/path/check.py"},
+                        {"command": "python hooks/check.py"},
+                    ]}
+                ]
+            }
+        }
+
+        once = cc._resolve_hook_commands(settings, hooks_dir)
+        twice = cc._resolve_hook_commands(once, hooks_dir)
+        commands = twice["hooks"]["PreToolUse"][0]["hooks"]
+        assert commands[0]["command"] == "custom-run hooks/check.py"
+        assert commands[1]["command"] == "python /abs/path/check.py"
+        expected_script = f"{hooks_dir.resolve().as_posix()}/check.py"
+        assert commands[2]["command"] == f"python {shlex.quote(expected_script)}"
 
     def test_handles_nested_hooks(self, tmp_path):
         hooks_dir = tmp_path / "hooks"
@@ -2261,7 +2906,9 @@ class TestCmdDoctor:
         assert contract["inline_gate"]["primary"] is True
         assert contract["inline_gate"]["nature"] == "mechanical"
         assert contract["repo_boundary_gate"]["requirement"] == "backstop"
-        assert checks["inline_gate"]["status"] == "ok"
+        assert checks["inline_gate"]["status"] == "info"
+        assert "unverified" in checks["inline_gate"]["detail"]
+        assert payload["hostCoverage"]["testedIntegration"]["status"] == "unverified"
 
     def test_doctor_json_smoke_reports_class_c_repo_side_host_contract(self, tmp_path, capsys, monkeypatch):
         _make_healthy_project(tmp_path)
@@ -3690,7 +4337,7 @@ class TestHumanMediatedAgents:
         assert payload["resolutionTopicCount"] == 0
         assert payload["convergenceSummaryPath"].endswith("convergence_summary.json")
 
-    def test_consult_packet_create_can_continue_existing_thread(self, tmp_path):
+    def test_consult_packet_create_can_continue_existing_thread(self, tmp_path, capsys):
         _make_healthy_project(tmp_path)
         self._write_engagement(
             tmp_path,
@@ -3708,17 +4355,21 @@ class TestHumanMediatedAgents:
                 }
             ],
         )
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate the initial boundary split.",
             questions=["Should the adapter stay inside CLI?"],
         ) == 0
-        first_packet = json.loads(next(cc._consult_packets_dir(tmp_path).glob("*.json")).read_text(encoding="utf-8"))
+        first_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
 
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Follow up on the adapter extraction path.",
             questions=["What should move first?"],
             thread_id=first_packet["thread_id"],
@@ -3726,7 +4377,7 @@ class TestHumanMediatedAgents:
 
         packets = sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))
         assert len(packets) == 2
-        second_packet = json.loads(packets[-1].read_text(encoding="utf-8"))
+        second_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert second_packet["thread_id"] == first_packet["thread_id"]
 
         thread_payload = json.loads(cc._consult_thread_state_path(tmp_path, first_packet["thread_id"]).read_text(encoding="utf-8"))
@@ -3735,7 +4386,7 @@ class TestHumanMediatedAgents:
         assert thread_payload["topic_key"] == first_packet["topic_key"]
         assert "What should move first?" in cc._consult_thread_resume_path(tmp_path, first_packet["thread_id"]).read_text(encoding="utf-8")
 
-    def test_convergence_summary_flags_role_level_conflicts(self, tmp_path):
+    def test_convergence_summary_flags_role_level_conflicts(self, tmp_path, capsys):
         _make_healthy_project(tmp_path)
         self._write_engagement(
             tmp_path,
@@ -3753,15 +4404,17 @@ class TestHumanMediatedAgents:
                 }
             ],
         )
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate adapter split option A.",
             questions=["Should option A be accepted?"],
             topic_key="adapter_split",
         ) == 0
         packets = sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))
-        first_packet = json.loads(packets[-1].read_text(encoding="utf-8"))
+        first_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=first_packet["packet_id"],
@@ -3771,15 +4424,17 @@ class TestHumanMediatedAgents:
             next_action="Document option A.",
         ) == 0
 
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate adapter split option B.",
             questions=["Should option B be rejected?"],
             topic_key="adapter_split",
         ) == 0
         packets = sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))
-        second_packet = json.loads(packets[-1].read_text(encoding="utf-8"))
+        second_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=second_packet["packet_id"],
@@ -3827,14 +4482,16 @@ class TestHumanMediatedAgents:
                 }
             ],
         )
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate option A.",
             questions=["Should option A be accepted?"],
             topic_key="adapter_split",
         ) == 0
-        first_packet = json.loads(sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))[-1].read_text(encoding="utf-8"))
+        first_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=first_packet["packet_id"],
@@ -3843,14 +4500,16 @@ class TestHumanMediatedAgents:
             rationale_summary="It keeps boundaries clean.",
             next_action="Document option A.",
         ) == 0
+        capsys.readouterr()
         assert cc.cmd_consult_packet_create(
             tmp_path,
             role="architect",
+            json_output=True,
             objective="Validate option B.",
             questions=["Should option B be rejected?"],
             topic_key="adapter_split",
         ) == 0
-        second_packet = json.loads(sorted(cc._consult_packets_dir(tmp_path).glob("*.json"))[-1].read_text(encoding="utf-8"))
+        second_packet = json.loads(cc._consult_packet_path(tmp_path, json.loads(capsys.readouterr().out)["packetId"]).read_text(encoding="utf-8"))
         assert cc.cmd_consult_result_import(
             tmp_path,
             packet_id=second_packet["packet_id"],
@@ -3865,6 +4524,124 @@ class TestHumanMediatedAgents:
         payload = json.loads(capsys.readouterr().out)
         assert payload["resolutionTopic"]["topic_key"] == "adapter_split"
         assert payload["resolutionPromptPath"].endswith("resolution_prompt.md")
+
+    @pytest.mark.parametrize("collision", ["distinct", "packet", "thread", "result", "historical", "all", "reverse"])
+    def test_consult_equal_clock_preserves_independent_records(self, tmp_path, capsys, collision):
+        _make_healthy_project(tmp_path)
+        self._write_engagement(tmp_path, [{
+            "role_id": "consultant_1", "label": "Architect", "path_type": "consultant",
+            "active": True, "backend": "chatgpt_manual", "model": "fixture",
+            "permission": "user_mediated", "execution_mode": "human_mediated", "max_calls": 1,
+        }])
+        stamps = [f"20260915T004509{i:06d}Z" for i in range(6)]
+        if collision in {"packet", "thread", "result"}:
+            index = {"packet": 0, "thread": 1, "result": 2}[collision]
+            stamps[index + 3] = stamps[index]
+        elif collision == "historical":
+            stamps = ["20260915T004509009565Z"] * 5 + ["20260915T004509021431Z"]
+        elif collision == "all":
+            stamps = [stamps[0]] * 6
+        elif collision == "reverse":
+            stamps.reverse()
+        packets, results = [], []
+        preserved = {}
+        # Descending suffixes ensure filename order cannot stand in for creation order.
+        suffixes = [f"{i:032x}" for i in range(6, 0, -1)]
+        with patch.object(cc, "_compact_utc_stamp", side_effect=stamps), patch.object(
+            cc.secrets, "token_hex", side_effect=suffixes
+        ):
+            for option, decision in [("A", "accepted"), ("B", "rejected")]:
+                capsys.readouterr()
+                assert cc.cmd_consult_packet_create(
+                    tmp_path, role="architect", objective=f"Validate option {option}.",
+                    questions=["Should this be accepted?"], topic_key="adapter_split", json_output=True,
+                ) == 0
+                packet = json.loads(capsys.readouterr().out)
+                packets.append(packet)
+                for path, content in preserved.items():
+                    assert path.read_bytes() == content
+                assert cc.cmd_consult_result_import(
+                    tmp_path, packet_id=packet["packetId"], summary=f"Option {option}.",
+                    decision=decision, rationale_summary="Fixture rationale.", next_action="Review.",
+                    json_output=True,
+                ) == 0
+                result = json.loads(capsys.readouterr().out)
+                results.append(result)
+                for path, content in preserved.items():
+                    assert path.read_bytes() == content
+                for key in ["packetPath", "threadPath", "resultPath"]:
+                    path = tmp_path / result[key]
+                    preserved[path] = path.read_bytes()
+        assert len({item["packetId"] for item in packets}) == 2
+        assert len({item["threadId"] for item in packets}) == 2
+        assert len({item["resultId"] for item in results}) == 2
+        assert len(cc._load_consult_packets(tmp_path)) == 2
+        assert len(cc._load_consult_results(tmp_path)) == 2
+        threads = cc._load_consult_threads(tmp_path)
+        assert len(threads) == 2
+        assert sorted(item["decision_history"][0]["decision"] for item in threads) == ["accepted", "rejected"]
+        assert cc.cmd_consult_resolution_show(
+            tmp_path, role="architect", topic_key="adapter_split", json_output=True,
+        ) == 0
+        resolution = json.loads(capsys.readouterr().out)["resolutionTopic"]
+        assert resolution["decision_counts"] == {"accepted": 1, "rejected": 1}
+        assert {item["result_id"] for item in resolution["recent_decisions"]} == {item["resultId"] for item in results}
+
+    def test_consult_equal_clock_continues_thread_without_replacing_packet(self, tmp_path, capsys):
+        with patch.object(cc, "_compact_utc_stamp", return_value="20260915T004509009565Z"), patch.object(
+            cc.secrets, "token_hex", side_effect=["f" * 32, "e" * 32, "d" * 32]
+        ):
+            self.test_consult_packet_create_can_continue_existing_thread(tmp_path, capsys)
+
+    @pytest.mark.parametrize("layout", ["canonical", "legacy_external", "legacy_root"])
+    def test_consult_timestamp_only_ids_remain_readable_and_continuable(self, tmp_path, capsys, layout):
+        _make_healthy_project(tmp_path)
+        self._write_engagement(tmp_path, [{
+            "role_id": "consultant_1", "label": "Architect", "path_type": "consultant",
+            "active": True, "backend": "chatgpt_manual", "model": "fixture",
+            "permission": "user_mediated", "execution_mode": "human_mediated", "max_calls": 1,
+        }])
+        def legacy_id(role_id, kind):
+            return f"{role_id}_{kind}_20260915T004509009565Z"
+        with patch.object(cc, "_build_consult_artifact_id", side_effect=legacy_id):
+            assert cc.cmd_consult_packet_create(
+                tmp_path, role="architect", objective="Legacy consultation.",
+                questions=["Keep compatibility?"], topic_key="adapter_split", json_output=True,
+            ) == 0
+            packet = json.loads(capsys.readouterr().out)
+            assert cc.cmd_consult_result_import(
+                tmp_path, packet_id=packet["packetId"], summary="Keep it.", decision="accepted",
+                rationale_summary="Compatible records.", next_action="Continue.", json_output=True,
+            ) == 0
+            result = json.loads(capsys.readouterr().out)
+        if layout != "canonical":
+            if layout == "legacy_external":
+                base = tmp_path / cc.LEGACY_CONTROL_PLANE_DIRNAME / cc.EXTERNAL_CONSULTATION_DIRNAME
+                packet_dir, result_dir = base / "requests", base / "imports"
+            else:
+                base = tmp_path / cc.LEGACY_CONTROL_PLANE_DIRNAME
+                packet_dir, result_dir = base / cc.CONSULT_PACKET_DIRNAME, base / cc.CONSULT_RESULT_DIRNAME
+            for source, target in [(tmp_path / packet["packetPath"], packet_dir), (tmp_path / result["resultPath"], result_dir)]:
+                target.mkdir(parents=True, exist_ok=True)
+                source.rename(target / source.name)
+        assert cc.cmd_consult_packet_show(tmp_path, packet["packetId"], json_output=True) == 0
+        shown = json.loads(capsys.readouterr().out)
+        assert shown["latestResult"]["result_id"] == result["resultId"]
+        assert shown["thread"]["thread_id"] == packet["threadId"]
+        old_result_path = cc._consult_result_path(tmp_path, result["resultId"])
+        old_result_bytes = old_result_path.read_bytes()
+        assert cc.cmd_consult_packet_create(
+            tmp_path, role="architect", objective="Continue legacy consultation.", questions=["Next?"],
+            thread_id=packet["threadId"], json_output=True,
+        ) == 0
+        continued = json.loads(capsys.readouterr().out)
+        assert continued["packetId"] != packet["packetId"]
+        assert continued["threadId"] == packet["threadId"]
+        thread = cc._load_consult_thread(tmp_path, packet["threadId"])
+        assert thread["packet_ids"] == [packet["packetId"], continued["packetId"]]
+        assert thread["latest_packet_id"] == continued["packetId"]
+        assert thread["decision_history"][0]["result_id"] == result["resultId"]
+        assert old_result_path.read_bytes() == old_result_bytes
 
     def test_consult_result_import_rejects_verbose_rationale_dump(self, tmp_path):
         _make_healthy_project(tmp_path)
@@ -4916,8 +5693,65 @@ class TestExportHostContext:
 
         assert result == 0
         content = (tmp_path / ".cursor" / "rules" / "project.mdc").read_text(encoding="utf-8")
+        lines = content.splitlines()
+        assert lines[:3] == ["---", "alwaysApply: true", "---"]
+        assert lines[3].startswith("<!-- controlcoding-managed: ")
+        assert lines[4:7] == ["", "# project.mdc", ""]
         assert "Target host: Cursor." in content
         assert "## Project Identity" in content
+        assert "## Commit Ceremony" not in content
+        front_matter_end, _offset, error = cc._adapter_front_matter_layout(content)
+        assert (front_matter_end, error) == (2, "")
+        marker, state, detail = cc._adapter_marker_payload(content)
+        assert state == "owned"
+        assert detail == "valid ControlCoding ownership marker"
+        assert marker == {
+            "owner": "ControlCoding",
+            "schema": "controlcoding.host-adapter-ownership",
+            "version": 1,
+            "target": ".cursor/rules/project.mdc",
+            "host": "cursor",
+            "source": "CONTROLCODING.md",
+            "format": "host-context-section-export-v1",
+        }
+
+    def test_cursor_real_cli_preview_apply_check_and_repeat_are_stable(self, tmp_path):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        (tmp_path / "CONTROLCODING.md").write_text(canonical, encoding="utf-8")
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+
+        preview = _run_cc(
+            "export", "host-context", "--project-root", tmp_path,
+            "--host", "cursor", "--preview-only",
+        )
+        assert preview.returncode == 0, preview.stdout + preview.stderr
+        assert not target.exists()
+        assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")) == [
+            "CONTROLCODING.md",
+        ]
+
+        applied = _run_cc(
+            "export", "host-context", "--project-root", tmp_path,
+            "--host", "cursor",
+        )
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        first_bytes = target.read_bytes()
+        assert first_bytes.startswith(b"---\nalwaysApply: true\n---\n")
+
+        checked = _run_cc(
+            "context", "check", "--project-root", tmp_path,
+            "--host", "cursor", "--json",
+        )
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        checked_payload = _assert_pure_json_object(checked.stdout)
+        assert checked_payload["hosts"][0]["ownershipState"] == "owned_current"
+
+        repeated = _run_cc(
+            "context", "sync", "--project-root", tmp_path,
+            "--host", "cursor",
+        )
+        assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+        assert target.read_bytes() == first_bytes
 
     def test_generates_windsurf_rules_context(self, tmp_path):
         (tmp_path / "CONTROLCODING.md").write_text(
@@ -4929,6 +5763,30 @@ class TestExportHostContext:
         content = (tmp_path / ".windsurfrules").read_text(encoding="utf-8")
         assert "Target host: Windsurf." in content
         assert "## Project Identity" in content
+
+    @pytest.mark.parametrize(
+        "host",
+        ["codex_cli", "gemini_cli", "cline", "windsurf"],
+    )
+    def test_non_cursor_section_exports_keep_the_legacy_renderer_bytes(self, tmp_path, host):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        source = tmp_path / "CONTROLCODING.md"
+        source.write_text(canonical, encoding="utf-8")
+        spec = cc._host_context_export_spec(host)
+        assert "front_matter" not in spec
+
+        rendered, _entry = cc._expected_host_context(tmp_path, host)
+        legacy, _included, _warnings = cc._build_host_context_output(
+            spec["file_label"],
+            spec["relative_path"],
+            host,
+            spec["host_label"],
+            cc._HOST_CONTEXT_RUNTIME_SECTIONS,
+            cc._parse_claude_md_sections(source.read_bytes().decode("utf-8")),
+            "CONTROLCODING.md",
+            "host-context-section-export-v1",
+        )
+        assert rendered.encode("utf-8") == legacy.encode("utf-8")
 
     def test_manual_vscode_context_check_is_not_applicable(self, tmp_path, capsys):
         canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
@@ -4985,6 +5843,169 @@ class TestExportHostContext:
         assert cc.cmd_export_host_context(tmp_path, host="cursor", preview_only=True) == 0
 
         assert not (tmp_path / ".cursor").exists()
+
+    def test_old_owned_cursor_output_is_stale_previewed_updated_and_then_stable(
+        self,
+        tmp_path,
+    ):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        source = tmp_path / "CONTROLCODING.md"
+        source.write_text(canonical, encoding="utf-8")
+        spec = cc._host_context_export_spec("cursor")
+        old_content, _included, warnings = cc._build_host_context_output(
+            spec["file_label"],
+            spec["relative_path"],
+            "cursor",
+            spec["host_label"],
+            cc._HOST_CONTEXT_RUNTIME_SECTIONS,
+            cc._parse_claude_md_sections(canonical),
+            "CONTROLCODING.md",
+            "host-context-section-export-v1",
+        )
+        assert warnings == []
+        assert old_content.startswith("# project.mdc\n\n<!-- controlcoding-managed: ")
+        assert "alwaysApply" not in old_content
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(old_content.encode("utf-8"))
+        old_bytes = target.read_bytes()
+
+        export_plan = cc._adapter_plan_payload(
+            tmp_path,
+            host="cursor",
+            operation="export",
+        )
+        assert export_plan["entries"][0]["state"] == "owned_stale"
+        assert export_plan["entries"][0]["action"] == "block"
+        assert cc.cmd_export_host_context(
+            tmp_path,
+            host="cursor",
+            force=True,
+            preview_only=True,
+        ) == 0
+        assert target.read_bytes() == old_bytes
+
+        assert cc.cmd_context_sync(
+            tmp_path,
+            host="cursor",
+            preview_only=True,
+        ) == 0
+        assert target.read_bytes() == old_bytes
+        assert cc.cmd_context_sync(tmp_path, host="cursor") == 0
+        new_bytes = target.read_bytes()
+        assert new_bytes != old_bytes
+        assert new_bytes.startswith(b"---\nalwaysApply: true\n---\n")
+        assert cc._context_sync_payload(tmp_path, host="cursor")["hosts"][0][
+            "ownershipState"
+        ] == "owned_current"
+        assert cc.cmd_context_sync(tmp_path, host="cursor") == 0
+        assert target.read_bytes() == new_bytes
+
+    @pytest.mark.parametrize(
+        ("unsafe_content", "expected_state"),
+        [
+            (
+                "---\nalwaysApply: true\n---\n# User Cursor rules\n\ncustom payload\n",
+                "unmarked",
+            ),
+            (
+                "---\nalwaysApply: true\n---\n"
+                "<!-- managed-by: OtherTool -->\n\nforeign payload\n",
+                "foreign",
+            ),
+            (
+                "---\nalwaysApply: true\n---\n"
+                "<!-- controlcoding-managed: not-json -->\n\ninvalid payload\n",
+                "invalid",
+            ),
+        ],
+    )
+    def test_cursor_frontmatter_does_not_authorize_unsafe_existing_files(
+        self,
+        tmp_path,
+        unsafe_content,
+        expected_state,
+    ):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        target.write_text(unsafe_content, encoding="utf-8")
+        before = target.read_bytes()
+
+        plan = cc._adapter_plan_payload(
+            tmp_path,
+            host="cursor",
+            operation="export",
+            force=True,
+        )
+        assert plan["entries"][0]["state"] == expected_state
+        assert plan["entries"][0]["action"] == "block"
+        assert cc.cmd_export_host_context(tmp_path, host="cursor", force=True) == 1
+        assert target.read_bytes() == before
+
+    def test_cursor_explicit_adoption_preserves_custom_frontmatter_payload(self, tmp_path):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        original = b"---\nalwaysApply: false\n---\n# Custom Cursor payload\n\nkeep this text\n"
+        target.write_bytes(original)
+
+        assert cc.cmd_context_adopt(tmp_path, host="cursor") == 0
+        assert target.read_bytes() == original
+        assert cc.cmd_context_adopt(tmp_path, host="cursor", apply=True) == 0
+
+        adopted = target.read_bytes()
+        assert adopted.startswith(
+            b"---\nalwaysApply: false\n---\n<!-- controlcoding-managed: "
+        )
+        assert b"# Custom Cursor payload\n\nkeep this text\n" in adopted
+        marker, state, _detail = cc._adapter_marker_payload(adopted.decode("utf-8"))
+        assert state == "owned"
+        assert marker["host"] == "cursor"
+
+    def test_cursor_tampered_metadata_is_owned_stale_and_sync_restores_expected(self, tmp_path):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        assert cc.cmd_export_host_context(tmp_path, host="cursor") == 0
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        tampered = target.read_bytes().replace(b"alwaysApply: true", b"alwaysApply: false", 1)
+        target.write_bytes(tampered)
+
+        plan = cc._adapter_plan_payload(tmp_path, host="cursor", operation="sync")
+        assert plan["entries"][0]["state"] == "owned_stale"
+        assert plan["entries"][0]["action"] == "update"
+        assert cc.cmd_export_host_context(tmp_path, host="cursor") == 1
+        assert target.read_bytes() == tampered
+        assert cc.cmd_context_sync(tmp_path, host="cursor") == 0
+        assert b"alwaysApply: true" in target.read_bytes()
+
+    def test_cursor_duplicate_embedded_marker_blocks_all_host_sync_atomically(self, tmp_path):
+        canonical = self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md")
+        (tmp_path / "CONTROLCODING.md").write_text(canonical, encoding="utf-8")
+        expected, _entry = cc._expected_host_context(tmp_path, "cursor")
+        marker = cc._adapter_marker_line(
+            ".cursor/rules/project.mdc",
+            "cursor",
+            "CONTROLCODING.md",
+            "host-context-section-export-v1",
+        )
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        target.parent.mkdir(parents=True)
+        target.write_text(expected + marker + "\n", encoding="utf-8")
+        before = target.read_bytes()
+
+        assert cc.cmd_context_sync(tmp_path, all_hosts=True) == 1
+        assert target.read_bytes() == before
+        for relative in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".clinerules", ".windsurfrules"):
+            assert not (tmp_path / relative).exists()
 
     def test_host_export_requires_force_to_replace_valid_owned_target(self, tmp_path):
         canonical_path = tmp_path / "CONTROLCODING.md"
@@ -6512,6 +7533,22 @@ class TestContextCommands:
 
 
 class TestTruthCommands:
+    @pytest.mark.parametrize("route", ["report", "check", "check-docs", "include-docs"])
+    def test_structural_scope_is_explicit_in_json_and_human(self, tmp_path, capsys, route):
+        command = {"report": cc.cmd_truth_report, "check": cc.cmd_truth_check,
+                   "check-docs": cc.cmd_truth_check_docs, "include-docs": cc.cmd_truth_check}[route]
+        kwargs = {"include_docs": True} if route == "include-docs" else {}
+        command(tmp_path, json_output=True, **kwargs)
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["scope"] == "structural"
+        assert "declarations" in " ".join(payload["limitations"])
+        if route == "include-docs":
+            assert payload["docs"]["scope"] == "structural"
+        command(tmp_path, **kwargs)
+        human = capsys.readouterr().out
+        assert "Scope: structural" in human
+        assert "does not validate full arguments" in human
+
     @staticmethod
     def _write_truth_docs_fixture(project, readme, quick_start="", install=""):
         docs_dir = project / "docs"
@@ -8860,6 +9897,11 @@ class TestMajorVersionPublicTruth:
         assert "There is no direct replacement command" in tools
         assert "context adopt --host <host> --apply" in cross_tool
         assert "`--force` applies only to adapters that are already valid-owned" in " ".join(cross_tool.split())
+        cursor_guide = cross_tool[cross_tool.index("### 3.5 Cursor"):cross_tool.index("### 3.6 Cline")]
+        assert "`.cursor/rules/project.mdc`" in cursor_guide
+        assert "`alwaysApply: true`" in cursor_guide
+        assert "correct file does not prove loading" in " ".join(cursor_guide.split())
+        assert "named host/version/OS" in cursor_guide
         for state in ("valid-owned", "unmarked", "foreign", "Invalid", "ambiguous"):
             assert state in install
         assert "Migrating From v2.5.2" in quick_start
@@ -9475,6 +10517,13 @@ class TestReleaseDoctor:
         assert all(relative not in finding for finding in findings)
 
 
+def _fixture_evidence_result(code):
+    return {"status": "passed" if code == 0 else "failed", "returnCode": code,
+            "durationMs": 1, "error": None, "stdoutTail": "", "stderrTail": "",
+            "output": {"policy": "metadata-only-v1", "limitBytes": 16777216,
+                       "stdoutBytes": 0, "stderrBytes": 0, "discardedBytes": 0, "textOmitted": True}}
+
+
 class TestVerifyCommands:
     def _write_contract(self, project: Path, suites: list[dict] | None = None):
         contract = {
@@ -9572,8 +10621,8 @@ class TestVerifyCommands:
     def test_verify_run_executes_required_suites_and_writes_receipt(self, tmp_path, capsys):
         self._write_contract(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(tmp_path, json_output=True)
 
         assert result == 0
@@ -9606,8 +10655,8 @@ class TestVerifyCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(tmp_path, suite_ids=["targeted-check"], json_output=True)
 
         assert result == 0
@@ -9640,8 +10689,8 @@ class TestVerifyCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(project, suite_ids=["targeted-check"], json_output=True)
 
         assert result == 0
@@ -9657,10 +10706,10 @@ class TestVerifyCommands:
     def test_verify_run_fails_when_suite_fails(self, tmp_path, capsys):
         self._write_contract(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
+        with patch("cc_evidence.run_command") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout="", stderr=""),
-                MagicMock(returncode=1, stdout="", stderr="failed"),
+                _fixture_evidence_result(0),
+                _fixture_evidence_result(1),
             ]
             result = cc.cmd_verify_run(tmp_path, json_output=True)
 
@@ -9709,13 +10758,14 @@ class TestVerifyCommands:
         )
         assert docs_suite["status"] == "failed"
         assert docs_suite["returnCode"] == 1
-        assert "docs/project-memory-engine.md" in docs_suite["stdoutTail"]
+        assert docs_suite["stdoutTail"] == ""
+        assert docs_suite["output"]["stdoutBytes"] > 0
 
     def test_verify_run_can_select_kind(self, tmp_path, capsys):
         self._write_contract(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_verify_run(tmp_path, kinds=["targeted"], json_output=True)
 
         assert result == 0
@@ -9949,8 +10999,8 @@ class TestInvariantCommands:
     def test_invariants_run_executes_active_invariants_and_writes_receipt(self, tmp_path, capsys):
         self._write_manifest(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_invariants_run(tmp_path, json_output=True)
 
         assert result == 0
@@ -9983,8 +11033,8 @@ class TestInvariantCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_invariants_run(project, json_output=True)
 
         assert result == 0
@@ -10019,8 +11069,8 @@ class TestInvariantCommands:
             ],
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             result = cc.cmd_invariants_run(tmp_path, json_output=True)
 
         assert result == 0
@@ -10034,8 +11084,8 @@ class TestInvariantCommands:
     def test_invariants_report_names_protected_properties_and_latest_run(self, tmp_path, capsys):
         self._write_manifest(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(0)
             assert cc.cmd_invariants_run(tmp_path, json_output=True) == 0
         capsys.readouterr()
 
@@ -10149,8 +11199,8 @@ class TestInvariantCommands:
     def test_invariants_run_fails_when_command_fails(self, tmp_path, capsys):
         self._write_manifest(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="failed")
+        with patch("cc_evidence.run_command") as mock_run:
+            mock_run.return_value = _fixture_evidence_result(1)
             result = cc.cmd_invariants_run(tmp_path, json_output=True)
 
         assert result == 1
@@ -11277,6 +12327,59 @@ class TestSetupHostContextSync:
         assert cc_config["project_definition_mode"] == "skip"
         assert "environment" not in cc_config
 
+    def test_setup_generates_cursor_rule_with_project_wide_metadata(self, tmp_path, monkeypatch):
+        answers_file = tmp_path / "setup_answers.json"
+        answers_file.write_text(
+            json.dumps(
+                {
+                    "setup": {
+                        "name": "Demo Project",
+                        "planning": {
+                            "tier": "core",
+                            "planning_mode": "solo_structured",
+                            "planning_authority": "single_author",
+                            "manual_consultation_allowed": False,
+                        },
+                        "documentation_mode": "managed",
+                        "user_host": "cursor",
+                        "host_instruction_mode": "recommended",
+                        "hooks_location": "local",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(cc_setup, "_ask", lambda prompt, default="": default)
+        monkeypatch.setattr(cc_setup, "_ask_yn", lambda prompt, default=True: default)
+        monkeypatch.setattr(cc_setup, "_scan_dirs", lambda project: [])
+        monkeypatch.setattr(cc_setup, "_detect_backends", lambda: {})
+        monkeypatch.setattr(
+            cc_setup,
+            "_detect_obvious_environment_inventory",
+            lambda: {"toolchains": ["Python"], "package_managers": ["pip"]},
+        )
+        monkeypatch.setattr(cc_setup, "cmd_init", lambda project, central_hooks=False, quiet=False: 0)
+        monkeypatch.setattr(cc_setup, "cmd_doctor", lambda project: 0)
+        monkeypatch.setattr(
+            cc_setup,
+            "_write_host_integration_assets",
+            lambda project, user_host, host_instructions=None: [],
+        )
+
+        assert cc_setup.cmd_setup(tmp_path, answers_file=answers_file) == 0
+
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        assert target.read_bytes().startswith(b"---\nalwaysApply: true\n---\n")
+        marker, state, _detail = cc._adapter_marker_payload(
+            target.read_text(encoding="utf-8")
+        )
+        assert state == "owned"
+        assert marker["host"] == "cursor"
+        gateway = json.loads(
+            (tmp_path / ".controlcoding" / "gateway_config.json").read_text(encoding="utf-8")
+        )
+        assert gateway["hostProfile"]["contextFile"] == ".cursor/rules/project.mdc"
+
 
 class TestHostSwitch:
     SAMPLE_CLAUDE_MD = TestExportAgentsMd.SAMPLE_CLAUDE_MD
@@ -11349,6 +12452,33 @@ class TestHostSwitch:
         assert (tmp_path / "AGENTS.md").exists()
         content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert "## Operative Rules" in content
+
+    def test_switch_to_cursor_uses_shared_renderer_metadata(self, tmp_path, monkeypatch):
+        (tmp_path / "CONTROLCODING.md").write_text(
+            self.SAMPLE_CLAUDE_MD.replace("CLAUDE.md", "CONTROLCODING.md"),
+            encoding="utf-8",
+        )
+        control_dir = tmp_path / ".controlcoding"
+        control_dir.mkdir()
+        (control_dir / "gateway_config.json").write_text(
+            json.dumps({"userHost": "claude_code", "enabledHosts": ["claude_code"]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            cc,
+            "_write_host_integration_assets",
+            lambda project, user_host, host_instructions=None: [],
+        )
+
+        assert cc.cmd_host_switch(tmp_path, "cursor") == 0
+
+        target = tmp_path / ".cursor" / "rules" / "project.mdc"
+        assert target.read_bytes().startswith(b"---\nalwaysApply: true\n---\n")
+        gateway = json.loads(
+            (control_dir / "gateway_config.json").read_text(encoding="utf-8")
+        )
+        assert gateway["userHost"] == "cursor"
+        assert gateway["hostProfile"]["contextFile"] == ".cursor/rules/project.mdc"
 
     def test_switch_preview_only_changes_nothing(self, tmp_path, monkeypatch):
         (tmp_path / "CONTROLCODING.md").write_text(
@@ -12753,3 +13883,551 @@ def test_s4_stat_05_fallback_chmod_failure_cleans_stage_and_preserves_target(
     assert record["cleanupState"] == "succeeded"
     assert not Path(record["path"]).exists()
     assert _s4_static_file_state(target) == target_before
+
+# --------------------------------------------------- E6-B init preservation ---
+
+
+def _init_inventory(root):
+    """Include sibling contents and stable metadata; never follow fixture links."""
+    entry = root.lstat()
+    result = {".": (entry.st_mode, entry.st_ino, entry.st_size, entry.st_mtime_ns, entry.st_ctime_ns, None)}
+    for directory, names, files in os.walk(root, followlinks=False):
+        for name in [*names, *files]:
+            path = Path(directory) / name
+            entry = path.lstat()
+            reparse = getattr(entry, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            data = path.read_bytes() if stat.S_ISREG(entry.st_mode) and not reparse else None
+            result[str(path.relative_to(root))] = (entry.st_mode, entry.st_ino, entry.st_size,
+                                                   entry.st_mtime_ns, entry.st_ctime_ns, data)
+    return result
+
+
+class TestInitPreservation:
+    @pytest.fixture(autouse=True)
+    def isolated_central(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cc, "_central_hooks_dir", lambda: tmp_path / "central fixture" / "hooks")
+
+    @pytest.mark.parametrize("central", [False, True])
+    def test_fresh_preview_repeat_preserves_bytes_metadata_constants(self, tmp_path, central, monkeypatch):
+        project = tmp_path / "project with spaces"
+        project.mkdir()
+        (tmp_path / "sibling").write_bytes(b"foreign sibling")
+        (project / ".git/hooks").mkdir(parents=True)
+        constants = json.dumps(cc.BASE_SETTINGS, sort_keys=True)
+        before = _init_inventory(tmp_path)
+        with patch.object(cc, "_apply_init", side_effect=AssertionError("preview applied")):
+            assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert _init_inventory(tmp_path) == before
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert not (project / ".claude").exists()
+        for name in ["CONTROLCODING.md", "STATUS.md", "ROADMAP.md", "BUGS.md"]:
+            (project / name).write_bytes(("custom " + name).encode())
+        for name in ["pre-commit", "post-commit"]:
+            (project / ".git/hooks" / name).write_bytes(b"#!/bin/sh\n# custom gate\n")
+        config = project / ".controlcoding/cc_config.json"
+        data = json.loads(config.read_bytes()); data["custom"] = {"keep": 17}
+        config.write_bytes(json.dumps(data, indent=4).replace("\n", "\r\n").encode())
+        settings = project / ".controlcoding/settings.json"
+        data = json.loads(settings.read_bytes()); data["foreign"] = [1, 2]; data["mcpServers"] = {"owner": {"command": "custom"}}
+        settings.write_bytes(json.dumps(data, indent=4).replace("\n", "\r\n").encode())
+        ignore = project / ".gitignore"
+        ignore.write_bytes(b"# user patterns\r\nprivate/\r\n" + ignore.read_bytes().replace(b"\n", b"\r\n") + b"tail/\r\n")
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert _init_inventory(tmp_path) == before
+        assert json.dumps(cc.BASE_SETTINGS, sort_keys=True) == constants
+        hooks = cc._central_hooks_dir() if central else project / "hooks"
+        for name in cc.INIT_HOOKS:
+            assert (hooks / name).read_bytes() == (cc.HOOKS_DIR / name).read_bytes()
+        assert (project / "tools/fitness_check.py").read_bytes() == (cc.SCRIPT_DIR / "fitness_check.py").read_bytes()
+        assert data["hooks"]
+        assert json.loads(config.read_bytes())["hooks_location"] == ("central" if central else "local")
+        assert not (project / "hooks").exists() if central else (project / "hooks").is_dir()
+
+    @pytest.mark.parametrize("destination,payload", [
+        (".controlcoding/settings.json", b'{"custom":true}'),
+        (".controlcoding/settings.json", b'{broken'),
+        (".controlcoding/settings.json", b'[]'),
+        (".controlcoding/settings.json", b'{"hooks":[]}'),
+        (".controlcoding/settings.json", b'{"hooks":{"PreToolUse":[{"hooks":[{"command":7}]}]}}'),
+        (".controlcoding/cc_config.json", b'{broken'),
+        (".controlcoding/cc_config.json", b'[]'),
+        (".controlcoding/cc_config.json", b'{"hooks_location":"central"}'),
+        (".controlcoding/cc_config.json", b'{"documentation_mode":null}'),
+        (".controlcoding/cc_config.json", b'{"cc_artifact_mode":"unknown"}'),
+        (".gitignore", b'# owner patterns\n'),
+        ("hooks/check_boundaries.py", b'# customized hook\n'),
+        ("tools/fitness_check.py", b'# customized fitness\n'),
+        (".claude/settings.json", b'[]'),
+        (".claude/cc_config.json", b'{bad'),
+    ])
+    def test_conflicts_precede_all_writes(self, tmp_path, destination, payload, monkeypatch):
+        project = tmp_path / "project"; project.mkdir()
+        path = project / destination; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(payload)
+        before = _init_inventory(tmp_path)
+        with patch.object(cc, "_apply_init", side_effect=AssertionError("conflict applied")):
+            for preview in [True, False]:
+                assert cc.cmd_init(project, preview_only=preview) == 1
+                assert _init_inventory(tmp_path) == before
+        assert not (project / "CONTROLCODING.md").exists()
+
+    @pytest.mark.parametrize("central", [False, True])
+    def test_custom_central_or_local_hook_never_uses_mtime(self, tmp_path, central):
+        project = tmp_path / "project"; project.mkdir()
+        dest = cc._central_hooks_dir() if central else project / "hooks"
+        dest.mkdir(parents=True)
+        target = dest / cc.INIT_HOOKS[0]; target.write_bytes(b"# custom oldest hook\n"); os.utime(target, (1, 1))
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central) == 1
+        assert _init_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("source", ["template", "hook", "fitness"])
+    def test_missing_required_source_is_read_only(self, tmp_path, source, monkeypatch):
+        project = tmp_path / "project"; project.mkdir()
+        missing = tmp_path / "missing source"
+        monkeypatch.setattr(cc, {"template": "TEMPLATES_DIR", "hook": "HOOKS_DIR", "fitness": "SCRIPT_DIR"}[source], missing)
+        before = _init_inventory(tmp_path)
+        for preview in [True, False]:
+            assert cc.cmd_init(project, preview_only=preview) == 1
+            assert _init_inventory(tmp_path) == before
+
+    def test_late_ignore_conflict_and_explicit_manual_reconciliation(self, tmp_path):
+        project = tmp_path / "project"; project.mkdir()
+        ignore = project / ".gitignore"; ignore.write_text(cc.GITIGNORE_MARKER_START + "\n# incomplete\n")
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project) == 1
+        assert _init_inventory(tmp_path) == before
+        ignore.write_text("# retained user pattern\nprivate/\n" + cc._build_gitignore_block(), encoding="utf-8")
+        original = ignore.read_bytes()
+        assert cc.cmd_init(project) == 0
+        assert ignore.read_bytes() == original
+
+    @pytest.mark.parametrize("central", [False, True])
+    def test_legacy_inputs_custom_fields_and_effective_policy(self, tmp_path, central):
+        project = tmp_path / "project"; project.mkdir(); legacy = project / ".claude"; legacy.mkdir()
+        (project / "CLAUDE.md").write_bytes(b"legacy context\r\n")
+        config = {"hooks_location": "central" if central else "local", "documentation_mode": "project_managed",
+                  "cc_artifact_mode": "shared_repo", "protected_zones": [], "custom": {"owner": 1}}
+        (legacy / "cc_config.json").write_text(json.dumps(config), encoding="utf-8")
+        (legacy / "settings.json").write_bytes(b'{"custom":true,"mcpServers":{"foreign":{"command":"owner"}}}\r\n')
+        before = _init_inventory(legacy)
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert _init_inventory(legacy) == before
+        assert not (project / "CONTROLCODING.md").exists()
+        assert json.loads((project / ".controlcoding/cc_config.json").read_bytes()) == config
+        settings = json.loads((project / ".controlcoding/settings.json").read_bytes())
+        assert settings["custom"] is True and settings["mcpServers"]["foreign"]["command"] == "owner"
+        assert "hooks" in settings
+        assert (project / ".gitignore").read_text() == cc._build_gitignore_block(central, "project_managed", "shared_repo")
+        # Canonical-first selection must not consume a differing ordinary legacy config.
+        (legacy / "cc_config.json").write_bytes(b'{"hooks_location":"opposite"}')
+        assert cc.cmd_init(project, central_hooks=central) == 0
+
+    @pytest.mark.parametrize("destination,kind", [
+        ("CONTROLCODING.md", "dir"), ("CLAUDE.md", "dir"), ("STATUS.md", "dir"),
+        ("ROADMAP.md", "dir"), ("BUGS.md", "dir"), ("devlog", "file"), ("hooks", "file"),
+        ("tools", "file"), (".controlcoding", "file"), (".claude", "file"),
+        (".git", "file"), (".git/hooks", "file"), (".git/hooks/pre-commit", "dir"),
+        (".controlcoding/settings.json", "dir"), ("hooks/check_boundaries.py", "dir"),
+    ])
+    def test_unsafe_types(self, tmp_path, destination, kind):
+        project = tmp_path / "project"; project.mkdir(); target = project / destination
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if kind == "dir": target.mkdir()
+        else: target.write_bytes(b"foreign file")
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project) == 1
+        assert _init_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("which", ["settings", "first_document"])
+    def test_executed_publication_race_preserves_concurrent_target(self, tmp_path, monkeypatch, record_property, capsys, which):
+        project = tmp_path / "project"; project.mkdir()
+        target = project / (".controlcoding/settings.json" if which == "settings" else "CONTROLCODING.md")
+        real = os.link; events = []; foreign = b'FOREIGN concurrent publication\r\n'
+        def link(src, dst, *args, **kwargs):
+            if Path(dst) == target:
+                events.append("actual_os_link_boundary"); target.write_bytes(foreign); events.append("concurrent_writer_executed")
+            return real(src, dst, *args, **kwargs)
+        monkeypatch.setattr(os, "link", link)
+        monkeypatch.setattr(os, "replace", lambda *a, **k: pytest.fail("unsafe overwrite fallback"))
+        assert cc.cmd_init(project) == 1
+        assert events == ["actual_os_link_boundary", "concurrent_writer_executed"]
+        assert target.read_bytes() == foreign
+        assert not list(project.rglob("*.tmp"))
+        assert "Partial initialization" in capsys.readouterr().out
+        if which == "settings": assert (project / "CONTROLCODING.md").is_file()
+        record_property("events", json.dumps(events)); record_property("returncode", 1)
+
+    @pytest.mark.parametrize("replacement", ["none", "file", "directory", "inplace"])
+    def test_unsupported_publication_and_owned_stage_cleanup(self, tmp_path, monkeypatch, record_property, capsys, replacement):
+        import tempfile
+        project = tmp_path / "project"; project.mkdir(); events = []; stages = []; real = os.link
+        descriptors = {}
+        real_mkstemp = tempfile.mkstemp
+        def mkstemp(*args, **kwargs):
+            descriptor, name = real_mkstemp(*args, **kwargs)
+            descriptors[name] = descriptor
+            return descriptor, name
+        monkeypatch.setattr(tempfile, "mkstemp", mkstemp)
+        identities = []
+        def link(src, dst, *args, **kwargs):
+            if Path(dst).name == "settings.json":
+                events.append("actual_link_failure"); stages.append(Path(src))
+                before = Path(src).stat()
+                held = None
+                if os.name != "nt":
+                    try:
+                        info = os.fstat(descriptors[str(src)])
+                        held = [info.st_dev, info.st_ino]
+                    except OSError:
+                        pass
+                if replacement != "none":
+                    if replacement != "inplace": Path(src).unlink()
+                    if replacement in {"file", "inplace"}: Path(src).write_bytes(b"foreign stage")
+                    else: Path(src).mkdir()
+                    events.append("stage_replacement_executed")
+                after = Path(src).stat()
+                identities.append({"before": [before.st_dev, before.st_ino],
+                                   "after": [after.st_dev, after.st_ino], "held": held})
+                raise OSError("fixture publication unsupported")
+            return real(src, dst, *args, **kwargs)
+        monkeypatch.setattr(os, "link", link)
+        monkeypatch.setattr(os, "replace", lambda *a, **k: pytest.fail("replacement fallback"))
+        assert cc.cmd_init(project) == 1
+        assert events[0] == "actual_link_failure" and len(stages) == 1
+        assert not (project / ".controlcoding/settings.json").exists()
+        assert (project / "CONTROLCODING.md").exists()
+        record_property("stage_identities", json.dumps(identities))
+        if replacement == "none": assert not stages[0].exists()
+        elif replacement in {"file", "inplace"}: assert stages[0].read_bytes() == b"foreign stage"
+        else: assert stages[0].is_dir()
+        if os.name != "nt":
+            assert identities[0]["held"] == identities[0]["before"]
+            if replacement in {"file", "directory"}:
+                assert identities[0]["after"] != identities[0]["before"]
+        assert "Partial initialization" in capsys.readouterr().out
+        record_property("events", json.dumps(events)); record_property("returncode", 1)
+
+    @pytest.mark.parametrize("which", ["skip", "legacy", "source"])
+    def test_executed_input_change_before_last_validation(self, tmp_path, monkeypatch, record_property, which):
+        project = tmp_path / "project"; project.mkdir(); events = []
+        if which == "skip":
+            assert cc.cmd_init(project) == 0; target = project / ".controlcoding/settings.json"
+        elif which == "legacy":
+            target = project / ".claude/settings.json"; target.parent.mkdir(); target.write_bytes(b'{}')
+        else:
+            source = tmp_path / "hook sources"; source.mkdir()
+            for name in cc.INIT_HOOKS: (source / name).write_bytes((cc.HOOKS_DIR / name).read_bytes())
+            monkeypatch.setattr(cc, "HOOKS_DIR", source); target = source / cc.INIT_HOOKS[0]
+        foreign = b'FOREIGN changed input\n'
+        original = cc._init_recheck; count = 0
+        # For retained settings, inject immediately before the final validation.
+        trigger = 3 + len(cc._plan_init(project)["files"]) if which == "skip" else 2
+        def recheck(observations):
+            nonlocal count
+            count += 1
+            if count == trigger:
+                events.append("last_validation_entered"); target.write_bytes(foreign); events.append("input_writer_executed")
+            return original(observations)
+        monkeypatch.setattr(cc, "_init_recheck", recheck)
+        assert cc.cmd_init(project) == 1
+        assert events == ["last_validation_entered", "input_writer_executed"]
+        assert target.read_bytes() == foreign
+        if which != "skip": assert not (project / "CONTROLCODING.md").exists()
+        record_property("events", json.dumps(events)); record_property("returncode", 1)
+
+    def test_plan_is_not_mutated_by_application(self, tmp_path):
+        from copy import deepcopy
+        plan = cc._plan_init(tmp_path)
+        before = deepcopy(plan)
+        created = []; cc._apply_init(plan, created)
+        assert plan == before and created
+
+    @pytest.mark.parametrize("preview", [False, True])
+    def test_actual_cli_from_other_cwd_and_invalid_roots(self, tmp_path, preview, record_property):
+        cwd = tmp_path / "other cwd with spaces"; cwd.mkdir()
+        project = tmp_path / "target with spaces"; project.mkdir()
+        (tmp_path / "file root").write_bytes(b"foreign")
+        outcomes = []
+        for target, expected in [(project, 0), (tmp_path / "absent root", 1), (tmp_path / "file root", 1)]:
+            argv = [sys.executable, "-B", str(CC_SCRIPT), "init", "--project-root", str(target)]
+            if preview: argv.append("--preview-only")
+            before = _init_inventory(tmp_path)
+            result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+            outcomes.append({"argv": argv, "returncode": result.returncode})
+            assert result.returncode == expected, result.stdout + result.stderr
+            if preview or expected: assert _init_inventory(tmp_path) == before
+        record_property("cli", json.dumps(outcomes))
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows junction control")
+    @pytest.mark.parametrize("kind", ["root", "ancestor", "target", "central", "legacy"])
+    def test_junctions_refused_without_following_outside(self, tmp_path, kind, record_property):
+        outside = tmp_path / "outside"; outside.mkdir(); (outside / "sentinel").write_bytes(b"outside")
+        project = tmp_path / "project"; project.mkdir()
+        junction = {"root": tmp_path / "root link", "ancestor": project / ".controlcoding",
+                    "target": project / "STATUS.md", "central": cc._central_hooks_dir(),
+                    "legacy": project / ".claude"}[kind]
+        junction.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)], capture_output=True, text=True)
+        if result.returncode: pytest.skip(f"junction unavailable: {result.stderr or result.stdout}")
+        before = _init_inventory(outside)
+        root = junction if kind == "root" else project
+        assert cc.cmd_init(root, central_hooks=kind == "central") == 1
+        if kind == "root":
+            for preview in [[], ["--preview-only"]]:
+                cli = subprocess.run([sys.executable, "-B", str(CC_SCRIPT), "init", "--project-root", str(root), *preview], capture_output=True, text=True)
+                assert cli.returncode == 1
+        assert _init_inventory(outside) == before
+        record_property("junction", kind)
+
+    @pytest.mark.parametrize("kind", ["dangling", "ancestor", "root", "central"])
+    def test_real_symlinks_refused(self, tmp_path, kind):
+        outside = tmp_path / "outside"; outside.mkdir(); (outside / "sentinel").write_bytes(b"outside")
+        project = tmp_path / "project"; project.mkdir()
+        target = {"dangling": project / "STATUS.md", "ancestor": project / ".controlcoding",
+                  "root": tmp_path / "root link", "central": cc._central_hooks_dir()}[kind]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try: target.symlink_to(outside / "absent" if kind == "dangling" else outside, target_is_directory=kind != "dangling")
+        except OSError as exc: pytest.skip(f"real symlink unavailable: {exc}")
+        before = _init_inventory(outside)
+        assert cc.cmd_init(target if kind == "root" else project, central_hooks=kind == "central") == 1
+        assert _init_inventory(outside) == before
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX FIFO control; not available on Windows")
+    def test_special_file_refused(self, tmp_path):
+        os.mkfifo(tmp_path / "STATUS.md")
+        assert cc.cmd_init(tmp_path) == 1
+
+    @pytest.mark.parametrize("condition", ["compatible", "missing_source", "late_conflict"])
+    def test_preview_audit_records_zero_mutations(self, tmp_path, monkeypatch, record_property, condition):
+        project = tmp_path / "project"; project.mkdir(); events = []; active = False
+        if condition == "missing_source": monkeypatch.setattr(cc, "SCRIPT_DIR", tmp_path / "missing")
+        if condition == "late_conflict":
+            (project / ".controlcoding").mkdir()
+            (project / ".controlcoding/settings.json").write_bytes(b'{"owner":true}')
+        before = _init_inventory(tmp_path)
+        def audit(event, args):
+            if not active: return
+            if event == "open":
+                mode, flags = args[1], args[2]
+                if (isinstance(mode, str) and any(c in mode for c in "wax+")) or (isinstance(flags, int) and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC)):
+                    events.append(event)
+            elif event in {"os.mkdir", "os.remove", "os.rmdir", "os.rename", "os.link", "os.symlink", "os.chmod", "os.utime", "shutil.copyfile"}:
+                events.append(event)
+        sys.addaudithook(audit)
+        active = True
+        try:
+            result = cc.cmd_init(project, preview_only=True)
+        finally:
+            active = False
+        assert result == (0 if condition == "compatible" else 1)
+        assert events == [] and _init_inventory(tmp_path) == before
+        record_property("mutation_events", json.dumps(events)); record_property("returncode", result)
+
+# ------------------------------------------- E6-B/R1 init compatibility ---
+
+
+def _init_hook_identities(settings):
+    from collections import Counter
+    return Counter(
+        (event, entry.get("matcher"), hook["command"])
+        for event, entries in settings["hooks"].items()
+        for entry in entries
+        for hook in entry.get("hooks", [])
+        if "command" in hook
+    )
+
+
+class TestInitCompatibility:
+    @pytest.fixture(autouse=True)
+    def detached_constants(self, tmp_path, monkeypatch):
+        # Parse pristine constants so earlier initializer calls cannot mask a trigger.
+        tree = ast.parse(CC_SCRIPT.read_bytes())
+        base = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "BASE_SETTINGS"
+                            for t in node.targets))
+        monkeypatch.setattr(cc, "BASE_SETTINGS", ast.literal_eval(base))
+        monkeypatch.setattr(cc, "_central_hooks_dir", lambda: tmp_path / "central owner's é hooks")
+
+    @pytest.mark.parametrize("location", [".controlcoding", ".claude"])
+    @pytest.mark.parametrize("zones,expected", [
+        ({"deny": ["src/core/"], "warn": ["src/shared/"]},
+         [("src/core/", "deny"), ("src/shared/", "warn")]),
+        ({"deny": [{"path": "private/", "description": "owner", "extra": 7}],
+          "warn": [{"path": "public/"}], "owner": {"keep": True}},
+         [("private/", "deny"), ("public/", "warn")]),
+        (["shared/", {"path": "core/", "level": "deny", "custom": 2}],
+         [("shared/", "warn"), ("core/", "deny")]),
+        ([], []), (None, []), ({}, []),
+        ({"deny": ["core/"]}, [("core/", "deny")]),
+        ({"warn": ["shared/"]}, [("shared/", "warn")]),
+        ({"deny": None, "warn": []}, []),
+        ({"deny": [], "warn": None}, []),
+        ({"deny": [7, {"custom": 1}], "warn": [None]}, []),
+        ("missing", []),
+    ], ids=["map", "objects", "list", "empty-list", "null", "empty-map",
+            "deny-only", "warn-only", "null-deny", "null-warn", "loose-items", "missing"])
+    def test_supported_zones(self, tmp_path, location, zones, expected, record_property):
+        project = tmp_path / "project"; project.mkdir()
+        source = project / location / "cc_config.json"; source.parent.mkdir()
+        config = {"custom": {"owner": ["retain", 17]}}
+        if zones != "missing":
+            config["protected_zones"] = zones
+        source.write_bytes((json.dumps(config, indent=3) + "\r\n").encode())
+        original = _init_inventory(source.parent)[source.name]
+        before = _init_inventory(tmp_path)
+        preview = cc.cmd_init(project, preview_only=True)
+        record_property("preview_return", preview)
+        assert _init_inventory(tmp_path) == before
+        assert preview == 0
+        applied = cc.cmd_init(project)
+        record_property("apply_return", applied)
+        assert applied == 0
+        assert _init_inventory(source.parent)[source.name] == original
+        stored = json.loads((project / ".controlcoding/cc_config.json").read_bytes())
+        assert stored["custom"] == config["custom"]
+        if zones != "missing":
+            assert stored["protected_zones"] == zones
+            actual = [(z["path"], z["level"]) for z in cc._normalize_protected_zones(stored["protected_zones"])]
+            record_property("normalized_zones", json.dumps(actual))
+            assert actual == expected
+        elif location == ".controlcoding":
+            assert "protected_zones" not in stored
+        else:
+            assert [(z["path"], z["level"]) for z in stored["protected_zones"]] == [("src/core/", "deny")]
+        after = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, preview_only=True) == 0
+        assert cc.cmd_init(project) == 0
+        assert _init_inventory(tmp_path) == after
+
+    @pytest.mark.parametrize("location", [".controlcoding", ".claude"])
+    @pytest.mark.parametrize("zones", [False, 7, "deny", {"deny": {}}, {"warn": "path"},
+                                      {"deny": False}, {"deny": [], "warn": 0}])
+    def test_malformed_zone_containers_refuse_before_writes(self, tmp_path, location, zones, capsys):
+        project = tmp_path / "project"; project.mkdir()
+        source = project / location / "cc_config.json"; source.parent.mkdir()
+        source.write_text(json.dumps({"protected_zones": zones, "custom": 7}), encoding="utf-8")
+        before = _init_inventory(tmp_path)
+        with patch.object(cc, "_apply_init", side_effect=AssertionError("invalid config applied")):
+            for preview in [True, False]:
+                assert cc.cmd_init(project, preview_only=preview) == 1
+                assert "protected_zones" in capsys.readouterr().out
+                assert _init_inventory(tmp_path) == before
+
+    @pytest.mark.parametrize("name,central", [
+        ("plain", False), ("project with spaces", False), ("progetto-é", False),
+        ("owner's-project", False), ("plain", True),
+    ], ids=["plain", "spaces", "unicode", "quote", "central-quote"])
+    @pytest.mark.parametrize("resolved", [False, True], ids=["relative", "resolved"])
+    def test_six_legacy_hooks_have_six_identities(self, tmp_path, name, central, resolved, record_property):
+        from copy import deepcopy
+        project = tmp_path / name; project.mkdir()
+        dest = cc._central_hooks_dir() if central else project / "hooks"
+        settings = deepcopy(cc.BASE_SETTINGS)
+        if resolved:
+            settings = cc._resolve_hook_commands(settings, dest)
+        legacy = project / ".claude"; legacy.mkdir()
+        (legacy / "settings.json").write_bytes((json.dumps(settings, indent=3) + "\r\n").encode())
+        if central:
+            (legacy / "cc_config.json").write_text('{"hooks_location":"central"}', encoding="utf-8")
+        retained = _init_inventory(legacy)
+        constants = deepcopy(cc.BASE_SETTINGS)
+        before = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert _init_inventory(tmp_path) == before
+        plan = cc._plan_init(project, central_hooks=central)
+        plan_before = deepcopy(plan)
+        assert cc._plan_init(project, central_hooks=central) == plan
+        assert plan == plan_before
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        actual = _init_hook_identities(json.loads((project / ".controlcoding/settings.json").read_bytes()))
+        # Build the six expected commands independently of the resolver/merge.
+        expected_settings = deepcopy(constants)
+        for entries in expected_settings["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    filename = hook["command"].removeprefix("python hooks/")
+                    hook["command"] = "python " + shlex.quote(dest.resolve().as_posix() + "/" + filename)
+        expected = _init_hook_identities(expected_settings)
+        record_property("actual_identities", json.dumps([[*key, count] for key, count in actual.items()]))
+        record_property("expected_identities", json.dumps([[*key, count] for key, count in expected.items()]))
+        assert sum(expected.values()) == 6 and all(v == 1 for v in expected.values())
+        assert actual == expected
+        assert _init_inventory(legacy) == retained
+        assert cc.BASE_SETTINGS == constants
+        after = _init_inventory(tmp_path)
+        assert cc.cmd_init(project, central_hooks=central, preview_only=True) == 0
+        assert cc.cmd_init(project, central_hooks=central) == 0
+        assert _init_inventory(tmp_path) == after
+        assert cc.BASE_SETTINGS == constants and plan == plan_before
+
+    def test_partial_legacy_preserves_metadata_foreign_tails_and_duplicates(self, tmp_path):
+        from copy import deepcopy
+        from collections import Counter
+        project = tmp_path / "owner's é project"; project.mkdir()
+        base = deepcopy(cc.BASE_SETTINGS)
+        event = next(iter(base["hooks"]))
+        entry = deepcopy(base["hooks"][event][0])
+        entry["owner"] = {"timeout": 19}
+        entry["hooks"][0]["timeout"] = 23
+        tail = '  --label "a b" --literal \'x y\' > result.txt'
+        foreign = {"matcher": "Owner", "owner": [1, 2], "hooks": [
+            {"type": "command", "command": "owner-tool --keep exact", "timeout": 31},
+            {"type": "command", "command": "python /absolute/foreign.py --x"},
+            {"type": "command", "command": "python hooks/custom.py" + tail},
+        ]}
+        settings = {"hooks": {event: [entry, deepcopy(entry)], "ForeignEvent": [foreign]},
+                    "mcpServers": {"foreign": {"command": "owner", "env": {"SYNTHETIC": "value"}}},
+                    "custom": {"retain": True}}
+        legacy = project / ".claude"; legacy.mkdir()
+        source = legacy / "settings.json"; source.write_text(json.dumps(settings), encoding="utf-8")
+        before = _init_inventory(legacy)
+        expected_existing = deepcopy(settings)
+        for entries in expected_existing["hooks"].values():
+            for item in entries:
+                for hook in item["hooks"]:
+                    command = hook["command"]
+                    if command.startswith("python hooks/"):
+                        filename, sep, rest = command[len("python hooks/"):].partition(" ")
+                        hook["command"] = "python " + shlex.quote((project / "hooks" / filename).resolve().as_posix()) + (sep + rest if sep else "")
+        assert cc.cmd_init(project) == 0
+        result = json.loads((project / ".controlcoding/settings.json").read_bytes())
+        assert result["custom"] == settings["custom"] and result["mcpServers"] == settings["mcpServers"]
+        assert result["hooks"][event][:2] == expected_existing["hooks"][event]
+        assert result["hooks"]["ForeignEvent"] == expected_existing["hooks"]["ForeignEvent"]
+        expected = _init_hook_identities(expected_existing)
+        for ev, entries in base["hooks"].items():
+            for item in entries:
+                for hook in item["hooks"]:
+                    filename = hook["command"].removeprefix("python hooks/")
+                    key = (ev, item.get("matcher"), "python " + shlex.quote((project / "hooks" / filename).resolve().as_posix()))
+                    if key not in expected:
+                        expected.update([key])
+        assert _init_hook_identities(result) == expected
+        assert sum(expected.values()) == 10  # six required, one user duplicate, three foreign
+        assert _init_inventory(legacy) == before
+        after = _init_inventory(tmp_path)
+        assert cc.cmd_init(project) == 0
+        assert _init_inventory(tmp_path) == after
+
+    @pytest.mark.parametrize("resolved", [False, True], ids=["needs-rewrite", "compatible"])
+    def test_canonical_comparison_keeps_original_input(self, tmp_path, resolved, capsys):
+        from copy import deepcopy
+        project = tmp_path / "project with spaces"; project.mkdir()
+        config = project / ".controlcoding"; config.mkdir()
+        settings = deepcopy(cc.BASE_SETTINGS)
+        if resolved:
+            settings = cc._resolve_hook_commands(settings, project / "hooks")
+        settings["custom"] = {"keep": 7}
+        source = config / "settings.json"; source.write_bytes((json.dumps(settings, indent=4) + "\r\n").encode())
+        original = _init_inventory(config)["settings.json"]
+        before = _init_inventory(tmp_path)
+        for preview in [True, False]:
+            result = cc.cmd_init(project, preview_only=preview)
+            assert result == (0 if resolved else 1)
+            if not resolved:
+                assert "reconcile explicitly" in capsys.readouterr().out
+            if preview or not resolved:
+                assert _init_inventory(tmp_path) == before
+            assert _init_inventory(config)["settings.json"] == original

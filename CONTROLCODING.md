@@ -8,7 +8,10 @@ the authority for actual behavior.
 ## Public Release Scope
 
 ControlCoding V1/Core is a source release intended to run from a checkout or
-source archive with Python 3.10 or later.
+source archive with Python 3.11 or later. Memory also requires a working SQLite
+deserialize API. Selected-memory setup and direct memory initialization check
+this capability before target writes. A later bootstrap failure reports partial
+setup with a nonzero result, without promising installation rollback.
 
 The release includes:
 
@@ -66,19 +69,38 @@ prerequisite for Core.
 
 ## Enforcement Boundaries
 
-ControlCoding reports the enforcement model that the active host can actually
-provide.
+ControlCoding reports its shipped integration model separately from documented
+vendor capability, project configuration and tested integration coverage.
+A profile or generated file does not demonstrate that a host loaded a hook.
 
-- Native-hook hosts can run supported boundary hooks before selected writes.
-- Hosts without native inline hooks rely on repository gates, review,
-  verification, and CI as the mechanical backstop.
+- The native-hook model requires a configured, loaded hook on the selected
+  event/tool route; actual delivery remains unverified without named-host evidence.
+- CC integrations without a native hook adapter use repository gates, review,
+  verification and configured CI. This does not mean the vendor lacks hooks.
 - Instructions and prompts are advisory unless a named hook, repository gate,
   command, or CI check enforces them.
 - Boundary hooks do not intercept arbitrary writes performed outside the host's
   supported hook path.
+- The current template blocks edits to existing custom `DENY` targets; missing
+  custom targets follow its preserved allow path after mandatory-zone and
+  self-protection checks. Mandatory and self-protected new targets remain
+  restricted.
+- Scoped lifts are local request/approval state. An interactive terminal and
+  token express the intended human workflow, but do not independently establish
+  human identity or authorization against equivalent local access. Consumption
+  occurs before a host operation is known to have completed.
+- Invalid or incomplete hook input, and a reached hook exception, can continue
+  with exit `0` and diagnostics. That continuation is not a safe-write claim.
+- A local repository gate evaluates staged paths at its configured invocation;
+  it is not a statement about arbitrary writes, remote acceptance, or server
+  enforcement.
 
 Public documentation must not claim universal pre-write prevention or parity
-between hosts with different capabilities.
+between hosts with different capabilities. Platform references and coverage
+limits are in the [cross-tool guide](docs/cross-tool-guide.md#14-dated-platform-documentation).
+Local configuration checks and historical reports are not current host or
+server-enforcement attestations. A host execution result must name its version,
+OS, event/tool path and candidate; unexecuted routes remain unverified.
 
 ## Public Invariants
 
@@ -129,6 +151,13 @@ Generated views and packets are projections. They do not replace their
 canonical source records.
 
 ## Verification Contracts
+
+Local verification and invariant receipts bind observed source, contract and
+runtime identities. Explicit passing subsets use `passed_subset`; they do not
+satisfy a complete required gate. Ordinary status validates configuration;
+`status --require-current` requires a matching complete pass. Receipts are bounded
+local observations, not signed attestations or proof of unobserved platforms.
+See [verification evidence](./docs/verification-evidence.md).
 
 - [Release allowlist and denylist](./controlcoding.release.json)
 - [Verification suites](./controlcoding.verification.json)

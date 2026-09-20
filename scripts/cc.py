@@ -58,6 +58,20 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
+import cc_evidence
+import cc_evidence_inputs
+
+from cc_memory_lib.runtime import core_runtime_error
+
+# Source-checkout execution must diagnose an unsupported interpreter/SQLite
+# import before importing the rest of the application. Installed entry points
+# also check in main(); package metadata enforces the interpreter minimum.
+if __name__ == "__main__":
+    _runtime_issue = core_runtime_error()
+    if _runtime_issue is not None:
+        print(f"Error: {_runtime_issue.message}", file=sys.stderr)
+        sys.exit(1)
+
 from cc_memory import (
     MEMORY_AUX_ROUTED_COMMANDS,
     add_memory_aux_parser,
@@ -823,12 +837,12 @@ BENCHMARK_HOST_ORDER = [
 HOST_BENCHMARK_EVIDENCE = {
     "claude_code": {
         "status": "reference_only",
-        "notes": "Native inline-hook reference host. Do not treat this as a parity promise for non-inline hosts.",
+        "notes": "Reference model for selected native hook routes; no named-host execution is attested here.",
         "artifacts": [],
     },
     "codex_cli": {
         "status": "curated_partial",
-        "notes": "Curated external-workspace evidence exists. It is useful product evidence, not a strict parity verdict.",
+        "notes": "Curated historical external-workspace reports; these do not attest current hook delivery or host parity.",
         "artifacts": [
             "benchmarks/2026-04-11-cctest-3dcrawler-v11-scorecard.md",
             "benchmarks/2026-04-11-cctest-3dcrawler-v11-review-check.md",
@@ -2011,6 +2025,13 @@ def _truth_extract_control_claims_from_text(text: str, relative_path: str) -> li
     return claims
 
 
+_TRUTH_LIMITATIONS = [
+    "Route recognition does not validate full arguments or preconditions, execute commands, or prove behavior.",
+    "Evidence references are declarations; their existence and adequacy are not verified.",
+    "Strong-claim checks use text heuristics, not semantic fact verification.",
+]
+
+
 def _truth_check_docs_payload(project: Path,
                               doc_paths: tuple[str, ...] = _TRUTH_DOC_COMMAND_FILES) -> dict:
     entries = []
@@ -2084,6 +2105,8 @@ def _truth_check_docs_payload(project: Path,
 
     ok_state = not any(finding["severity"] == "fail" for finding in findings)
     return {
+        "scope": "structural",
+        "limitations": list(_TRUTH_LIMITATIONS),
         "ok": ok_state,
         "docPaths": list(doc_paths),
         "commands": unique_entries,
@@ -2187,6 +2210,8 @@ def _truth_check_payload(project: Path, include_docs: bool = False) -> dict:
 
     ok_state = not any(finding["severity"] == "fail" for finding in findings)
     return {
+        "scope": "structural",
+        "limitations": list(_TRUTH_LIMITATIONS),
         "ok": ok_state,
         "registrySource": registry_source,
         "registryPath": registry_path,
@@ -2221,11 +2246,25 @@ def _verification_command_prefix(project: Path) -> str:
 
 def _default_verification_contract(project: Path) -> dict:
     cc_cmd = _verification_command_prefix(project)
+    def pytest_command(targets: str, suite_id: str, temp_name: str) -> str:
+        # Per-suite diagnostics must outlive the runner's temporary-directory cleanup.
+        # These files are overwritten on rerun; the JSON receipt remains separate.
+        return (
+            f"python -m pytest {targets} -q "
+            f"--junitxml {{project}}/.controlcoding/verification_receipts/{suite_id}.xml "
+            "-o junit_logging=all -o junit_log_passing_tests=false"
+        )
+
     pytest_targets = (
         "tests/test_cc_cli.py tests/test_gitignore.py"
         if (project / "tests" / "test_cc_cli.py").exists()
         else "tests"
     )
+    support_targets = []
+    for support_test in ("test_ci_configuration.py", "test_cc_evidence.py",
+                         "test_cc_evidence_process.py", "test_cc_public_examples.py"):
+        if pytest_targets != "tests" and (project / "tests" / support_test).is_file():
+            support_targets.append(f"tests/{support_test}")
     core_regression_targets = (
         "tests/test_cc_memory.py "
         "tests/test_check_boundaries.py "
@@ -2266,22 +2305,32 @@ def _default_verification_contract(project: Path) -> dict:
         },
         {
             "id": "cli-regression",
+            "timeoutSeconds": 390,
             "kind": "regression",
             "required": True,
-            "command": f"python -m pytest {pytest_targets} -q --basetemp {{temp}}/pytest",
+            "command": pytest_command(pytest_targets, "cli-regression", "pytest"),
             "description": "Run the focused CLI and repository hygiene regression suite.",
         },
     ]
+    if support_targets:
+        suites.append({
+            "id": "verification-support-regression",
+            "kind": "regression",
+            "required": True,
+            "command": pytest_command(
+                " ".join(support_targets), "verification-support-regression", "pytest-support"
+            ),
+            "description": "Run verification evidence, CI configuration, and public-example regressions.",
+        })
     if core_regression_targets:
         suites.append(
             {
                 "id": "core-governance-regression",
+                "timeoutSeconds": 420,
                 "kind": "regression",
                 "required": True,
-                "command": (
-                    "python -m pytest "
-                    f"{core_regression_targets} "
-                    "-q --basetemp {temp}/pytest-core-governance"
+                "command": pytest_command(
+                    core_regression_targets, "core-governance-regression", "pytest-core-governance"
                 ),
                 "description": (
                     "Run V1/Core memory, hook, session, and organization "
@@ -2289,6 +2338,20 @@ def _default_verification_contract(project: Path) -> dict:
                 ),
             }
         )
+    for suite_id, candidates, description in (
+        ("setup-runtime-regression", ("test_cc_setup.py", "test_cc_runtime.py"),
+         "Run installation workflow and Core/runtime prerequisite regressions."),
+        ("optional-hooks-regression", ("test_new_hooks.py",),
+         "Run optional hook and Bash observation safety regressions."),
+    ):
+        targets = " ".join(f"tests/{name}" for name in candidates
+                           if (project / "tests" / name).is_file())
+        if targets:
+            suites.append({
+                "id": suite_id, "kind": "regression", "required": True,
+                "command": pytest_command(targets, suite_id, f"pytest-{suite_id}"),
+                "description": description,
+            })
     suites.extend(
         [
             {
@@ -2331,17 +2394,95 @@ def _normalize_verification_suite(raw: dict) -> dict:
     }
 
 
+def _evidence_prepare(project: Path, kind: str) -> dict:
+    """Read exact contract bytes once for selection and execution identity."""
+    path = project / (VERIFICATION_CONTRACT_FILENAME if kind == "verification" else INVARIANT_MANIFEST_FILENAME)
+    try:
+        contract, descriptor = cc_evidence_inputs.read_contract(project, kind)
+        contracts = [descriptor]
+        other = {}
+        if kind == "verification":
+            other, invariant_descriptor = cc_evidence_inputs.read_contract(project, "invariants")
+            contracts.append(invariant_descriptor)
+        policy = cc_evidence_inputs.input_policy(contract, other)
+        collector = _collect_verification_contract_issues if kind == "verification" else _collect_invariant_manifest_issues
+        normalize = _normalize_verification_suite if kind == "verification" else _normalize_invariant
+        issues = collector(contract)
+        raw = contract.get("suites" if kind == "verification" else "invariants", [])
+        entries = [normalize(e) for e in raw] if isinstance(raw, list) else []
+        for entry in entries:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", entry["id"]):
+                issues.append("invalid check identifier")
+            if len(entry["command"]) > 16384:
+                issues.append("command exceeds evidence limit")
+            shlex.split(entry["command"])
+        if len(entries) > 1000:
+            issues.append("too many checks")
+        required = [e["id"] for e in entries if (e["required"] if kind == "verification" else e["status"] == "active" and e["command"])]
+        executable = entries if kind == "verification" else [e for e in entries if e["command"]]
+        source = "missing" if descriptor["sha256"] is None else ("local" if descriptor["path"].startswith(".") else "project")
+        return {"contract": contract, "contracts": contracts, "policy": policy, "entries": entries,
+                "executable": executable, "required": required, "issues": issues,
+                "source": source, "path": project / descriptor["path"]}
+    except (OSError, ValueError, TypeError, RecursionError, cc_evidence_inputs.EvidenceError):
+        return {"contract": {}, "contracts": [], "policy": {}, "entries": [], "executable": [],
+                "required": [], "issues": ["contract could not be safely validated"], "source": "invalid", "path": path}
+
+
+def _evidence_history(project: Path, kind: str, prepared: dict) -> dict:
+    if prepared["issues"]:
+        return {"assessment": {"state": "unknown", "currentRequiredPass": False,
+                               "reasons": ["contract_invalid"]}, "latestReceipts": [], "latest": None}
+    return cc_evidence.summarize_attempts(
+        project, kind, policy=prepared["policy"], contracts=prepared["contracts"],
+        entries=prepared["executable"], required=prepared["required"], engine_dir=Path(__file__).parent,
+    )
+
+
+def _evidence_public_entries(entries: list[dict]) -> list[dict]:
+    """Expose command presence and identity without copying command credentials."""
+    return [{**entry, "command": "[omitted]" if entry["command"] else "",
+             "commandOmitted": bool(entry["command"]),
+             "commandTemplateDigest": cc_evidence_inputs.digest(entry["command"])}
+            for entry in entries]
+
+
+def _evidence_run(project: Path, kind: str, ids: list, kinds: list, all_entries: bool,
+                  json_output: bool, domains: list | None = None) -> int:
+    prepared = _evidence_prepare(project, kind)
+    issues = prepared["issues"]
+    failure = "invalid_contract" if kind == "verification" else "invalid_manifest"
+    selected = []
+    if not issues:
+        if kind == "verification":
+            selected, issues = _select_verification_suites(prepared["contract"], ids, kinds, all_entries)
+        else:
+            selected, issues = _select_invariants(prepared["contract"], ids, domains or [], kinds, all_entries)
+        failure = "selection_failed"
+        if not selected and not issues:
+            issues = ["no executable checks selected"]
+    if issues:
+        payload, code = {"ok": False, "status": failure, "issues": issues}, 1
+    else:
+        payload, code = cc_evidence.execute(
+            project, kind, prepared["executable"], selected, prepared["required"],
+            cc_evidence.normalize_requested(kind, ids, kinds, domains or [], all_entries, selected),
+            prepared["policy"], prepared["contracts"], engine_dir=Path(__file__).parent,
+        )
+    if json_output:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        (ok if code == 0 else fail)(f"{kind}: {payload['status']}")
+        if payload.get("receiptPath"):
+            info(f"Receipt: {payload['receiptPath']}")
+        for issue in payload.get("issues", []):
+            fail(issue)
+    return code
+
+
 def _load_verification_contract(project: Path) -> tuple[dict, str, Path]:
-    primary = _verification_contract_path(project)
-    if primary.exists():
-        return _read_json_object(primary), "project", primary
-
-    legacy = _legacy_verification_contract_path(project)
-    if legacy.exists():
-        return _read_json_object(legacy), "local", legacy
-
-    return {}, "missing", primary
-
+    prepared = _evidence_prepare(project, "verification")
+    return prepared["contract"], prepared["source"], prepared["path"]
 
 def _collect_verification_contract_issues(policy: dict) -> list[str]:
     issues = []
@@ -2393,13 +2534,11 @@ def _collect_verification_contract_issues(policy: dict) -> list[str]:
 
 
 def _verification_status_payload(project: Path) -> dict:
-    policy, source, path = _load_verification_contract(project)
-    suites = [
-        _normalize_verification_suite(item)
-        for item in policy.get("suites", [])
-        if isinstance(policy.get("suites", []), list)
-    ]
-    issues = _collect_verification_contract_issues(policy)
+    prepared = _evidence_prepare(project, "verification")
+    policy = prepared["contract"]
+    source, path = prepared["source"], prepared["path"]
+    suites = prepared["entries"]
+    issues = prepared["issues"]
     summary = {kind: 0 for kind in sorted(_VERIFICATION_KINDS)}
     required_summary = {kind: 0 for kind in sorted(_VERIFICATION_KINDS)}
     for suite in suites:
@@ -2409,79 +2548,23 @@ def _verification_status_payload(project: Path) -> dict:
             if suite["required"]:
                 required_summary[kind] += 1
 
-    receipts_dir = _verification_receipts_dir(project)
-    receipts = []
-    if receipts_dir.is_dir():
-        for receipt_path in sorted(receipts_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
-            receipt = _read_json_object(receipt_path)
-            if receipt:
-                receipts.append({
-                    "path": _project_relative_label(project, receipt_path),
-                    "id": str(receipt.get("id", "")).strip(),
-                    "status": str(receipt.get("status", "")).strip(),
-                    "createdAt": str(receipt.get("createdAt", "")).strip(),
-                    "suiteCount": len(receipt.get("suites", [])) if isinstance(receipt.get("suites"), list) else 0,
-                })
+    evidence = _evidence_history(project, "verification", prepared)
+    receipts = evidence["latestReceipts"]
 
     return {
         "ok": not issues,
+        "contractValid": not issues,
+        "evidence": evidence,
         "source": source,
         "path": _project_relative_label(project, path),
         "schemaVersion": policy.get("schemaVersion"),
         "requiredKinds": policy.get("requiredKinds", list(_DEFAULT_REQUIRED_VERIFICATION_KINDS)),
-        "suites": suites,
+        "suites": _evidence_public_entries(suites),
         "summary": summary,
         "requiredSummary": required_summary,
         "issues": issues,
         "latestReceipts": receipts,
     }
-
-
-def _expand_verification_command(command: str, project: Path, run_temp: Path) -> str:
-    replacements = {
-        "{project}": project.resolve().as_posix(),
-        "{temp}": run_temp.resolve().as_posix(),
-    }
-    expanded = command
-    for marker, value in replacements.items():
-        expanded = expanded.replace(marker, value)
-    return os.path.expandvars(expanded)
-
-
-def _runner_command_args(command: str, project: Path, run_temp: Path) -> list[str]:
-    """Split a runner command before expanding path placeholders.
-
-    `{temp}` and `{project}` may contain spaces on Windows. Expanding them before
-    `shlex.split()` turns one intended argv value into multiple tokens.
-    """
-    replacements = {
-        "{project}": project.resolve().as_posix(),
-        "{temp}": run_temp.resolve().as_posix(),
-    }
-    args = shlex.split(command)
-    expanded_args = []
-    for arg in args:
-        expanded = arg
-        for marker, value in replacements.items():
-            expanded = expanded.replace(marker, value)
-        expanded_args.append(os.path.expandvars(expanded))
-    return expanded_args
-
-
-def _make_verification_run_temp(project: Path, receipt_id: str) -> Path:
-    temp_root = _verification_temp_root(project)
-    temp_root.mkdir(parents=True, exist_ok=True)
-    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", receipt_id)
-    for attempt in range(100):
-        seed = f"{safe_id}:{time.time_ns()}:{os.getpid()}:{attempt}"
-        suffix = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
-        candidate = temp_root / f"{safe_id}_{suffix}"
-        try:
-            candidate.mkdir()
-            return candidate
-        except FileExistsError:
-            continue
-    raise RuntimeError("could not create verification temp directory")
 
 
 def _select_verification_suites(policy: dict,
@@ -2515,15 +2598,6 @@ def _select_verification_suites(policy: dict,
     return [suite for suite in suites if suite["required"]], issues
 
 
-def _write_verification_receipt(project: Path, receipt: dict) -> Path:
-    receipt_dir = _verification_receipts_dir(project)
-    receipt_dir.mkdir(parents=True, exist_ok=True)
-    receipt_id = str(receipt.get("id", "")).strip() or _utc_now_iso().replace(":", "").replace(".", "")
-    path = receipt_dir / f"{receipt_id}.json"
-    _write_json_atomic(path, receipt)
-    return path
-
-
 def cmd_verify_init(project: Path, force: bool = False, json_output: bool = False) -> int:
     """Create a tracked verification contract for targeted/regression checks."""
     path = _verification_contract_path(project)
@@ -2549,134 +2623,26 @@ def cmd_verify_init(project: Path, force: bool = False, json_output: bool = Fals
     return 0
 
 
-def cmd_verify_status(project: Path, json_output: bool = False) -> int:
-    """Report verification contract health without running commands."""
+def cmd_verify_status(project: Path, json_output: bool = False, require_current: bool = False) -> int:
+    """Validate configuration; optionally require a complete current pass."""
     payload = _verification_status_payload(project)
-    if json_output:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0 if payload["ok"] else 1
-
-    if payload["ok"]:
-        ok(
-            "Verification contract is valid "
-            f"({len(payload['suites'])} suite(s), source={payload['source']})"
-        )
-        for suite in payload["suites"]:
-            required = "required" if suite["required"] else "optional"
-            print(f"  - {suite['id']} [{suite['kind']}, {required}]: {suite['command']}")
-        return 0
-
-    fail("Verification contract is not valid")
-    for issue in payload["issues"]:
-        fail(issue)
-    return 1
-
-
-def cmd_verify_run(project: Path,
-                   suite_ids: list[str] | None = None,
-                   kinds: list[str] | None = None,
-                   all_suites: bool = False,
-                   json_output: bool = False) -> int:
-    """Run the selected verification suites and write a local receipt."""
-    suite_ids = suite_ids or []
-    kinds = kinds or []
-    status = _verification_status_payload(project)
-    if not status["ok"]:
-        if json_output:
-            print(json.dumps({
-                "ok": False,
-                "status": "invalid_contract",
-                "issues": status["issues"],
-            }, indent=2, ensure_ascii=False))
-        else:
-            fail("Verification contract is invalid; run `cc verify status`.")
-            for issue in status["issues"]:
-                fail(issue)
-        return 1
-
-    policy, _source, _path = _load_verification_contract(project)
-    selected, selection_issues = _select_verification_suites(policy, suite_ids, kinds, all_suites)
-    if selection_issues or not selected:
-        issues = selection_issues or ["no verification suites selected"]
-        if json_output:
-            print(json.dumps({"ok": False, "status": "selection_failed", "issues": issues}, indent=2))
-        else:
-            for issue in issues:
-                fail(issue)
-        return 1
-
-    created_at = _utc_now_iso()
-    receipt_id = "verify_" + created_at.replace(":", "").replace(".", "").replace("Z", "Z")
-    receipt = {
-        "id": receipt_id,
-        "createdAt": created_at,
-        "status": "passed",
-        "project": str(project.resolve()),
-        "tempDir": "",
-        "suites": [],
-    }
-    run_temp = _make_verification_run_temp(project, receipt_id)
-    receipt["tempDir"] = run_temp.resolve().as_posix()
-
-    if not json_output:
-        print(f"Running {len(selected)} verification suite(s)")
-
-    try:
-        for suite in selected:
-            command = _expand_verification_command(suite["command"], project, run_temp)
-            started = time.perf_counter()
-            result_payload = {
-                "id": suite["id"],
-                "kind": suite["kind"],
-                "required": suite["required"],
-                "command": command,
-                "status": "passed",
-                "returnCode": 0,
-                "durationMs": 0,
-                "stdoutTail": "",
-                "stderrTail": "",
-            }
-            try:
-                args = _runner_command_args(suite["command"], project, run_temp)
-                result = subprocess.run(
-                    args,
-                    cwd=str(project),
-                    capture_output=True,
-                    text=True,
-                    timeout=suite["timeoutSeconds"],
-                )
-                result_payload["returnCode"] = result.returncode
-                result_payload["stdoutTail"] = (result.stdout or "")[-4000:]
-                result_payload["stderrTail"] = (result.stderr or "")[-4000:]
-                if result.returncode != 0:
-                    result_payload["status"] = "failed"
-                    receipt["status"] = "failed"
-            except Exception as exc:
-                result_payload["status"] = "failed"
-                result_payload["returnCode"] = -1
-                result_payload["stderrTail"] = str(exc)
-                receipt["status"] = "failed"
-            result_payload["durationMs"] = int((time.perf_counter() - started) * 1000)
-            receipt["suites"].append(result_payload)
-            if not json_output:
-                printer = ok if result_payload["status"] == "passed" else fail
-                printer(f"{suite['id']} [{suite['kind']}] {result_payload['status']}")
-    finally:
-        shutil.rmtree(run_temp, ignore_errors=True)
-
-    receipt_path = _write_verification_receipt(project, receipt)
-    payload = {
-        "ok": receipt["status"] == "passed",
-        "status": receipt["status"],
-        "receiptPath": _project_relative_label(project, receipt_path),
-        "receipt": receipt,
-    }
+    assessment = payload["evidence"]["assessment"]
+    passed = payload["ok"] and (not require_current or assessment["currentRequiredPass"])
+    payload["requireCurrent"] = require_current
     if json_output:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
     else:
-        info(f"Receipt: {payload['receiptPath']}")
-    return 0 if payload["ok"] else 1
+        (ok if payload["ok"] else fail)("Verification contract is " + ("valid" if payload["ok"] else "invalid"))
+        info("Evidence: " + assessment["state"] + "; current required pass=" + str(assessment["currentRequiredPass"]).lower())
+        for issue in payload["issues"] + assessment["reasons"]:
+            info(issue)
+    return 0 if passed else 1
 
+def cmd_verify_run(project: Path, suite_ids: list[str] | None = None,
+                   kinds: list[str] | None = None, all_suites: bool = False,
+                   json_output: bool = False) -> int:
+    """Execute checks with bound v2 evidence; a subset is not a required pass."""
+    return _evidence_run(project, "verification", suite_ids or [], kinds or [], all_suites, json_output)
 
 def _invariant_manifest_path(project: Path) -> Path:
     return project / INVARIANT_MANIFEST_FILENAME
@@ -2688,22 +2654,6 @@ def _invariant_receipts_dir(project: Path) -> Path:
 
 def _invariant_temp_root(project: Path) -> Path:
     return _control_plane_path(project, INVARIANT_TEMP_DIRNAME)
-
-
-def _make_invariant_run_temp(project: Path, receipt_id: str) -> Path:
-    temp_root = _invariant_temp_root(project)
-    temp_root.mkdir(parents=True, exist_ok=True)
-    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", receipt_id)
-    for attempt in range(100):
-        seed = f"{safe_id}:{time.time_ns()}:{os.getpid()}:{attempt}"
-        suffix = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
-        candidate = temp_root / f"{safe_id}_{suffix}"
-        try:
-            candidate.mkdir()
-            return candidate
-        except FileExistsError:
-            continue
-    raise RuntimeError("could not create invariant temp directory")
 
 
 def _invariant_domain_key(domain: str) -> str:
@@ -2878,6 +2828,10 @@ def _invariant_wire_ci_payload(project: Path,
         "ok": not issues,
         "provider": provider_key,
         "controlLevel": "mechanical_once_committed_and_ci_enabled",
+        "scope": "local_configuration",
+        "controlLevelMeaning": "Legacy conditional label; generated configuration does not demonstrate enforcement.",
+        "hostedExecution": "unverified",
+        "serverEnforcement": "unverified",
         "workflowPath": relative,
         "command": selected_command,
         "manifest": {
@@ -3026,11 +2980,8 @@ def _normalize_invariant(raw: dict) -> dict:
 
 
 def _load_invariant_manifest(project: Path) -> tuple[dict, str, Path]:
-    path = _invariant_manifest_path(project)
-    if path.exists():
-        return _read_json_object(path), "project", path
-    return {}, "missing", path
-
+    prepared = _evidence_prepare(project, "invariants")
+    return prepared["contract"], prepared["source"], prepared["path"]
 
 def _collect_invariant_manifest_issues(manifest: dict) -> list[str]:
     issues = []
@@ -3078,14 +3029,11 @@ def _collect_invariant_manifest_issues(manifest: dict) -> list[str]:
 
 
 def _invariant_status_payload(project: Path) -> dict:
-    manifest, source, path = _load_invariant_manifest(project)
-    raw_invariants = manifest.get("invariants", [])
-    invariants = [
-        _normalize_invariant(item)
-        for item in raw_invariants
-        if isinstance(raw_invariants, list)
-    ]
-    issues = _collect_invariant_manifest_issues(manifest)
+    prepared = _evidence_prepare(project, "invariants")
+    manifest = prepared["contract"]
+    source, path = prepared["source"], prepared["path"]
+    invariants = prepared["entries"]
+    issues = prepared["issues"]
     by_status = {status: 0 for status in sorted(_INVARIANT_STATUSES)}
     by_kind = {kind: 0 for kind in sorted(_INVARIANT_KINDS)}
     by_severity = {severity: 0 for severity in sorted(_INVARIANT_SEVERITIES)}
@@ -3103,28 +3051,19 @@ def _invariant_status_payload(project: Path) -> dict:
         if invariant["status"] == "active" and invariant["severity"] == "blocking":
             active_blocking_count += 1
 
-    receipts_dir = _invariant_receipts_dir(project)
-    receipts = []
-    if receipts_dir.is_dir():
-        for receipt_path in sorted(receipts_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
-            receipt = _read_json_object(receipt_path)
-            if receipt:
-                receipts.append({
-                    "path": _project_relative_label(project, receipt_path),
-                    "id": str(receipt.get("id", "")).strip(),
-                    "status": str(receipt.get("status", "")).strip(),
-                    "createdAt": str(receipt.get("createdAt", "")).strip(),
-                    "invariantCount": len(receipt.get("invariants", [])) if isinstance(receipt.get("invariants"), list) else 0,
-                })
+    evidence = _evidence_history(project, "invariants", prepared)
+    receipts = evidence["latestReceipts"]
 
     return {
         "ok": not issues,
+        "manifestValid": not issues,
+        "evidence": evidence,
         "source": source,
         "path": _project_relative_label(project, path),
         "schemaVersion": manifest.get("schemaVersion"),
         "projectType": manifest.get("projectType", ""),
         "domains": manifest.get("domains", []),
-        "invariants": invariants,
+        "invariants": _evidence_public_entries(invariants),
         "summary": {
             "total": len(invariants),
             "activeBlocking": active_blocking_count,
@@ -3177,15 +3116,6 @@ def _select_invariants(manifest: dict,
         selected = [item for item in selected if item["command"]]
 
     return selected, issues
-
-
-def _write_invariant_receipt(project: Path, receipt: dict) -> Path:
-    receipt_dir = _invariant_receipts_dir(project)
-    receipt_dir.mkdir(parents=True, exist_ok=True)
-    receipt_id = str(receipt.get("id", "")).strip() or _utc_now_iso().replace(":", "").replace(".", "")
-    path = receipt_dir / f"{receipt_id}.json"
-    _write_json_atomic(path, receipt)
-    return path
 
 
 def cmd_invariants_init(project: Path,
@@ -3278,26 +3208,20 @@ def cmd_invariants_elicit(project: Path,
     return 0
 
 
-def cmd_invariants_status(project: Path, json_output: bool = False) -> int:
-    """Report invariant manifest health without running commands."""
+def cmd_invariants_status(project: Path, json_output: bool = False, require_current: bool = False) -> int:
+    """Validate configuration; optionally require a complete current pass."""
     payload = _invariant_status_payload(project)
+    assessment = payload["evidence"]["assessment"]
+    passed = payload["ok"] and (not require_current or assessment["currentRequiredPass"])
+    payload["requireCurrent"] = require_current
     if json_output:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0 if payload["ok"] else 1
-
-    if payload["ok"]:
-        summary = payload["summary"]
-        ok(
-            "Invariant manifest is valid "
-            f"({summary['total']} invariant(s), {summary['executable']} executable)"
-        )
-        return 0
-
-    fail("Invariant manifest is not valid")
-    for issue in payload["issues"]:
-        fail(issue)
-    return 1
-
+    else:
+        (ok if payload["ok"] else fail)("Invariant manifest is " + ("valid" if payload["ok"] else "invalid"))
+        info("Evidence: " + assessment["state"] + "; current required pass=" + str(assessment["currentRequiredPass"]).lower())
+        for issue in payload["issues"] + assessment["reasons"]:
+            info(issue)
+    return 0 if passed else 1
 
 def cmd_invariants_list(project: Path, json_output: bool = False) -> int:
     """List declared invariants."""
@@ -3319,25 +3243,12 @@ def cmd_invariants_list(project: Path, json_output: bool = False) -> int:
 
 
 def _latest_invariant_receipt(project: Path) -> dict:
-    receipts_dir = _invariant_receipts_dir(project)
-    if not receipts_dir.is_dir():
-        return {}
-    receipt_paths = sorted(
-        receipts_dir.glob("*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for receipt_path in receipt_paths:
-        receipt = _read_json_object(receipt_path)
-        if receipt:
-            receipt["path"] = _project_relative_label(project, receipt_path)
-            return receipt
-    return {}
-
+    """Return a sanitized, assessed attempt; never fall back to an older pass."""
+    return _invariant_status_payload(project)["evidence"]["latest"] or {}
 
 def _invariant_report_payload(project: Path) -> dict:
     status_payload = _invariant_status_payload(project)
-    latest_receipt = _latest_invariant_receipt(project)
+    latest_receipt = status_payload["evidence"]["latest"] or {}
     latest_runs: dict[str, dict] = {}
     for entry in latest_receipt.get("invariants", []) if isinstance(latest_receipt.get("invariants"), list) else []:
         if not isinstance(entry, dict):
@@ -3347,6 +3258,7 @@ def _invariant_report_payload(project: Path) -> dict:
             continue
         latest_runs[invariant_id] = {
             "receiptId": str(latest_receipt.get("id", "")).strip(),
+            "assessment": latest_receipt.get("assessment"),
             "receiptPath": str(latest_receipt.get("path", "")).strip(),
             "createdAt": str(latest_receipt.get("createdAt", "")).strip(),
             "status": str(entry.get("status", "")).strip(),
@@ -3373,6 +3285,7 @@ def _invariant_report_payload(project: Path) -> dict:
         })
 
     return {
+        "evidence": status_payload["evidence"],
         "ok": bool(status_payload.get("ok")),
         "source": status_payload.get("source"),
         "path": status_payload.get("path"),
@@ -3383,6 +3296,8 @@ def _invariant_report_payload(project: Path) -> dict:
             "id": str(latest_receipt.get("id", "")).strip(),
             "path": str(latest_receipt.get("path", "")).strip(),
             "status": str(latest_receipt.get("status", "")).strip(),
+            "assessment": latest_receipt.get("assessment"),
+            "selection": latest_receipt.get("selection"),
             "createdAt": str(latest_receipt.get("createdAt", "")).strip(),
         } if latest_receipt else None,
     }
@@ -3441,7 +3356,7 @@ def _invariant_ci_status_payload(project: Path) -> dict:
 
     issues = list(read_issues)
     if workflow_paths and not matches:
-        issues.append("CI workflow files exist but none run the invariant gate")
+        issues.append("CI workflow files exist but none contain recognized invariant command patterns")
     if matches and committed is False:
         issues.append("invariant CI workflow exists but is not tracked by git")
 
@@ -3449,7 +3364,11 @@ def _invariant_ci_status_payload(project: Path) -> dict:
         "workflowPath": _project_relative_label(project, default_workflow),
         "workflowExists": default_workflow.exists(),
         "workflowCount": len(workflow_paths),
+        "scope": "local_configuration",
         "runsInvariantGate": bool(matches),
+        "runsInvariantGateMeaning": "Legacy field: recognized command text patterns only; no execution observed.",
+        "hostedExecution": "unverified",
+        "serverEnforcement": "unverified",
         "matchedWorkflows": matches,
         "matchedPatterns": sorted(matched_patterns),
         "gitTracked": committed,
@@ -3468,7 +3387,7 @@ def _invariant_doctor_payload(project: Path) -> dict:
     executable_count = int(summary.get("executable", 0) or 0)
     active_blocking_count = int(summary.get("activeBlocking", 0) or 0)
     ci_payload = _invariant_ci_status_payload(project)
-    latest_receipt = _latest_invariant_receipt(project)
+    latest_receipt = status_payload["evidence"]["latest"] or {}
 
     issues = list(status_payload.get("issues", []))
     recommendations: list[str] = []
@@ -3498,7 +3417,7 @@ def _invariant_doctor_payload(project: Path) -> dict:
     else:
         state = "local_executable"
         control_level = "conditional"
-        recommendations.append("Run `cc invariants wire-ci --write` and commit the workflow to make the gate repo-enforced.")
+        recommendations.append("Prepare and review `cc invariants wire-ci --write`; separately verify hosted execution and required server checks.")
 
     if ci_payload.get("issues"):
         issues.extend(ci_payload["issues"])
@@ -3511,6 +3430,8 @@ def _invariant_doctor_payload(project: Path) -> dict:
             "id": str(latest_receipt.get("id", "")).strip(),
             "path": str(latest_receipt.get("path", "")).strip(),
             "status": str(latest_receipt.get("status", "")).strip(),
+            "assessment": latest_receipt.get("assessment"),
+            "selection": latest_receipt.get("selection"),
             "createdAt": str(latest_receipt.get("createdAt", "")).strip(),
             "invariantCount": len(latest_receipt.get("invariants", []))
             if isinstance(latest_receipt.get("invariants"), list)
@@ -3518,9 +3439,12 @@ def _invariant_doctor_payload(project: Path) -> dict:
         }
 
     return {
+        "evidence": status_payload["evidence"],
         "ok": state in {"local_executable", "ci_wired"},
         "state": state,
         "controlLevel": control_level,
+        "scope": "local_configuration",
+        "stateMeaning": "Legacy state/controlLevel describe manifest and CI text configuration, not observed enforcement.",
         "manifest": {
             "source": status_payload.get("source"),
             "path": status_payload.get("path"),
@@ -3566,6 +3490,8 @@ def cmd_invariants_report(project: Path, json_output: bool = False) -> int:
     else:
         info("Latest receipt: none")
 
+    assessment = payload["evidence"]["assessment"]
+    info(f"Evidence: {assessment['state']}; current required pass={assessment['currentRequiredPass']}")
     for invariant in payload["protectedProperties"]:
         command_state = "executable" if invariant["executable"] else "documented"
         latest_run = invariant.get("latestRun") or {}
@@ -3590,7 +3516,7 @@ def cmd_invariants_doctor(project: Path, json_output: bool = False) -> int:
     print("Invariant doctor")
     printer = ok if payload["ok"] else fail
     printer(f"State: {payload['state']}")
-    info(f"Control level: {payload['controlLevel']}")
+    info(f"Configured control level (legacy label): {payload['controlLevel']}")
     summary = payload.get("summary", {})
     info(
         "Manifest: "
@@ -3600,12 +3526,14 @@ def cmd_invariants_doctor(project: Path, json_output: bool = False) -> int:
     )
     ci_payload = payload.get("ci", {})
     ci_state = "yes" if ci_payload.get("runsInvariantGate") else "no"
-    info(f"CI invariant gate: {ci_state}")
+    info(f"CI command patterns detected: {ci_state}; hosted execution and server enforcement unverified")
     latest = payload.get("latestReceipt")
     if latest:
         info(f"Latest receipt: {latest.get('id')} ({latest.get('status')})")
     else:
         info("Latest receipt: none")
+    assessment = payload["evidence"]["assessment"]
+    info(f"Evidence: {assessment['state']}; current required pass={assessment['currentRequiredPass']}")
     for issue in payload.get("issues", []):
         fail(issue)
     for recommendation in payload.get("recommendations", []):
@@ -3636,12 +3564,12 @@ def cmd_invariants_wire_ci(project: Path,
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if payload["ok"] else 1
 
-    print("Invariant CI wiring")
+    print("Invariant CI wiring (local configuration; hosted execution and server enforcement unverified)")
     if payload["ok"]:
         ok(f"Provider: {payload['provider']}")
         ok(f"Workflow: {payload['workflowPath']}")
         info(f"Command: {payload['command']}")
-        info(f"Control level: {payload['controlLevel']}")
+        info(f"Configured control level (legacy label): {payload['controlLevel']}")
         if payload["written"]:
             ok("Workflow written")
         else:
@@ -3719,120 +3647,12 @@ def cmd_invariants_add(project: Path,
     return 0 if payload["ok"] else 1
 
 
-def cmd_invariants_run(project: Path,
-                       invariant_ids: list[str] | None = None,
-                       domains: list[str] | None = None,
-                       kinds: list[str] | None = None,
-                       all_invariants: bool = False,
-                       json_output: bool = False) -> int:
-    """Run executable invariants and write a local receipt."""
-    invariant_ids = invariant_ids or []
-    domains = domains or []
-    kinds = kinds or []
-    status_payload = _invariant_status_payload(project)
-    if not status_payload["ok"]:
-        if json_output:
-            print(json.dumps({
-                "ok": False,
-                "status": "invalid_manifest",
-                "issues": status_payload["issues"],
-            }, indent=2, ensure_ascii=False))
-        else:
-            fail("Invariant manifest is invalid; run `cc invariants status`.")
-            for issue in status_payload["issues"]:
-                fail(issue)
-        return 1
-
-    manifest, _source, _path = _load_invariant_manifest(project)
-    selected, selection_issues = _select_invariants(
-        manifest,
-        invariant_ids=invariant_ids,
-        domains=domains,
-        kinds=kinds,
-        all_invariants=all_invariants,
-    )
-    if selection_issues or not selected:
-        issues = selection_issues or ["no executable invariants selected"]
-        if json_output:
-            print(json.dumps({"ok": False, "status": "selection_failed", "issues": issues}, indent=2))
-        else:
-            for issue in issues:
-                fail(issue)
-        return 1
-
-    created_at = _utc_now_iso()
-    receipt_id = "invariants_" + created_at.replace(":", "").replace(".", "").replace("Z", "Z")
-    receipt = {
-        "id": receipt_id,
-        "createdAt": created_at,
-        "status": "passed",
-        "project": str(project.resolve()),
-        "tempDir": "",
-        "invariants": [],
-    }
-    run_temp = _make_invariant_run_temp(project, receipt_id)
-    receipt["tempDir"] = run_temp.resolve().as_posix()
-
-    if not json_output:
-        print(f"Running {len(selected)} invariant(s)")
-
-    try:
-        for invariant in selected:
-            command = _expand_verification_command(invariant["command"], project, run_temp)
-            started = time.perf_counter()
-            result_payload = {
-                "id": invariant["id"],
-                "domain": invariant["domain"],
-                "kind": invariant["kind"],
-                "severity": invariant["severity"],
-                "command": command,
-                "status": "passed",
-                "returnCode": 0,
-                "durationMs": 0,
-                "stdoutTail": "",
-                "stderrTail": "",
-            }
-            try:
-                args = _runner_command_args(invariant["command"], project, run_temp)
-                result = subprocess.run(
-                    args,
-                    cwd=str(project),
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-                result_payload["returnCode"] = result.returncode
-                result_payload["stdoutTail"] = (result.stdout or "")[-4000:]
-                result_payload["stderrTail"] = (result.stderr or "")[-4000:]
-                if result.returncode != 0:
-                    result_payload["status"] = "failed"
-                    receipt["status"] = "failed"
-            except Exception as exc:
-                result_payload["status"] = "failed"
-                result_payload["returnCode"] = -1
-                result_payload["stderrTail"] = str(exc)
-                receipt["status"] = "failed"
-            result_payload["durationMs"] = int((time.perf_counter() - started) * 1000)
-            receipt["invariants"].append(result_payload)
-            if not json_output:
-                printer = ok if result_payload["status"] == "passed" else fail
-                printer(f"{invariant['id']} [{invariant['kind']}] {result_payload['status']}")
-    finally:
-        shutil.rmtree(run_temp, ignore_errors=True)
-
-    receipt_path = _write_invariant_receipt(project, receipt)
-    payload = {
-        "ok": receipt["status"] == "passed",
-        "status": receipt["status"],
-        "receiptPath": _project_relative_label(project, receipt_path),
-        "receipt": receipt,
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-    else:
-        info(f"Receipt: {payload['receiptPath']}")
-    return 0 if payload["ok"] else 1
-
+def cmd_invariants_run(project: Path, invariant_ids: list[str] | None = None,
+                       domains: list[str] | None = None, kinds: list[str] | None = None,
+                       all_invariants: bool = False, json_output: bool = False) -> int:
+    """Execute active invariants with bound v2 evidence."""
+    return _evidence_run(project, "invariants", invariant_ids or [], kinds or [],
+                         all_invariants, json_output, domains)
 
 def _promotion_dir(project: Path) -> Path:
     return _control_plane_path(project, PROMOTION_DIRNAME)
@@ -4579,7 +4399,7 @@ def _normalize_gateway_hosts(gateway: dict) -> tuple[str, list[str]]:
 
 
 def _cline_inline_hooks_supported() -> bool:
-    """Return whether native inline hooks are realistically available for Cline."""
+    """Return the platform branch used by CC; this does not inspect Cline."""
     return os.name != "nt"
 
 
@@ -4588,7 +4408,7 @@ def _host_supports_inline_boundary(host_profile: dict) -> bool:
 
 
 def _derive_host_profile(user_host: str) -> dict:
-    """Return the canonical host capability/enforcement profile for a user host."""
+    """Return the shipped CC integration model, not a host capability probe."""
     normalized_host = str(user_host).strip()
     if normalized_host not in _GATEWAY_VALID_USER_HOSTS:
         normalized_host = "other"
@@ -4604,9 +4424,8 @@ def _derive_host_profile(user_host: str) -> dict:
     review_gate = "post_commit_or_manual"
     protection_model = "review_driven"
     summary = (
-        "Instruction-first host without native inline hooks. "
-        "Keep the host-native context in sync and rely on the repo boundary gate, "
-        "review gate, and verification gate. There is no Claude-style pre-write parity."
+        "CC uses an instruction-first integration without a CC native inline hook route. "
+        "Keep context in sync and configure the repo boundary, review and verification gates."
     )
 
     if normalized_host == "claude_code":
@@ -4616,8 +4435,8 @@ def _derive_host_profile(user_host: str) -> dict:
         review_gate = "native_hooks"
         protection_model = "inline_first"
         summary = (
-            "Native inline hook host. The inline gate can block before writes, "
-            "with repo-side and verification gates as backstops."
+            "CC models native hooks for selected tool routes. Configure and validate "
+            "the matching host event and hook before relying on a pre-write gate."
         )
     elif normalized_host == "cline":
         if _cline_inline_hooks_supported():
@@ -4626,14 +4445,14 @@ def _derive_host_profile(user_host: str) -> dict:
             review_gate = "native_hooks"
             protection_model = "inline_first"
             summary = (
-                "Native inline hook host on this platform. Use .clinerules plus "
-                "the shared hook set for true pre-write enforcement."
+                "CC models a native-hook route for Cline on this platform. "
+                "This branch does not establish adapter compatibility or hook delivery."
             )
         else:
             summary = (
-                "Cline hooks are not available on this platform. Treat Cline as "
-                "repo-side/review-driven and rely on the repo boundary gate, "
-                "review gate, and verification gate."
+                "CC selects its repo-side Cline fallback on Windows. "
+                "This is CC integration policy, not a probe of the installed host. "
+                "Configure the repo boundary, review and verification gates."
             )
             protection_model = "repo_side"
     elif normalized_host == "codex_cli":
@@ -4641,26 +4460,27 @@ def _derive_host_profile(user_host: str) -> dict:
         permission_gate = "sandbox_approvals"
         protection_model = "repo_side"
         summary = (
-            "Sandbox/approval host without inline file hooks. Choose this whenever "
-            "Codex is the actual AI host, even inside VS Code or another editor shell. "
-            "Use AGENTS.md plus the repo boundary gate, review gate, and verification "
-            "gate as the real protection path. There is no inline write-hook parity."
+            "CC uses Codex sandbox/approval integration and a repo-side boundary route; "
+            "CC does not implement a Codex native inline hook adapter. Choose this when "
+            "Codex is the AI host, including inside an editor shell. Use AGENTS.md and "
+            "configure the repo boundary, review and verification gates."
         )
     elif normalized_host in {"gemini_cli", "cursor", "windsurf"}:
         summary = (
-            "Instruction-first host without native inline hooks. Keep the host "
-            "context file aligned and rely on the repo boundary gate, review gate, "
-            "and verification gate. There is no inline write-hook parity."
+            "CC provides a context export and repo-side workflow for this host, "
+            "without a CC native inline hook adapter. Keep context aligned and "
+            "configure the repo boundary, review and verification gates."
         )
     elif normalized_host in {"vscode", "other"}:
         summary = (
             "Manual or generic editor workflow without a host-native CC context export. "
             "Use generated launcher instructions plus the repo boundary gate, review gate, "
-            "and verification gate. There is no inline write-hook parity."
+            "and verification gate. CC does not implement a native inline hook route."
         )
 
     return {
         "schemaVersion": HOST_PROFILE_SCHEMA_VERSION,
+        "profileScope": "cc_integration_model",
         "userHost": normalized_host,
         "label": host_label,
         "capabilityClass": capability_class,
@@ -4672,8 +4492,54 @@ def _derive_host_profile(user_host: str) -> dict:
         "reviewGate": review_gate,
         "verificationGate": "criteria_and_invariants",
         "protectionModel": protection_model,
-        "summary": summary,
+        "summary": summary + " Named-host integration remains unverified by this profile.",
     }
+
+
+def _host_coverage_payload(host_profile: dict, gateway: dict | None = None) -> dict:
+    """Describe evidence scope without probing a host or trusting stored claims."""
+    if gateway is None:
+        configuration = "not_inspected"
+    else:
+        declared = gateway.get("userHost")
+        configuration = (
+            "declared_unverified"
+            if isinstance(declared, str) and declared.strip() in _GATEWAY_VALID_USER_HOSTS
+            else "not_declared"
+        )
+    return {
+        "platformCapability": {
+            "status": "documented_separately",
+            "reference": "docs/cross-tool-guide.md#14-dated-platform-documentation",
+        },
+        "ccIntegration": {
+            "scope": "cc_integration_model",
+            "inlineBoundary": (
+                "modeled_unverified"
+                if _host_supports_inline_boundary(host_profile)
+                else "not_implemented"
+            ),
+            "contextFile": host_profile.get("contextFile"),
+        },
+        "projectConfiguration": {
+            "status": configuration,
+            "scope": (
+                "Host declaration only; generated assets, enabled hooks and rule loading "
+                "are not established by this report. Doctor asset checks are configuration checks."
+            ),
+        },
+        "testedIntegration": {"status": "unverified", "artifacts": []},
+    }
+
+
+def _format_host_coverage_lines(coverage: dict) -> list[str]:
+    return [
+        "Platform capability: documented separately in docs/cross-tool-guide.md.",
+        "CC integration model: inline boundary = " + coverage["ccIntegration"]["inlineBoundary"],
+        "Project configuration: " + coverage["projectConfiguration"]["status"]
+        + " (host declaration only; asset presence does not prove loading).",
+        "Named-host integration: unverified; no host/version/OS/event/tool-path result is attested.",
+    ]
 
 
 def _derive_host_gate_contract(host_profile: dict) -> list[dict]:
@@ -4689,9 +4555,9 @@ def _derive_host_gate_contract(host_profile: dict) -> list[dict]:
             "location": "native host hooks" if inline_supported else "not_available",
             "primary": inline_supported,
             "summary": (
-                "Can block a write before it lands."
+                "CC models blocking on selected routes when the hook is configured, loaded and invoked; delivery is unverified."
                 if inline_supported
-                else "This host does not expose a true pre-write boundary hook."
+                else "CC does not implement a native pre-write hook route for this integration."
             ),
         },
         {
@@ -4719,7 +4585,7 @@ def _derive_host_gate_contract(host_profile: dict) -> list[dict]:
             ),
             "primary": False,
             "summary": (
-                "Native review hooks can stop or review in-host."
+                "CC models native review hooks; configuration and host delivery require separate validation."
                 if host_profile.get("reviewGate") == "native_hooks"
                 else "Review can be mechanically triggered repo-side, but findings depend on the configured review path/backend."
             ),
@@ -4737,6 +4603,8 @@ def _derive_host_gate_contract(host_profile: dict) -> list[dict]:
             ),
         },
     ]
+    for gate in contract:
+        gate["scope"] = "cc_integration_model"
     return contract
 
 
@@ -4755,6 +4623,10 @@ def _host_profile_matches(gateway_profile: dict, expected_profile: dict) -> bool
     if not isinstance(gateway_profile, dict):
         return False
     for key, expected_value in expected_profile.items():
+        # Presentation changes must not force configuration regeneration. Consumers
+        # derive current descriptions instead of trusting persisted coverage claims.
+        if key in {"summary", "profileScope"}:
+            continue
         if gateway_profile.get(key) != expected_value:
             return False
     return True
@@ -5067,7 +4939,9 @@ def _compact_utc_stamp() -> str:
 def _build_consult_artifact_id(role_id: str, kind: str) -> str:
     normalized_role = _normalize_role_key(role_id) or "specialist"
     normalized_kind = _normalize_role_key(kind) or "record"
-    return f"{normalized_role}_{normalized_kind}_{_compact_utc_stamp()}"
+    # Equal clock readings must not replace independent consultation records.
+    # The suffix supplies identity, not chronology; keep explicit record links.
+    return f"{normalized_role}_{normalized_kind}_{_compact_utc_stamp()}_{secrets.token_hex(16)}"
 
 
 def _consult_packet_path(project: Path, packet_id: str) -> Path:
@@ -7607,6 +7481,7 @@ def _build_host_instruction_lines(
     lines = [
         f"Working host: {profile['label']}",
         "ControlCoding policy: one project/session has one Primary Surface; all other surfaces are Observer-only.",
+        *_format_host_coverage_lines(_host_coverage_payload(_derive_host_profile(user_host))),
     ]
     if launcher_mode == "run":
         lines.append(
@@ -8179,10 +8054,14 @@ def cmd_surface_run(
 
 
 def _resolve_hook_commands(settings: dict, hooks_dir: Path) -> dict:
-    """Replace relative hook paths with absolute paths in settings.
+    """Resolve generated shell-form hook script paths to absolute paths.
 
     Prevents deadlock when shell cwd differs from project root:
-    hooks must be findable regardless of working directory.
+    hooks must be findable regardless of working directory. Generated commands
+    use Claude Code's shell form, so quote only the script operand with POSIX
+    shell quoting. The recognized grammar is ``python hooks/<script>`` with an
+    optional opaque shell-argument tail; custom and absolute commands stay
+    unchanged.
     """
     hooks_abs = str(hooks_dir.resolve()).replace("\\", "/")
     for _event, entries in settings.get("hooks", {}).items():
@@ -8190,8 +8069,12 @@ def _resolve_hook_commands(settings: dict, hooks_dir: Path) -> dict:
             for hook in entry.get("hooks", []):
                 cmd = hook.get("command", "")
                 if cmd.startswith("python hooks/"):
-                    script = cmd[len("python hooks/"):]
-                    hook["command"] = f"python {hooks_abs}/{script}"
+                    suffix = cmd[len("python hooks/"):]
+                    match = re.fullmatch(r"(?P<script>[^\s]+)(?P<tail>\s.*)?", suffix)
+                    if match:
+                        script_path = f"{hooks_abs}/{match.group('script')}"
+                        tail = match.group("tail") or ""
+                        hook["command"] = f"python {shlex.quote(script_path)}{tail}"
     return settings
 
 
@@ -8263,228 +8146,339 @@ def _build_repo_postcommit_hook_script(hooks_dir: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def cmd_init(project: Path, central_hooks: bool = False, quiet: bool = False):
-    """Initialize ControlCoding in a project."""
+def _init_snapshot(path: Path, *, directory: bool = False):
+    """Inspect lexical paths without accepting symlinks, reparse or special files."""
+    from cc_setup import _pack_check_parents, _pack_safe_kind
+    _pack_check_parents(path)
+    entry = _pack_safe_kind(path, expected="dir" if directory else "file")
+    if entry is None:
+        return None
+    identity = (entry.st_dev, entry.st_ino, entry.st_mode)
+    if directory:
+        return identity
+    data = path.read_bytes()
+    after = _pack_safe_kind(path, expected="file")
+    signature = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    if after is None or signature(entry) != signature(after):
+        raise OSError(f"init input changed while reading: {path}")
+    return (*signature(after), data)
+
+
+def _init_observe(path: Path, observations: dict, *, directory: bool = False):
+    for parent in reversed(path.parents):
+        snapshot = _init_snapshot(parent, directory=True)
+        item = (True, snapshot)
+        if parent in observations and observations[parent] != item:
+            raise OSError(f"init parent changed during preflight: {parent}")
+        observations[parent] = item
+    snapshot = _init_snapshot(path, directory=directory)
+    item = (directory, snapshot)
+    if path in observations and observations[path] != item:
+        raise OSError(f"init path changed during preflight: {path}")
+    observations[path] = item
+    return snapshot
+
+
+def _init_recheck(observations: dict):
+    for path, (directory, snapshot) in observations.items():
+        if _init_snapshot(path, directory=directory) != snapshot:
+            raise OSError(f"init path changed after preflight: {path}; inspect and preview again")
+
+
+def _plan_init(project: Path, central_hooks: bool = False):
+    """Build detached init outputs, retaining every consumed input for revalidation."""
+    from copy import deepcopy
+    observations, files, directories = {}, {}, {}
+    if _init_observe(project, observations, directory=True) is None:
+        raise OSError(f"init requires an existing ordinary project directory: {project}")
+
+    def directory(path):
+        snapshot = _init_observe(path, observations, directory=True)
+        directories[path] = "keep" if snapshot is not None else "create"
+
+    def source(path):
+        snapshot = _init_observe(path, observations)
+        if snapshot is None:
+            raise OSError(f"required init source missing: {path}")
+        return snapshot[-1]
+
+    def output(path, data, *, retain=False, reason="identical bytes"):
+        snapshot = _init_observe(path, observations)
+        if snapshot is not None and not retain and snapshot[-1] != data:
+            raise OSError(f"init conflict at {path}: existing bytes differ; reconcile explicitly before init")
+        files[path] = {"data": data, "action": "keep" if snapshot is not None else "create",
+                       "reason": reason if snapshot is not None else "absent destination"}
+
+    def json_input(name):
+        target = _control_plane_path(project, name)
+        legacy = _legacy_control_plane_path(project, name)
+        canonical = _init_observe(target, observations)
+        legacy_snapshot = _init_observe(legacy, observations)
+        selected = canonical if canonical is not None else legacy_snapshot
+        read_path = target if canonical is not None else legacy
+        try:
+            value = json.loads(selected[-1].decode("utf-8")) if selected is not None else {}
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError(f"init requires valid UTF-8 JSON: {read_path}") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"init requires a JSON object: {read_path}")
+        return target, canonical, value
+
+    canonical = _canonical_context_path(project)
+    legacy = _legacy_context_path(project)
+    context_snapshot = _init_observe(canonical, observations)
+    legacy_snapshot = _init_observe(legacy, observations)
+    if context_snapshot is not None:
+        output(canonical, context_snapshot[-1], retain=True, reason="existing context retained, contents not validated")
+    if legacy_snapshot is not None:
+        output(legacy, legacy_snapshot[-1], retain=True, reason="legacy context retained, contents not validated")
+    if context_snapshot is None and legacy_snapshot is None:
+        template = source(TEMPLATES_DIR / "CLAUDE.md.template").decode("utf-8")
+        output(canonical, template.replace(LEGACY_CONTEXT_FILENAME, CANONICAL_CONTEXT_FILENAME).encode("utf-8"))
+
+    documents = {
+        "STATUS.md": (
+            '# Project Status\n'
+            '> Updated: (date) | Session: 0\n'
+            '\n'
+            '## Current State\n'
+            'Project initialized with ControlCoding.\n'
+            '\n'
+            '## Next Steps\n'
+            '- Configure CONTROLCODING.md as the canonical project context\n'
+            '- Sync the host-native context files you actually use\n'
+            '- Define module boundaries (stable/shared/features/workspace)\n'
+            '- Add domain invariants\n'
+            '\n'
+            '## Blockers\n'
+            'None\n'
+        ),
+        "ROADMAP.md": (
+            '# Project Roadmap\n'
+            '> Updated: (date)\n'
+            '\n'
+            '## Current State\n'
+            '\n'
+            'Project initialized with ControlCoding.\n'
+            '\n'
+            '## Active Items\n'
+            '\n'
+            '- [ ] Review and refine CONTROLCODING.md\n'
+            '- [ ] Define real module boundaries\n'
+            '- [ ] Build the first useful vertical slice\n'
+            '- [ ] Add invariant-oriented verification\n'
+        ),
+        "BUGS.md": (
+            '# Known Bugs\n'
+            '> Updated: (date)\n'
+            '\n'
+            'No known bugs recorded yet.\n'
+        ),
+    }
+    for name, text in documents.items():
+        output(project / name, text.encode("utf-8"), retain=True, reason="existing document retained, contents not validated")
+    directory(project / "devlog")
+    hooks_dest = Path(os.path.abspath(_central_hooks_dir())) if central_hooks else project / "hooks"
+    directory(hooks_dest)
+    for name in INIT_HOOKS:
+        output(hooks_dest / name, source(HOOKS_DIR / name))
+    directory(project / "tools")
+    fitness_dest = project / "tools" / "fitness_check.py"
+    output(fitness_dest, source(SCRIPT_DIR / "fitness_check.py"))
+
+    git_dir = project / ".git"
+    _init_observe(git_dir, observations, directory=True)
+    git_hooks = git_dir / "hooks"
+    if _init_observe(git_hooks, observations, directory=True) is not None:
+        for name, text in [("pre-commit", _build_repo_precommit_hook_script(hooks_dest, fitness_dest)),
+                           ("post-commit", _build_repo_postcommit_hook_script(hooks_dest))]:
+            output(git_hooks / name, text.encode("utf-8"), retain=True,
+                   reason="existing Git hook retained; generated CC gate not installed here or verified")
+
+    directory(_control_plane_dir(project))
+    config_path, config_snapshot, config = json_input("cc_config.json")
+    mode = "central" if central_hooks else "local"
+    for key, default, allowed in [("hooks_location", "local", {"local", "central"}),
+                                  ("documentation_mode", "managed", {"managed", "project_managed"}),
+                                  ("cc_artifact_mode", "local_only", {"local_only", "shared_repo"})]:
+        value = config.get(key, default)
+        if not isinstance(value, str) or value not in allowed:
+            raise ValueError(f"init config conflict at {config_path}: invalid {key}")
+    config_present = config_snapshot is not None or observations[_legacy_control_plane_path(project, "cc_config.json")][1] is not None
+    if config_present and config.get("hooks_location", "local") != mode:
+        raise ValueError(f"init config conflict at {config_path}: hooks_location must be {mode}; reconcile explicitly")
+    protected_zones = config.get("protected_zones", [])
+    if protected_zones is not None and not isinstance(protected_zones, (list, dict)):
+        raise ValueError(f"init config conflict at {config_path}: protected_zones must be a list or deny/warn object")
+    if isinstance(protected_zones, dict):
+        for level in ("deny", "warn"):
+            entries = protected_zones.get(level)
+            if entries is not None and not isinstance(entries, list):
+                raise ValueError(f"init config conflict at {config_path}: protected_zones.{level} must be a list")
+    if config_snapshot is None:
+        config = deepcopy(config)
+        config.setdefault("documentation_mode", "managed")
+        config.setdefault("cc_artifact_mode", "local_only")
+        config.setdefault("hooks_location", mode)
+        config.setdefault("protected_zones", [
+            {"path": "src/core/", "description": "Core modules - stable zone (example)", "level": "deny"},
+        ])
+    output(config_path, (json.dumps(config, indent=2) + "\n").encode("utf-8"),
+           retain=True, reason="compatible config retained, including custom fields")
+
+    ignore = project / ".gitignore"
+    block = _build_gitignore_block(central_hooks=central_hooks,
+                                  documentation_mode=config.get("documentation_mode", "managed"),
+                                  cc_artifact_mode=config.get("cc_artifact_mode", "local_only"))
+    ignore_snapshot = _init_observe(ignore, observations)
+    if ignore_snapshot is not None:
+        lines = ignore_snapshot[-1].decode("utf-8").splitlines()
+        required = block.splitlines()
+        if not any(lines[i:i + len(required)] == required for i in range(len(lines))):
+            raise ValueError(f"init conflict at {ignore}: complete required block missing; reconcile explicitly before init")
+    output(ignore, block.encode("utf-8"), retain=True, reason="complete required ignore block retained")
+
+    settings_path, settings_snapshot, settings = json_input("settings.json")
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError(f"init settings conflict at {settings_path}: hooks must be an object")
+    for entries in hooks.values():
+        if not isinstance(entries, list):
+            raise ValueError(f"init settings conflict at {settings_path}: hook events must contain lists")
+        for entry in entries:
+            if (not isinstance(entry, dict) or not isinstance(entry.get("matcher", ""), str)
+                    or not isinstance(entry.get("hooks", []), list)):
+                raise ValueError(f"init settings conflict at {settings_path}: invalid hook entry")
+            for hook in entry.get("hooks", []):
+                if not isinstance(hook, dict) or not isinstance(hook.get("command", ""), str):
+                    raise ValueError(f"init settings conflict at {settings_path}: invalid hook command")
+    if "mcpServers" in settings and not isinstance(settings["mcpServers"], dict):
+        raise ValueError(f"init settings conflict at {settings_path}: mcpServers must be an object")
+    # Resolve detached inputs consistently; retain settings for conflict comparison.
+    merged = _resolve_hook_commands(deepcopy(settings), hooks_dest)
+    base = _resolve_hook_commands(deepcopy(BASE_SETTINGS), hooks_dest)
+    merged["hooks"] = merge_hooks(merged.get("hooks", {}), base["hooks"])
+    if settings_snapshot is not None and merged != settings:
+        raise ValueError(f"init conflict at {settings_path}: hook configuration needs changes; reconcile explicitly before init")
+    output(settings_path, (json.dumps(merged, indent=2) + "\n").encode("utf-8"),
+           retain=True, reason="semantically compatible settings retained")
+    _init_recheck(observations)
+    return {"observations": observations, "directories": directories, "files": files}
+
+
+def _init_publish(path: Path, data: bytes, observations: dict, created: list):
+    """Publish exclusively; never replace a destination or clean up a foreign stage."""
+    import tempfile
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.init-", suffix=".tmp")
+    stage = Path(name)
+    identity = os.fstat(descriptor)
+    owned = (identity.st_dev, identity.st_ino)
+    try:
+        # POSIX: retain the inode until cleanup so unlink/recreate cannot reuse
+        # its identity. Windows CRT handles must close before unlink/publication.
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(data)
+            stream.flush()
+        if os.name == "nt":
+            os.close(descriptor)
+            descriptor = -1
+        snapshot = _init_snapshot(stage)
+        if snapshot is None or snapshot[:2] != owned or snapshot[-1] != data:
+            raise OSError(f"init stage changed: {stage}")
+        _init_recheck(observations)
+        os.link(stage, path)
+        created.append(path)
+        published = _init_snapshot(path)
+        if published is None or published[:2] != owned or published[-1] != data:
+            raise OSError(f"init publication changed: {path}")
+        observations[path] = (False, published)
+    finally:
+        try:
+            _init_cleanup_stage(stage, path, data, owned, observations, created)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+
+def _init_cleanup_stage(stage, path, data, owned, observations, created):
+    """Refuse observed replacement or modification; never delete foreign bytes."""
+    # Revalidate directory identities before accessing the lexical stage name.
+    for parent in stage.parents:
+        expected = observations.get(parent)
+        if expected is not None and _init_snapshot(parent, directory=True) != expected[1]:
+            raise OSError(f"init stage cleanup refused: parent changed; inspect {stage}")
+    from cc_setup import _pack_safe_kind
+    entry = _pack_safe_kind(stage, expected="file")
+    if entry is not None:
+        if (entry.st_dev, entry.st_ino) != owned:
+            raise OSError(f"init stage cleanup refused: foreign replacement retained at {stage}")
+        snapshot = _init_snapshot(stage)
+        if snapshot is None or snapshot[:2] != owned or snapshot[-1] != data:
+            raise OSError(f"init stage cleanup refused: changed stage retained at {stage}")
+        stage.unlink()
+    # Unlinking the other hard link can change the published inode's ctime.
+    if path in created:
+        current = _init_snapshot(path)
+        if current is None or current[:2] != owned or current[-1] != data:
+            raise OSError(f"init output changed during cleanup: {path}")
+        observations[path] = (False, current)
+
+
+def _apply_init(plan: dict, created: list):
+    observations = dict(plan["observations"])
+    _init_recheck(observations)
+    required = set(plan["directories"])
+    for path in [*plan["directories"], *plan["files"]]:
+        required.update(path.parents)
+    for path in sorted(required, key=lambda p: (len(p.parts), str(p))):
+        directory, snapshot = observations[path]
+        if directory and snapshot is None:
+            _init_recheck(observations)
+            path.mkdir()
+            created.append(path)
+            observations[path] = (True, _init_snapshot(path, directory=True))
+    for path, item in plan["files"].items():
+        _init_recheck(observations)
+        if item["action"] == "create":
+            _init_publish(path, item["data"], observations, created)
+    _init_recheck(observations)
+
+
+def cmd_init(project: Path, central_hooks: bool = False, quiet: bool = False, *, preview_only: bool = False):
+    """Preflight all minimal-init outputs and preserve existing files conservatively."""
+    project = Path(os.path.abspath(project))
     if not quiet:
-        print(f"\nInitializing ControlCoding in: {project}\n")
-
-    # 1. Canonical context source
-    canonical_context = _canonical_context_path(project)
-    legacy_context = _legacy_context_path(project)
-    if canonical_context.exists():
-        warn(f"{CANONICAL_CONTEXT_FILENAME} already exists, skipping canonical context creation")
-        if legacy_context.exists():
-            info("Legacy CLAUDE.md already exists; keeping it as an optional compatibility file")
-    elif legacy_context.exists():
-        warn(
-            "Legacy CLAUDE.md already exists, leaving it as the current context source. "
-            f"Migrate to {CANONICAL_CONTEXT_FILENAME} later if you want a host-neutral source of truth."
-        )
-    else:
-        template = TEMPLATES_DIR / "CLAUDE.md.template"
-        if not template.exists():
-            fail(f"Template not found: {template}")
-            return 1
-        template_text = template.read_text(encoding="utf-8")
-        canonical_text = template_text.replace(LEGACY_CONTEXT_FILENAME, CANONICAL_CONTEXT_FILENAME)
-        canonical_context.write_text(canonical_text, encoding="utf-8")
-        ok(f"Created {CANONICAL_CONTEXT_FILENAME} from template")
-
-    # 2. STATUS.md
-    status_md = project / "STATUS.md"
-    if status_md.exists():
-        warn("STATUS.md already exists, skipping")
-    else:
-        status_md.write_text(
-            "# Project Status\n"
-            "> Updated: (date) | Session: 0\n\n"
-            "## Current State\n"
-            "Project initialized with ControlCoding.\n\n"
-            "## Next Steps\n"
-            "- Configure CONTROLCODING.md as the canonical project context\n"
-            "- Sync the host-native context files you actually use\n"
-            "- Define module boundaries (stable/shared/features/workspace)\n"
-            "- Add domain invariants\n\n"
-            "## Blockers\n"
-            "None\n",
-            encoding="utf-8",
-        )
-        ok("Created STATUS.md")
-
-    # 3. devlog/
-    devlog = project / "devlog"
-    devlog.mkdir(exist_ok=True)
-    ok("Created devlog/")
-
-    # 3b. ROADMAP.md
-    roadmap_md = project / "ROADMAP.md"
-    if roadmap_md.exists():
-        warn("ROADMAP.md already exists, skipping")
-    else:
-        roadmap_md.write_text(
-            "# Project Roadmap\n"
-            "> Updated: (date)\n\n"
-            "## Current State\n\n"
-            "Project initialized with ControlCoding.\n\n"
-            "## Active Items\n\n"
-            "- [ ] Review and refine CONTROLCODING.md\n"
-            "- [ ] Define real module boundaries\n"
-            "- [ ] Build the first useful vertical slice\n"
-            "- [ ] Add invariant-oriented verification\n",
-            encoding="utf-8",
-        )
-        ok("Created ROADMAP.md")
-
-    # 3c. BUGS.md
-    bugs_md = project / "BUGS.md"
-    if bugs_md.exists():
-        warn("BUGS.md already exists, skipping")
-    else:
-        bugs_md.write_text(
-            "# Known Bugs\n"
-            "> Updated: (date)\n\n"
-            "No known bugs recorded yet.\n",
-            encoding="utf-8",
-        )
-        ok("Created BUGS.md")
-
-    # 4. hooks/
-    if central_hooks:
-        hooks_dest = _central_hooks_dir()
-        hooks_dest.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for hook_file in INIT_HOOKS:
-            src = HOOKS_DIR / hook_file
-            if not src.exists():
-                warn(f"Hook not found: {hook_file}")
-                continue
-            dest = hooks_dest / hook_file
-            if dest.exists():
-                # Update if source is newer
-                if src.stat().st_mtime > dest.stat().st_mtime:
-                    shutil.copy2(src, dest)
-                    copied += 1
-            else:
-                shutil.copy2(src, dest)
-                copied += 1
-            # Validate copied hook is syntactically valid Python
-            if hook_file.endswith(".py"):
-                try:
-                    import ast
-                    ast.parse(dest.read_text(encoding="utf-8"))
-                except SyntaxError as e:
-                    warn(f"{hook_file} has syntax error: {e}")
-        ok(f"Central hooks at {hooks_dest} ({copied} updated)")
-    else:
-        hooks_dest = project / "hooks"
-        hooks_dest.mkdir(exist_ok=True)
-        for hook_file in INIT_HOOKS:
-            src = HOOKS_DIR / hook_file
-            if not src.exists():
-                warn(f"Hook not found: {hook_file}")
-                continue
-            dest = hooks_dest / hook_file
-            if dest.exists():
-                warn(f"hooks/{hook_file} already exists, skipping")
-            else:
-                shutil.copy2(src, dest)
-                # Validate copied hook is syntactically valid Python
-                try:
-                    import ast
-                    ast.parse(dest.read_text(encoding="utf-8"))
-                except SyntaxError as e:
-                    warn(f"hooks/{hook_file} has syntax error: {e}")
-        ok(f"Copied {len(INIT_HOOKS)} hook scripts to hooks/")
-
-    # 5. Fitness check tool
-    tools_dir = project / "tools"
-    tools_dir.mkdir(exist_ok=True)
-    fitness_src = SCRIPT_DIR / "fitness_check.py"
-    fitness_dest = tools_dir / "fitness_check.py"
-    if fitness_dest.exists():
-        warn("tools/fitness_check.py already exists, skipping")
-    elif fitness_src.exists():
-        shutil.copy2(fitness_src, fitness_dest)
-        ok("Copied fitness_check.py to tools/")
-    else:
-        warn("fitness_check.py not found in scripts/ (skipping)")
-
-    # 6. Git hook baseline for repo-side enforcement
-    git_hooks_dir = project / ".git" / "hooks"
-    if git_hooks_dir.is_dir():
-        precommit_dest = git_hooks_dir / "pre-commit"
-        if precommit_dest.exists():
-            warn(".git/hooks/pre-commit already exists, skipping")
-        else:
-            precommit_dest.write_text(
-                _build_repo_precommit_hook_script(hooks_dest, fitness_dest if fitness_dest.exists() else None),
-                encoding="utf-8",
-            )
-            ok("Installed git pre-commit hook (repo boundary gate + fitness baseline)")
-
-        postcommit_dest = git_hooks_dir / "post-commit"
-        if postcommit_dest.exists():
-            warn(".git/hooks/post-commit already exists, skipping")
-        else:
-            postcommit_dest.write_text(
-                _build_repo_postcommit_hook_script(hooks_dest),
-                encoding="utf-8",
-            )
-            ok("Installed git post-commit hook (CodeWarden review gate baseline)")
-    else:
-        info("Not a git repository, skipping repo-side git hooks")
-
-    # 7. .gitignore block for CC artifacts
-    if _ensure_gitignore(project, central_hooks=central_hooks):
-        ok("Added ControlCoding block to .gitignore")
-    else:
-        info(".gitignore already has ControlCoding block")
-
-    # 8. .controlcoding/cc_config.json (shared zone configuration)  [was 7]
-    cc_config = _control_plane_path(project, "cc_config.json")
-    if cc_config.exists():
-        warn(f"{_control_plane_display_path('cc_config.json')} already exists, skipping")
-    else:
-        cc_config.parent.mkdir(parents=True, exist_ok=True)
-        cc_config.write_text(json.dumps({
-            "documentation_mode": "managed",
-            "cc_artifact_mode": "local_only",
-            "hooks_location": "local",
-            "protected_zones": [
-                {"path": "src/core/", "description": "Core modules - stable zone (example)", "level": "deny"},
-            ]
-        }, indent=2), encoding="utf-8")
-        ok(f"Created {_control_plane_display_path('cc_config.json')} (edit to define your protected zones)")
-
-    # 8b. Save hooks_location preference
-    if central_hooks:
-        _save_hooks_location(project, "central")
-        ok("Saved hooks_location=central in cc_config.json")
-
-    # 9. .controlcoding/settings.json  [was 8]
-    settings = load_settings(project)
-    if "hooks" in settings:
-        warn(f"{_control_plane_display_path('settings.json')} already has hooks, merging carefully")
-        settings["hooks"] = merge_hooks(settings["hooks"], BASE_SETTINGS["hooks"])
-    else:
-        settings["hooks"] = BASE_SETTINGS["hooks"]
-    settings = _resolve_hook_commands(settings, hooks_dest)
-    save_settings(project, settings)
-    ok(f"Configured {_control_plane_display_path('settings.json')} with hooks (absolute paths)")
-
+        print(f"\n{'Previewing' if preview_only else 'Initializing'} ControlCoding in: {project}\n")
+    try:
+        plan = _plan_init(project, central_hooks)
+    except (OSError, ValueError, UnicodeError) as exc:
+        fail(f"Init preflight conflict (no init writes): {exc}")
+        return 1
+    for path, action in plan["directories"].items():
+        info(f"{action} directory: {path}")
+    for path, item in plan["files"].items():
+        info(f"{item['action']}: {path} ({item['reason']})")
+    if preview_only:
+        return 0
+    created = []
+    try:
+        _apply_init(plan, created)
+    except (OSError, ValueError) as exc:
+        fail(f"Partial initialization: {exc}. No rollback was performed; inspect before retrying.")
+        for path in created:
+            info(f"Published/created earlier (inspect current state): {path}")
+        if not created:
+            info("No completed output creation was recorded.")
+        return 1
     if not quiet:
-        print(f"\n{green('Done!')} ControlCoding methodology baseline initialized at L1 (Documented).")
-        print("\nNext steps:")
-        print(f"  1. Edit {CANONICAL_CONTEXT_FILENAME} with your project's architecture rules")
-        print("  2. Sync the host-native context files you actually use")
-        print("  3. Define module boundaries in the [BOUNDARIES] section")
-        print("  4. Run: python cc.py doctor --project-root", str(project))
-        print("  5. Optional: python cc.py install debug-tools (adds L3 consultation)")
+        ok("Minimal initialization complete. Retained files are not an enforcement attestation.")
+        info(f"Review {CANONICAL_CONTEXT_FILENAME}, module boundaries and host configuration; then run doctor.")
     return 0
 
 
-def cmd_install(project: Path, pack: str):
-    """Install a feature pack."""
+def cmd_install(project: Path, pack: str, *, preview_only: bool = False):
+    """Plan every selected pack before applying any of its side effects."""
+    project = Path(os.path.abspath(project))
     if pack == "all":
         packs = ALL_PACKS
     elif pack in ALL_PACKS:
@@ -8494,56 +8488,31 @@ def cmd_install(project: Path, pack: str):
         print(f"  Available packs: {', '.join(ALL_PACKS)}, all")
         return 1
 
-    print(f"\nInstalling pack(s): {', '.join(packs)}")
+    print(f"\n{'Previewing' if preview_only else 'Installing'} pack(s): {', '.join(packs)}")
     print(f"Project: {project}\n")
-
-    settings = load_settings(project)
-
-    for p in packs:
-        print(f"--- {p} ---")
-        pack_files = PACK_FILES.get(p, {})
-        missing_sources = [src for files in pack_files.values() for src in files if not src.is_file()]
-        if missing_sources:
-            fail(f"Pack preflight failed: source is missing or not a file: {missing_sources[0]}")
-            return 1
-        if p == "multi-agent" and not HELPER_DIR.is_dir():
-            fail(f"Pack preflight failed: helper source is missing or not a directory: {HELPER_DIR}")
-            return 1
-
-        try:
-            from cc_setup import _install_pack_files_atomic
-            _install_pack_files_atomic(project, pack_files, warn_callback=warn, ok_callback=ok)
-
-            if p == "multi-agent":
-                bridge_dir = project / ".bridge"
-                bridge_dir.mkdir(exist_ok=True)
-                ok("Created .bridge/ directory")
-
-                helper_dest = project.parent / (project.name + "-helper")
-                if helper_dest.exists():
-                    warn(f"Helper directory already exists: {helper_dest.name}")
-                else:
-                    shutil.copytree(HELPER_DIR, helper_dest)
-                    ok(f"Created helper session template at {helper_dest.name}/")
-        except OSError as exc:
-            fail(f"Failed to install pack '{p}': {exc}")
-            return 1
-
-        if p in MCP_CONFIGS:
-            if "mcpServers" not in settings:
-                settings["mcpServers"] = {}
-            settings["mcpServers"] = merge_mcp_servers(settings["mcpServers"], MCP_CONFIGS[p])
-
-        if p == "dashboard":
-            print("\n  Run dashboard with: python tools/cc_dashboard.py --project-root .")
-
-        print()
-
     try:
-        save_settings(project, settings)
-    except OSError as exc:
-        fail(f"Failed to save settings: {exc}")
+        from cc_setup import _plan_pack_install, _apply_pack_install
+        plan = _plan_pack_install(project, packs, PACK_FILES, MCP_CONFIGS, HELPER_DIR)
+    except (OSError, ValueError, UnicodeError) as exc:
+        fail(f"Pack preflight failed: {exc}")
         return 1
+
+    for path, item in plan["files"].items():
+        info(f"{item['decision']}: {path}")
+    if plan["bridge"] is not None:
+        info(f"{'skip' if plan['bridge'].is_dir() else 'create'} directory: {plan['bridge']}")
+    if plan["helper"] is not None:
+        info(f"{plan['helper']['action']} helper directory: {plan['helper']['path']}")
+    info(f"{plan['settings']['action']} settings: {plan['settings']['path']}")
+    if preview_only:
+        return 0
+    try:
+        _apply_pack_install(plan, ok_callback=ok)
+    except (OSError, ValueError) as exc:
+        fail(f"Pack install stopped with partial changes possible: {exc}")
+        return 1
+    if "dashboard" in packs:
+        print("\n  Run dashboard with: python tools/cc_dashboard.py --project-root .")
     print(f"{green('Done!')} Installed: {', '.join(packs)}")
     return 0
 
@@ -11038,16 +11007,18 @@ def cmd_doctor(project: Path,
                         _add_check("context_sync", "warn", detail)
                         issues += 1
 
-                _info("Host gate contract:")
+                for line in _format_host_coverage_lines(_host_coverage_payload(host_profile, gateway)):
+                    _info(line)
+                _info("Host gate contract (CC integration model; configuration is not delivery evidence):")
                 for line in _format_host_gate_contract_lines(host_profile):
                     _info(f"  {line}")
 
                 if _host_supports_inline_boundary(host_profile):
-                    _ok("inline gate: mechanical via native host hooks")
-                    _add_check("inline_gate", "ok", "mechanical via native host hooks")
+                    _info("inline gate: CC native-hook model; host delivery unverified")
+                    _add_check("inline_gate", "info", "CC native-hook model; host delivery unverified")
                 else:
-                    _info("inline gate: unavailable on this host")
-                    _add_check("inline_gate", "info", "no true pre-write host hook")
+                    _info("inline gate: not implemented by this CC integration")
+                    _add_check("inline_gate", "info", "CC native inline route not implemented")
 
                 if non_inline_host:
                     if not git_available:
@@ -11093,8 +11064,8 @@ def cmd_doctor(project: Path,
                 review_required = non_inline_host and protected_zone_count > 0
                 review_failure = False
                 if host_profile.get("reviewGate") == "native_hooks":
-                    _ok("review gate: mechanical via native host hooks")
-                    _add_check("review_gate", "ok", "mechanical via native hooks")
+                    _info("review gate: CC native-hook model; host delivery unverified")
+                    _add_check("review_gate", "info", "CC native-hook model; host delivery unverified")
                 else:
                     if not review_script_path.exists():
                         review_failure = True
@@ -11498,6 +11469,7 @@ def cmd_doctor(project: Path,
             "primaryHost": doctor_primary_host,
             "enabledHosts": doctor_enabled_hosts,
             "hostProfile": doctor_host_profile,
+            "hostCoverage": _host_coverage_payload(doctor_host_profile or {}, gateway),
             "gateContract": doctor_gate_contract,
             "contextSync": doctor_context_sync,
             "constitutionDrift": doctor_constitution_drift,
@@ -12430,6 +12402,7 @@ _HOST_CONTEXT_EXPORTS = {
         "host_label": "Cursor",
         "export_mode": "section_export",
         "include_sections": _HOST_CONTEXT_RUNTIME_SECTIONS,
+        "front_matter": ("---", "alwaysApply: true", "---"),
     },
     "windsurf": {
         "relative_path": ".windsurfrules",
@@ -15454,19 +15427,25 @@ def _build_host_context_output(file_label: str,
                                include_sections: tuple[str, ...],
                                sections: list[tuple[str, str]],
                                source_identity: str,
-                               managed_format: str) -> tuple[str, int, list[str]]:
+                               managed_format: str,
+                               front_matter: tuple[str, ...] = ()) -> tuple[str, int, list[str]]:
     """Build a host-native context file from the selected context sections."""
     target_label = str(target_label).replace("\\", "/")
     output_parts = [
         f"# {file_label}",
         "",
-        _adapter_marker_line(target_label, host, source_identity, managed_format),
-        "",
+    ]
+    if not front_matter:
+        output_parts.extend([
+            _adapter_marker_line(target_label, host, source_identity, managed_format),
+            "",
+        ])
+    output_parts.extend([
         f"> Generated from {source_identity} by ControlCoding host-context export.",
         f"> Target host: {host_label}.",
         _adapter_source_authority_line(source_identity),
         "",
-    ]
+    ])
 
     included_count = 0
     warnings = []
@@ -15483,7 +15462,16 @@ def _build_host_context_output(file_label: str,
         if not found:
             warnings.append(title)
 
-    return "\n".join(output_parts) + "\n", included_count, warnings
+    content = "\n".join(output_parts) + "\n"
+    if front_matter:
+        content = "\n".join(front_matter) + "\n" + content
+        content = _adapter_insert_ownership_marker(
+            content,
+            _adapter_marker_line(target_label, host, source_identity, managed_format),
+            managed_format,
+            target_label,
+        )
+    return content, included_count, warnings
 
 
 def _build_full_host_context_output(file_label: str,
@@ -15622,6 +15610,7 @@ def _render_expected_host_context(project: Path,
         sections,
         source_identity,
         managed_format,
+        tuple(spec.get("front_matter", ())),
     )
     entry["warnings"] = warnings
     return content, entry
@@ -16681,6 +16670,10 @@ def cmd_truth_report(project: Path, json_output: bool = False) -> int:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
+    print("Scope: structural")
+    for limitation in payload["limitations"]:
+        print(f"Limit: {limitation}")
+
     print("ControlCoding capability truth report")
     print(f"Registry source: {payload['registrySource']} ({payload['registryPath']})")
     print("Summary:")
@@ -16713,6 +16706,10 @@ def cmd_truth_check_docs(project: Path, json_output: bool = False) -> int:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if payload["ok"] else 1
 
+    print("Scope: structural")
+    for limitation in payload["limitations"]:
+        print(f"Limit: {limitation}")
+
     if payload["ok"]:
         ok(
             "Documentation truth check passed "
@@ -16738,6 +16735,10 @@ def cmd_truth_check(project: Path,
     if json_output:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if payload["ok"] else 1
+
+    print("Scope: structural")
+    for limitation in payload["limitations"]:
+        print(f"Limit: {limitation}")
 
     if payload["ok"]:
         ok(
@@ -17545,6 +17546,7 @@ def _build_benchmark_matrix_rows() -> list[dict]:
             "evidenceStatus": evidence["status"],
             "evidenceNotes": evidence["notes"],
             "evidenceArtifacts": list(evidence.get("artifacts", [])),
+            "hostCoverage": _host_coverage_payload(profile),
         })
     return rows
 
@@ -17627,7 +17629,9 @@ def _render_benchmark_matrix_markdown(rows: list[dict], local_snapshot: dict | N
         "",
         f"Generated: {_utc_now_iso()}",
         "",
-        "This matrix is a capability/evidence summary, not a parity claim. Inline and repo-side hosts are reported with their real gate model.",
+        "This matrix describes the CC integration model, not all vendor capabilities or tested host parity.",
+        "Project configuration is not inspected. Named-host integration remains unverified; curated artifacts have their historical scope.",
+        "See docs/cross-tool-guide.md for dated platform documentation and route-specific limitations.",
         "",
         "| Host | Capability Class | Inline Gate | Repo Boundary Gate | Review Gate | Verification Gate | Protection Model | Evidence |",
         "|---|---|---|---|---|---|---|---|",
@@ -17653,6 +17657,7 @@ def _render_benchmark_matrix_markdown(rows: list[dict], local_snapshot: dict | N
         lines.append("")
         lines.append(f"- Summary: {row['summary']}")
         lines.append(f"- Evidence: {row['evidenceStatus']} - {row['evidenceNotes']}")
+        lines.extend(f"- {line}" for line in _format_host_coverage_lines(row["hostCoverage"]))
         if row["evidenceArtifacts"]:
             artifact_list = ", ".join(f"`{artifact}`" for artifact in row["evidenceArtifacts"])
             lines.append(f"- Artifacts: {artifact_list}")
@@ -17799,7 +17804,7 @@ def cmd_benchmark_matrix_generate(project: Path,
         return 0
 
     ok(f"Generated benchmark capability matrix at {target}")
-    info("This is a capability/evidence matrix. It does not claim host parity where inline hooks do not exist.")
+    info("This is a CC integration model; named-host delivery is unverified and vendor capabilities are documented separately.")
     return 0
 
 
@@ -17841,6 +17846,7 @@ def cmd_host_status(project: Path, json_output: bool = False) -> int:
         "primaryHost": primary_host,
         "enabledHosts": enabled_hosts,
         "hostProfile": host_profile,
+        "hostCoverage": _host_coverage_payload(host_profile, gateway),
         "gateContract": gate_contract,
         "controlledWritePath": _controlled_write_status_payload(project),
         "specialistConsentMatrix": specialist_paths,
@@ -17866,7 +17872,9 @@ def cmd_host_status(project: Path, json_output: bool = False) -> int:
     if host_profile.get("contextFile"):
         print(f"Primary context file: {host_profile['contextFile']}")
     print(f"Summary: {host_profile['summary']}")
-    print("Gate contract:")
+    for line in _format_host_coverage_lines(payload["hostCoverage"]):
+        print(line)
+    print("Gate contract (CC integration model):")
     for line in _format_host_gate_contract_lines(host_profile):
         print(f"  - {line}")
     controlled_write = payload["controlledWritePath"]
@@ -18009,6 +18017,7 @@ def cmd_host_compare(project: Path,
         print(json.dumps(payload, indent=2, ensure_ascii=False))
     else:
         print(f"Host compare: {left['userHost']} -> {right['userHost']}")
+        print("CC integration models only; project configuration not inspected and host delivery unverified.")
         for difference in differences:
             print(f"- {difference['field']}: {difference['left']} -> {difference['right']}")
     return 0
@@ -18902,6 +18911,10 @@ def cmd_agents(project: Path) -> int:
 
 
 def main():
+    runtime_issue = core_runtime_error()
+    if runtime_issue is not None:
+        print(f"Error: {runtime_issue.message}", file=sys.stderr)
+        return 1
     parser = argparse.ArgumentParser(
         prog="cc",
         description="ControlCoding CLI - setup and manage guardrails",
@@ -18919,6 +18932,8 @@ def main():
         help="Store hooks in ~/.controlcoding/hooks/ (shared across projects)",
     )
 
+    p_init.add_argument("--preview-only", action="store_true", help="Plan minimal init without writing files")
+
     # cc install
     p_install = sub.add_parser("install", help="Install a feature pack")
     p_install.add_argument(
@@ -18928,6 +18943,10 @@ def main():
     p_install.add_argument(
         "--project-root", type=Path, default=Path.cwd(),
         help="Project root directory (default: current directory)",
+    )
+    p_install.add_argument(
+        "--preview-only", action="store_true",
+        help="Inspect all selected pack changes and conflicts without writing",
     )
 
     # cc chat-start
@@ -19381,6 +19400,7 @@ def main():
         "--project-root", type=Path, default=Path.cwd(),
         help="Project root directory (default: current directory)",
     )
+    p_verify_status.add_argument("--require-current", action="store_true", help="Require a complete current execution pass")
     p_verify_status.add_argument(
         "--json", action="store_true", dest="json_output",
         help="Output machine-readable JSON",
@@ -19481,6 +19501,7 @@ def main():
         "--project-root", type=Path, default=Path.cwd(),
         help="Project root directory (default: current directory)",
     )
+    p_invariants_status.add_argument("--require-current", action="store_true", help="Require a complete current execution pass")
     p_invariants_status.add_argument(
         "--json", action="store_true", dest="json_output",
         help="Output machine-readable JSON",
@@ -21845,8 +21866,11 @@ def main():
     if extra_args and not (args.command == "surface" and getattr(args, "surface_command", "") == "run"):
         parser.error(f"unrecognized arguments: {' '.join(extra_args)}")
 
-    project = args.project_root.resolve()
-    if not project.is_dir():
+    project = (Path(os.path.abspath(args.project_root)) if args.command in {"install", "init"}
+               else args.project_root.resolve())
+    if args.command != "init" and not project.is_dir() and not (
+        args.command == "install" and args.preview_only and not project.exists()
+    ):
         message = f"{project} is not a directory"
         if getattr(args, "json_output", False):
             print(json.dumps({
@@ -21860,7 +21884,7 @@ def main():
         return 1
 
     if args.command == "init":
-        return cmd_init(project, central_hooks=getattr(args, "central_hooks", False))
+        return cmd_init(project, central_hooks=getattr(args, "central_hooks", False), preview_only=args.preview_only)
     elif args.command == "setup":
         if getattr(args, "chat_guide", False):
             return cmd_setup_chat_guide(
@@ -21947,7 +21971,7 @@ def main():
         p_consult_result.print_help()
         return 1
     elif args.command == "install":
-        return cmd_install(project, args.pack)
+        return cmd_install(project, args.pack, preview_only=args.preview_only)
     elif args.command == "chat-start":
         return cmd_chat_start(
             project,
@@ -22011,6 +22035,8 @@ def main():
     elif args.command == "docs":
         return dispatch_docs_command(args, project, p_docs)
     elif args.command == "verify":
+        # Preserve the supplied root spelling for no-follow evidence acquisition.
+        project = Path(os.path.abspath(args.project_root))
         verify_command = getattr(args, "verify_command", "")
         if verify_command == "init":
             return cmd_verify_init(
@@ -22021,6 +22047,7 @@ def main():
         if verify_command == "status":
             return cmd_verify_status(
                 project,
+                require_current=getattr(args, "require_current", False),
                 json_output=getattr(args, "json_output", False),
             )
         if verify_command == "run":
@@ -22034,6 +22061,7 @@ def main():
         p_verify.print_help()
         return 1
     elif args.command == "invariants":
+        project = Path(os.path.abspath(args.project_root))
         invariants_command = getattr(args, "invariants_command", "")
         if invariants_command == "init":
             return cmd_invariants_init(
@@ -22054,6 +22082,7 @@ def main():
         if invariants_command == "status":
             return cmd_invariants_status(
                 project,
+                require_current=getattr(args, "require_current", False),
                 json_output=getattr(args, "json_output", False),
             )
         if invariants_command == "list":

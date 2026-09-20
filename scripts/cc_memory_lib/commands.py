@@ -12,6 +12,7 @@ import sqlite3
 import stat
 from pathlib import Path, PurePosixPath
 
+from .runtime import memory_runtime_error
 from . import freshness_projection, work_features
 from .chunks import _sync_semantic_chunks
 from .classifier import _classify_document
@@ -2671,6 +2672,11 @@ def cmd_memory_init(
             },
             f"Error: {message}",
         )
+        return 1
+
+    runtime_issue = memory_runtime_error()
+    if runtime_issue is not None:
+        _print_json_or_text(json_output, runtime_issue.payload(), f"Error: {runtime_issue.message}")
         return 1
 
     created_directories = list(WORK_MEMORY_PROFILE_DIRS) if normalized_profile == "work" else []

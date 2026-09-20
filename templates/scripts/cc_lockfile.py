@@ -1,5 +1,6 @@
 """Small stdlib-only lockfile helper for adopter scripts."""
 
+import errno
 import math
 import os
 import time
@@ -45,19 +46,27 @@ class LockfileGuard:
                     self.lock_path,
                     os.O_CREAT | os.O_EXCL | os.O_WRONLY,
                 )
-                try:
-                    self._acquired = True
-                finally:
-                    os.close(descriptor)
-                return self
-            except FileExistsError as exc:
+            except (FileExistsError, PermissionError) as exc:
+                # Windows can report EACCES while an old lock is delete-pending.
+                # Only retry acquisition, within the same contention deadline.
+                # EACCES also covers real access denial: preserve that error if
+                # it persists instead of claiming an ordinary busy-lock timeout.
+                access_denied = isinstance(exc, PermissionError)
+                if access_denied and (os.name != "nt" or exc.errno != errno.EACCES):
+                    raise
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    if access_denied:
+                        raise
                     raise LockfileTimeoutError(
                         f"timed out waiting for lock: {self.lock_path}"
                     ) from exc
                 if self.poll_seconds > 0:
                     time.sleep(min(self.poll_seconds, remaining))
+            else:
+                self._acquired = True
+                os.close(descriptor)
+                return self
 
     def __exit__(self, exc_type, exc, traceback):
         try:

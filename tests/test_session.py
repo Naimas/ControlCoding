@@ -12,11 +12,13 @@ Covers:
 """
 
 import importlib
+import errno
 import json
 import multiprocessing
 import os
 import sys
 import traceback
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,6 +46,9 @@ def _worker_failure(worker, phase, exc):
         "phase": phase,
         "error_type": type(exc).__name__,
         "error": str(exc),
+        "errno": getattr(exc, "errno", None),
+        "winerror": getattr(exc, "winerror", None),
+        "filename": str(exc.filename) if getattr(exc, "filename", None) else None,
         "traceback": traceback.format_exc(),
     }
 
@@ -188,7 +193,11 @@ def _collect_worker_results(workers, result_queue, expected_count):
     finally:
         _join_workers(workers)
     failures = [payload for payload in payloads if not payload.get("ok")]
-    assert not failures, failures
+    if failures:
+        # Preserve full worker traces in captured CI output, even when pytest
+        # abbreviates assertion values or the verification runner keeps a tail.
+        print(json.dumps(failures, indent=2, ensure_ascii=False))
+        pytest.fail("spawned worker failures; full diagnostics above", pytrace=False)
     return payloads
 
 
@@ -472,7 +481,116 @@ def _load_f1(tmp_project):
     return mcp_handoff
 
 
+def _hold_windows_delete_pending(path):
+    """Hold a real NTFS delete-pending entry, without changing permissions."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    dispose = kernel.SetFileInformationByHandle
+    dispose.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    dispose.restype = wintypes.BOOL
+    # GENERIC_READ | DELETE, share read/write/delete, CREATE_NEW.
+    handle = create(str(path), 0x80000000 | 0x10000, 7, None, 1, 0, None)
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    pending = wintypes.BOOL(True)
+    if not dispose(handle, 4, ctypes.byref(pending), ctypes.sizeof(pending)):
+        error = ctypes.WinError(ctypes.get_last_error())
+        close(handle)
+        raise error
+
+    def release():
+        if not close(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    return release
+
+
 class TestAdopterLockfile:
+    @pytest.mark.parametrize("platform_name, code, attempts", [
+        ("nt", errno.EACCES, 2), ("posix", errno.EACCES, 1), ("nt", errno.EPERM, 1),
+    ])
+    def test_access_denial_keeps_original_error_and_never_enters_body(
+        self, tmp_path, monkeypatch, platform_name, code, attempts
+    ):
+        import cc_lockfile
+        from types import SimpleNamespace
+
+        target = tmp_path / "resource.lock"
+        error = PermissionError(code, "permanent access denial", str(target))
+        calls = []
+        def deny(*args):
+            calls.append(args)
+            raise error
+        monkeypatch.setattr(cc_lockfile, "os", SimpleNamespace(
+            name=platform_name, open=deny, close=os.close,
+            O_CREAT=os.O_CREAT, O_EXCL=os.O_EXCL, O_WRONLY=os.O_WRONLY,
+        ))
+        ticks = iter([0.0, 0.0, 1.0])
+        monkeypatch.setattr(cc_lockfile.time, "monotonic", lambda: next(ticks))
+        monkeypatch.setattr(cc_lockfile.time, "sleep", lambda _: None)
+        guard = cc_lockfile.LockfileGuard(target, timeout_seconds=1, poll_seconds=0.1)
+        with pytest.raises(PermissionError) as caught:
+            with guard:
+                pytest.fail("access denial entered the protected body")
+        assert caught.value is error
+        assert len(calls) == attempts
+        assert not guard._acquired and not target.exists()
+
+    def test_close_error_is_not_retried_as_acquisition(self, tmp_path, monkeypatch):
+        import cc_lockfile
+
+        real_open, real_close = cc_lockfile.os.open, cc_lockfile.os.close
+        calls = []
+        def record_open(*args):
+            calls.append(args)
+            return real_open(*args)
+        error = PermissionError(errno.EACCES, "close failure")
+        def fail_close(descriptor):
+            real_close(descriptor)
+            raise error
+        monkeypatch.setattr(cc_lockfile.os, "open", record_open)
+        monkeypatch.setattr(cc_lockfile.os, "close", fail_close)
+        guard = cc_lockfile.LockfileGuard(tmp_path / "resource.lock")
+        try:
+            with pytest.raises(PermissionError) as caught:
+                with guard:
+                    pytest.fail("close failure entered protected body")
+            assert caught.value is error and len(calls) == 1
+            assert guard._acquired and guard.lock_path.exists()
+        finally:
+            guard.release()
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows delete-pending semantics")
+    def test_delete_pending_timeout_preserves_data_and_guard_reuses(self, tmp_path):
+        import cc_lockfile
+
+        data = tmp_path / "decisions.jsonl"
+        data.write_bytes(b"existing decision\n")
+        original = (data.read_bytes(), data.stat().st_mtime_ns)
+        lock = cc_lockfile.adjacent_lockfile_path(data)
+        release = _hold_windows_delete_pending(lock)
+        guard = cc_lockfile.LockfileGuard(lock, timeout_seconds=0.02, poll_seconds=0.005)
+        try:
+            with pytest.raises(PermissionError) as caught:
+                with guard:
+                    pytest.fail("delete-pending lock entered the protected body")
+            assert caught.value.errno == errno.EACCES
+            assert not guard._acquired
+            assert (data.read_bytes(), data.stat().st_mtime_ns) == original
+        finally:
+            release()
+        with guard:
+            assert lock.exists()
+        assert not lock.exists()
+
     def test_validation_and_adjacent_path(self, tmp_path):
         import cc_lockfile
 
@@ -550,6 +668,59 @@ class TestAdopterLockfile:
 
 
 class TestConcurrentDecisions:
+    @pytest.mark.skipif(os.name != "nt", reason="Windows delete-pending semantics")
+    def test_delete_pending_lock_waits_before_appending(self, tmp_project, monkeypatch):
+        import cc_lockfile
+
+        handoff = _load_f1(tmp_project)
+        assert handoff.write_decision("DECISION", "Existing entry.").startswith("Decision recorded: DEC-001")
+        data = handoff.DECISIONS_FILE
+        original = (data.read_bytes(), data.stat().st_mtime_ns)
+        lock = cc_lockfile.adjacent_lockfile_path(data)
+        release = _hold_windows_delete_pending(lock)
+        encountered = threading.Event()
+        released = threading.Event()
+        errors = []
+
+        def owner():
+            try:
+                if not encountered.wait(5):
+                    raise TimeoutError("contender never reached pending entry")
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                try:
+                    release()
+                except Exception as exc:
+                    errors.append(exc)
+                released.set()
+
+        thread = threading.Thread(target=owner)
+        thread.start()
+        real_open = cc_lockfile.os.open
+        observations = []
+        def observe_open(path, flags, *args, **kwargs):
+            try:
+                return real_open(path, flags, *args, **kwargs)
+            except PermissionError as exc:
+                if Path(path) == lock:
+                    observations.append((exc.errno, data.read_bytes(), data.stat().st_mtime_ns))
+                    encountered.set()
+                raise
+        monkeypatch.setattr(cc_lockfile.os, "open", observe_open)
+        try:
+            result = handoff.write_decision("DECISION", "After lock release.")
+        finally:
+            encountered.set()
+            thread.join(6)
+        assert not thread.is_alive() and released.is_set() and not errors
+        assert observations and all(row == (errno.EACCES, *original) for row in observations)
+        assert result.startswith("Decision recorded: DEC-002")
+        records = [json.loads(line) for line in data.read_text(encoding="utf-8").splitlines()]
+        assert [(row["id"], row["text"]) for row in records] == [
+            ("DEC-001", "Existing entry."), ("DEC-002", "After lock release.")]
+        assert not lock.exists()
+
     def test_spawn_writers_receive_unique_sequential_ids(self, tmp_project):
         context = multiprocessing.get_context("spawn")
         worker_count = 6

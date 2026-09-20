@@ -4,7 +4,7 @@
 > Cursor, Copilot, Cline, Aider, or similar). You want to prevent the AI
 > from breaking things. This guide tells you exactly what to do.
 >
-> Time: 30 minutes. Prerequisites: Python 3.10+, a git repository.
+> Time: 30 minutes. Prerequisites: Python 3.11+ for Core, a git repository. Memory also requires a working SQLite deserialize API.
 
 ---
 

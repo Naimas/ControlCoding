@@ -1,14 +1,11 @@
 # ControlCoding - Cross-Tool Compatibility Guide
 
-> ControlCoding was designed and validated on Claude Code. The methodology
-> itself (condominium architecture, maturity levels, domain invariants,
-> gradual adoption) is tool-agnostic. Only L2 hook enforcement depends on
-> the specific tool. This guide documents what works, what needs adaptation,
-> and what's missing for each major AI coding tool.
->
-> Adaptations for tools other than Claude Code are reasonable extrapolations,
-> not battle-tested workflows. If you adopt CC on another tool and find gaps
-> or improvements, contributions are welcome.
+> This guide separates documented vendor capabilities, the shipped CC
+> integration model, project configuration and tested host coverage.
+> Claude Code is a historical reference; that history is not certification of
+> the current candidate on a named host/version. Generated context, local Python
+> tests and curated benchmark reports do not prove hook or rule delivery.
+> Manual adaptations below remain suggestions, not tested compatibility claims.
 
 ---
 
@@ -121,37 +118,59 @@ What changes by host is where those gates run.
 
 | Gate | Meaning |
 |---|---|
-| `context_gate` | The host reads a context file derived from `CONTROLCODING.md`. |
+| `context_gate` | Intended loading of derived context; generated-file presence does not establish loading. |
 | `permission_gate` | Sandbox, approval, or execution policy limits what the host can run. |
 | `inline_boundary_gate` | A native hook blocks writes/commands before they happen. |
-| `repo_boundary_gate` | Git pre-commit or equivalent blocks violations at repository level. |
+| `repo_boundary_gate` | A configured local Git pre-commit or equivalent evaluates staged paths at its invocation; it is distinct from edit interception, remote acceptance, and server enforcement. |
 | `review_gate` | CodeWarden or equivalent review pass inspects the work after meaningful changes. |
 | `verification_gate` | Criteria tracking and invariant tests close the loop before acceptance/release. |
 
-### 1.2 Capability Classes
+### 1.2 CC Integration Classes
+
+These classes describe existing CC routing, not all vendor capabilities or
+verified enforcement. `hostProfile.profileScope` and each gate's `scope` are
+`cc_integration_model`. Operational gate values retain their existing meaning.
+
+Reports expose `hostCoverage`: `platformCapability`, `ccIntegration`,
+`projectConfiguration` and `testedIntegration`. Status/doctor report whether the
+gateway declares a host; doctor's separate asset checks inspect configuration.
+Comparison profiles and matrix rows do not inspect project configuration.
+A native route is `modeled_unverified`; an absent CC native adapter is
+`not_implemented`. These states do not describe vendor feature availability.
+`testedIntegration` remains `unverified`, including with generated files, a
+configured host or curated reports. No host/version/OS/event/tool-path execution
+result is attested by these commands.
 
 | Class | Meaning | Primary boundary strategy | Review strategy |
 |---|---|---|---|
-| **A. Native inline hook hosts** | Can block before a write/command happens | `inline_boundary_gate` + `repo_boundary_gate` backstop | Native stop/plan hooks |
-| **B. Sandbox / approval hosts** | Can constrain execution but not reproduce Claude-style file hooks | `permission_gate` + `repo_boundary_gate` | Post-commit / manual / CI |
-| **C. Instruction-first hosts** | Mainly follow instructions from the context file | `repo_boundary_gate` as primary | Post-commit / manual / CI, treated as mandatory |
+| **A. CC native-hook model** | Models blocking on configured, loaded event/tool routes; delivery unverified | `inline_boundary_gate` + `repo_boundary_gate` backstop | Native stop/plan hooks |
+| **B. CC sandbox / approval integration** | Uses the selected permission model with no CC native inline adapter | `permission_gate` + `repo_boundary_gate` | Post-commit / manual / CI |
+| **C. CC instruction-first integration** | Uses context and repository workflows; vendor hooks may exist separately | `repo_boundary_gate` as primary | Post-commit / manual / CI, treated as mandatory |
 
 ### 1.3 Documented Hosts
 
-#### Class A - Native Inline Hook Hosts
+Gate and level columns below describe CC models, not execution results. CC's
+accepted host identifiers cover Claude Code, Codex CLI, Cursor, Windsurf,
+VS Code, Cline, Gemini CLI and `other`. Other tools are manual adaptation
+suggestions without dedicated CC identifiers or hook adapters. Permission
+columns describe CC mappings; `None` does not mean the vendor lacks permissions
+or hooks. Historical origin/free-tier columns are not a current pricing
+assessment. Current platform hook references follow in section 1.4.
+
+#### Class A - CC Native-Hook Model
 
 | Tool | Origin | Context File | Permission Gate | Boundary Gates | Review Gate | CC Levels | Free |
 |---|---|---|---|---|---|---|---|
 | **Claude Code** | Anthropic (US) | `CLAUDE.md` | Official host permissions | Native hooks + git pre-commit backstop | Native hooks | L1-L4 | Free tier + paid |
 | **Cline** | Open-source | `.clinerules` | Host/editor permissions | Native hooks on macOS/Linux; repo-side fallback on Windows | Native hooks on supported platforms, otherwise post-commit/manual | L1-L4 with platform caveat | Free (open-source) |
 
-#### Class B - Sandbox / Approval Hosts
+#### Class B - CC Sandbox / Approval Integration
 
 | Tool | Origin | Context File | Permission Gate | Boundary Gates | Review Gate | CC Levels | Free |
 |---|---|---|---|---|---|---|---|
 | **Codex CLI** | OpenAI (US) | `AGENTS.md` | Sandbox isolation + approvals | Git pre-commit as primary repo boundary gate | Post-commit / manual / CI | L1, L3, L4 plus repo-side L2 adaptation | Free (open-source) |
 
-#### Class C - Instruction-First Hosts
+#### Class C - CC Instruction-First Integration
 
 | Tool | Origin | Context File | Permission Gate | Boundary Gates | Review Gate | CC Levels | Free |
 |---|---|---|---|---|---|---|---|
@@ -164,6 +183,30 @@ What changes by host is where those gates run.
 | **OpenCode** | Open-source | `AGENTS.md` | None | Git pre-commit as primary repo boundary gate | Post-commit / manual / CI | L1, L3, L4 plus repo-side L2 adaptation | Free (open-source) |
 | **Goose** | Block (US) | `.goosehints` | None | Git pre-commit as primary repo boundary gate | Post-commit / manual / CI | L1, L3, L4 plus repo-side L2 adaptation | Free (open-source) |
 | **Trae** | ByteDance (CN) | `.trae/rules/project_rules.md` | None | Git pre-commit as primary repo boundary gate | Post-commit / manual / CI | L1, L3, L4 plus repo-side L2 adaptation | Free |
+
+### 1.4 Dated Platform Documentation
+
+Official sources retrieved on **2026-09-15** establish documented features, not
+CC adapter compatibility. These are not pinned release specifications: minimum
+versions and OS coverage are unestablished unless stated. **No named-host
+execution was performed for this update.** Local Python/CLI tests do not fill
+that gap.
+
+| Named platform surface | Officially documented route | Current CC integration and coverage |
+|---|---|---|
+| Codex tool hooks | `PreToolUse` / `PostToolUse` cover shell, `apply_patch` and other local tool paths; some paths are excluded. [OpenAI hooks](https://learn.chatgpt.com/docs/hooks) | Codex CLI profile keeps sandbox/approval + repo-side workflow; no CC Codex native inline adapter. Host/version/OS delivery unverified. |
+| Cursor Agent | `preToolUse`, `beforeShellExecution` and file events; Tab and cloud surfaces have distinct coverage. [Cursor hooks](https://cursor.com/docs/hooks) | CC exports `.cursor/rules/project.mdc` with project-wide `alwaysApply: true` metadata and uses repo-side gates; no CC native hook adapter. Rule loading and event delivery unverified. |
+| Gemini CLI | `BeforeTool` can deny a tool call. [Gemini CLI hooks](https://geminicli.com/docs/hooks/reference/) | CC exports `GEMINI.md` and uses repo-side gates; no CC native hook adapter. Host delivery unverified. |
+| Claude Code | `PreToolUse` can deny selected tool calls; post-change events have different semantics. [Claude Code hooks](https://code.claude.com/docs/en/hooks) | CC has hook scripts/settings examples and a native-route model. Optional scripts are not automatically enabled; current named-host delivery unverified. |
+| Cline extension hook layout | Official repository documentation describes `PreToolUse` / `PostToolUse` and says Windows is unsupported for that layout. [Cline hook README](https://github.com/cline/cline/blob/main/.clinerules/hooks/README.md) | CC retains its non-Windows native-route model and Windows repo-side fallback. The main hooks page returned no usable body; current version/OS compatibility and CC payload matching remain unverified. |
+| GitHub Copilot CLI and cloud agent | `preToolUse` can approve or deny tool execution. [GitHub hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) | Manual CC adaptation only. These sources do not establish every Copilot editor surface or a CC native adapter; delivery unverified. |
+| Cascade, linked from Windsurf documentation | `pre_write_code` and `pre_run_command` may block their operations; the official URL now redirects to Devin Desktop documentation. [Cascade hooks](https://docs.windsurf.com/windsurf/cascade/hooks) | Existing `windsurf` identifier/export/repo-side routing preserved. Product/version mapping and current integration delivery unverified. |
+
+Platform documentation alone never enables a CC gate. Verified integration needs
+the exact candidate, host product/version, OS, configuration, event/tool path,
+invocation and observed result. Generated-only configuration is unverified;
+unavailable runtimes and unexecuted routes remain explicit. No such execution
+record is supplied by this guide or the static matrix.
 
 ### Other Tools (not tested with CC)
 
@@ -208,14 +251,14 @@ These are models, not tools. Use them through a documented host (Cline, OpenCode
 
 ### 3.1 Claude Code (reference implementation)
 
-This is the tool CC was designed for. Full support, no adaptation needed.
+CC's historical native-hook reference. Current configuration and delivery still require validation.
 
 ```
 1. Create `CONTROLCODING.md` as the canonical project rules file
 2. Sync `CLAUDE.md` from it for Claude Code
 3. Copy templates/hooks/ to your project
 4. Configure `.controlcoding/settings.json` (see `templates/hooks/settings.json.example`)
-5. `inline_boundary_gate` and native `review_gate` run through Claude hooks
+5. Validate the configured event/tool routes before relying on native gates
 6. Keep git pre-commit as the repo-side backstop
 ```
 
@@ -240,7 +283,7 @@ Context file: `AGENTS.md` at project root. Also reads `AGENTS.md` in subdirector
 Manual preview path: `python scripts/cc.py export host-context --host codex_cli --preview-only`.
 After review, `--force` may update only an already valid-owned adapter. Use the
 explicit adoption flow below for an eligible historical unmarked or foreign file.
-Codex runs commands in a sandboxed environment with network disabled by default.
+Inspect the actual Codex sandbox/approval configuration; this CC profile does not attest its effective settings.
 Optional advanced path: `python scripts/cc.py write-path enable --mode patch_gateway --project-root .`
 if you want an explicit CC-owned patch gateway for sensitive writes. This is
 opt-in only and does not imply native inline parity.
@@ -254,7 +297,7 @@ to reuse consumer credentials in unrelated third-party tools.
 1. Run `cc setup` and choose `Gemini CLI` as the user host
 2. ControlCoding keeps `CONTROLCODING.md` canonical and generates `GEMINI.md`
 3. Gemini CLI reads it automatically (`context_gate`)
-4. There is no native `inline_boundary_gate`
+4. CC does not implement a Gemini native inline hook adapter
 5. Use git pre-commit as the primary `repo_boundary_gate`
 6. Use CodeWarden post-commit/manual/CI as the `review_gate`
 7. Keep criteria/invariants active as the `verification_gate`
@@ -276,27 +319,38 @@ explicit adoption flow below for an eligible historical unmarked or foreign file
 ```
 
 Context file: `.github/copilot-instructions.md`. Copilot coding agent also reads `AGENTS.md` (since August 2025) and `.github/instructions/*.instructions.md` for scoped rules.
-Note: Copilot's instruction-following is less reliable than dedicated coding agents. Keep rules short and explicit.
+Copilot CLI/cloud hook documentation does not establish a CC adapter or coverage for every editor surface. Verify instruction loading separately.
 
 ### 3.5 Cursor
 
 ```
-1. Create .cursor/rules/ directory
-2. Add one .mdc file per concern (e.g., architecture.mdc, invariants.mdc)
-3. Use .cursorignore to exclude protected files from AI edits
-4. Treat `.cursorignore` as partial help only; git pre-commit remains the primary `repo_boundary_gate`
+1. Run `cc setup` and choose `Cursor` as the user host
+2. ControlCoding keeps `CONTROLCODING.md` canonical and generates `.cursor/rules/project.mdc`
+3. The generated project-wide rule starts with `alwaysApply: true` metadata
+4. Use `.cursorignore` as partial help only; git pre-commit remains the primary `repo_boundary_gate`
 5. Use CodeWarden post-commit/manual/CI as the `review_gate`
 ```
 
-Context file: `.cursor/rules/*.mdc` files. Cursor also reads `.cursorrules` at project root (legacy).
-The `.cursorignore` file works like `.gitignore` syntax and prevents Cursor from reading or modifying listed files.
+Generated context file: `.cursor/rules/project.mdc`. Manual preview path:
+`python scripts/cc.py export host-context --host cursor --preview-only`.
+After review, `--force` may update only an already valid-owned adapter. Use the
+explicit adoption flow below for an eligible historical unmarked or foreign file.
+Cursor also documents `.cursorrules` at project root as legacy behavior.
+Cursor documents `.cursorignore` limits, including terminal and MCP access that
+is not blocked by that file. It is not a universal write boundary.
+See [ignore-file scope](https://cursor.com/docs/reference/ignore-file).
+Cursor documents project rules as `.mdc` files with frontmatter, and documents
+`alwaysApply: true` as inclusion in every chat session. See
+[Cursor rules](https://cursor.com/docs/rules). CC generates that intent, but a
+correct file does not prove loading. CC's rule loading remains unverified on a
+named host/version/OS.
 
 ### 3.6 Cline (open-source)
 
 ```
 1. Run `cc setup` and choose `Cline` as the user host
 2. ControlCoding keeps `CONTROLCODING.md` canonical and generates `.clinerules`
-3. On macOS/Linux, Cline v3.36+ gives you a native `inline_boundary_gate` and native `review_gate`
+3. CC selects its native-hook model on non-Windows platforms; compatibility and delivery need validation
 4. Copy templates/hooks/ and configure them in Cline's settings
 5. On Windows, fall back to git pre-commit + post-commit/manual review
 ```
@@ -306,7 +360,7 @@ Manual preview path: `python scripts/cc.py export host-context --host cline --pr
 After review, `--force` may update only an already valid-owned adapter. Use the
 explicit adoption flow below for an eligible historical unmarked or foreign file.
 Cline runs on VS Code and supports multiple backend models (Claude, GPT, DeepSeek, local models via Ollama).
-**Note**: Cline hooks are currently supported on macOS and Linux only. On Windows, use git pre-commit hooks for L2 enforcement.
+**CC policy**: the Cline integration uses a repo-side fallback on Windows. This is a preserved CC branch, not a probe of the installed Cline build; see the dated source and retrieval limitation above.
 
 ### 3.7 Aider (open-source)
 
@@ -405,8 +459,9 @@ Default strategy by capability class:
 - **Class B**: `permission_gate` + git pre-commit as the primary boundary path
 - **Class C**: git pre-commit as primary boundary path and CodeWarden review treated as mandatory
 
-For tools that lack native pre-tool hooks, the most important substitute is git
-pre-commit.
+For CC integrations without a native hook adapter, the current repository
+boundary route is git pre-commit. A configured local hook does not establish
+server enforcement or interception of arbitrary host writes.
 
 ### Git Pre-Commit Hook Example
 
@@ -427,7 +482,12 @@ for zone in $PROTECTED_ZONES; do
 done
 ```
 
-**Difference from native hooks**: git pre-commit catches violations at commit time, not at edit time. The AI can still modify protected files during a session; the repository gate just prevents those changes from becoming accepted history. Native hooks (Claude Code, Cline on supported platforms) are still stronger because they stop the edit before it happens.
+**Difference from native hooks**: git pre-commit catches violations at its local
+commit invocation, not at edit time. The AI can still modify protected files
+during a session. A local hook does not establish accepted remote history or a
+required server-side check, and `--no-verify` is an explicit bypass of this
+example. A configured, loaded native route can stop its covered tool operation
+before it happens; delivery and coverage remain separate evidence.
 
 ### CI/CD as L2 Backup
 
@@ -480,19 +540,32 @@ ControlCoding and Codex CLI approach code isolation differently. They are comple
 
 **ControlCoding: semantic granularity.** CC uses path-based zones (stable/, shared/, features/) with selective boundary and review gates. On native-hook hosts that means inline enforcement; on non-inline hosts it means repo-side boundaries plus review/verification. Either way, the structure stays fine-grained: one module can write to `shared/scoring_utils.py` while another cannot.
 
-**Codex: OS-level sandbox.** Codex runs code in an isolated container with network disabled by default. The AI has full write access inside the sandbox but cannot reach outside. This is coarse-grained: everything inside is allowed, everything outside is blocked.
+**Codex: configured sandbox and approvals.** Codex can apply sandbox and
+approval policy to command execution. The effective filesystem and network
+scope depends on the selected sandbox, approval configuration, platform, and
+allowed roots; inspect the active configuration rather than inferring an
+absolute container boundary from this guide. This is coarser-grained than CC's
+path rules and is not a CC native inline adapter.
 
 | Dimension | ControlCoding | Codex Sandbox |
 |---|---|---|
-| Granularity | Per-file, per-zone, per-module | All-or-nothing container |
-| Enforcement | Boundary + review gates (inline on Class A, repo-side on Classes B/C) | OS-level isolation (Docker/VM) |
-| Read access | Unrestricted (AI reads full codebase) | Limited to sandbox contents |
-| Write access | Selective (zone + module rules) | Full inside sandbox |
-| Network | Controlled per connection (Section 9.13) | Disabled by default |
-| Multi-agent | Per-agent module perimeter (feature lock) | Per-container isolation |
-| Trade-off | Relies on hook protocol (bypassable via Bash) | No bypass, but no fine-grained control |
+| Granularity | Per-file, per-zone, per-module | Sandbox mode and writable roots define filesystem scope; approval policy governs escalation |
+| Enforcement | Boundary + review gates (inline on Class A, repo-side on Classes B/C) | Selected sandbox and approval policy; effective scope must be inspected |
+| Read access | Defined by the CC route and project files | Limited by the active sandbox and allowed roots, where configured |
+| Write access | Selective only on a configured, delivered inline route; otherwise repository-stage policy | Limited by the active sandbox and approval policy, not by CC zones |
+| Network | Controlled per connection (Section 9.13) | Controlled by the active sandbox/network setting |
+| Multi-agent | Per-agent module perimeter (feature lock) | Depends on the execution setup and permissions; this guide does not establish isolation between agents |
+| Trade-off | Route-specific hooks and local repository gates; uncovered writes remain outside their scope | Coarse execution boundary; this guide does not establish universal non-bypass or host delivery |
 
-**Using both together:** CC inside a Codex sandbox gives defense in depth. The sandbox prevents escape, while CC provides the repo boundary gate, review gate, and verification gate for intra-project structure. Put the project in the Codex sandbox, keep `AGENTS.md` synced from `CONTROLCODING.md`, and rely on pre-commit + CodeWarden + verification instead of pretending Codex has Claude-style inline hooks.
+Source: [OpenAI sandbox documentation](https://learn.chatgpt.com/docs/sandboxing#configure-defaults), checked 2026-09-15. This platform reference does not establish CC host delivery or isolation between agents.
+
+**Using both together:** CC can pair its repository, review, and verification
+workflow with Codex's active sandbox/approval configuration. This is a
+configuration-specific layering, not proof that either layer covers every path
+or that a local pre-commit hook becomes a server gate. Keep `AGENTS.md` synced
+from `CONTROLCODING.md`, inspect the active Codex configuration, and do not
+describe the CC Codex profile as having a native inline adapter without
+named-host evidence.
 
 ---
 
