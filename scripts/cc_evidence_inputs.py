@@ -109,7 +109,7 @@ class SafeRoot:
         self.handles = []
         self.fd = None
 
-    def _win_open(self, path, directory=True):
+    def _win_open(self, path, directory=True, *, access=None):
         import ctypes
         from ctypes import wintypes
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -121,7 +121,7 @@ class SafeRoot:
         close.argtypes = (wintypes.HANDLE,)
         close.restype = wintypes.BOOL
         self._close = close
-        handle = create(str(path), 1 if directory else 0x80000000, 3, None, 3,
+        handle = create(str(path), access if access is not None else (1 if directory else 0x80000000), 3, None, 3,
                         0x00200000 | (0x02000000 if directory else 0), None)
         if handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -174,12 +174,15 @@ class SafeRoot:
                 raise EvidenceError("root_changed")
 
     @contextmanager
-    def directory(self, relative="", *, create=False):
+    def directory(self, relative="", *, create=False, exclusive=False):
+        """Open confined parents; optionally acquire a new final component only."""
         components = parts(relative) if relative else []
+        if exclusive and (not create or not components):
+            raise ValueError("exclusive directory requires a nonempty creation path")
         opened = []
         current = self.path if os.name == "nt" else self.fd
         try:
-            for component in components:
+            for index, component in enumerate(components):
                 if create:
                     try:
                         if os.name == "nt":
@@ -187,7 +190,8 @@ class SafeRoot:
                         else:
                             os.mkdir(component, dir_fd=current)
                     except FileExistsError:
-                        pass
+                        if exclusive and index == len(components) - 1:
+                            raise EvidenceError("attempt_directory_exists")
                 if os.name == "nt":
                     current = current / component
                     opened.append(self._win_open(current))
@@ -287,27 +291,96 @@ class SafeRoot:
                 except FileNotFoundError:
                     pass
 
-    def remove_tree(self, relative):
-        # Walk only the owned run directory, rejecting links/special entries.
+    def _win_remove_file(self, parent, name, expected):
+        """Delete the validated handle; never chmod/unlink a reopened path."""
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+        handle = self._win_open(parent / name, directory=False, access=0x10000 | 0x180)
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except BaseException:
+            self._close(handle)
+            raise
+        try:
+            observed = os.fstat(fd)
+            if _state(observed, path_comparison=True) != _state(expected, path_comparison=True):
+                raise EvidenceError("cleanup_entry_changed")
+            # Clearing read-only on a shared inode would change a foreign link.
+            if observed.st_nlink != 1:
+                raise EvidenceError("cleanup_shared_file")
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            get = kernel.GetFileInformationByHandleEx
+            get.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+            get.restype = wintypes.BOOL
+            set_info = kernel.SetFileInformationByHandle
+            set_info.argtypes = get.argtypes
+            set_info.restype = wintypes.BOOL
+            class Basic(ctypes.Structure):
+                _fields_ = [("creation", ctypes.c_longlong), ("access", ctypes.c_longlong),
+                            ("write", ctypes.c_longlong), ("change", ctypes.c_longlong),
+                            ("attributes", wintypes.DWORD)]
+            basic = Basic()
+            if not get(handle, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if basic.attributes & 1:
+                basic.attributes = (basic.attributes & ~1) or 0x80
+                if not set_info(handle, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            delete = ctypes.c_ubyte(1)
+            if not set_info(handle, 4, ctypes.byref(delete), ctypes.sizeof(delete)):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            os.close(fd)
+
+    def remove_tree(self, relative, *, expected=None):
+        # No link traversal, no permission changes through lexical paths, and
+        # no deletion of an observed replacement. Limits remain fail-closed.
         budget = Budget()
-        def remove(directory):
-            for name, info in self.listing(directory, budget):
-                path = directory + "/" + name
-                if stat.S_ISDIR(info.st_mode) and not getattr(info, "st_file_attributes", 0) & 0x400:
-                    remove(path)
-                else:
-                    with self.directory(directory) as parent:
+        def identity(info):
+            return info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)
+        def remove(directory, expected):
+            with self.directory(directory) as held:
+                opened = os.stat(held) if os.name == "nt" else os.fstat(held)
+                if identity(opened) != identity(expected):
+                    raise EvidenceError("cleanup_entry_changed")
+                with os.scandir(held) as entries:
+                    listing = []
+                    for entry in entries:
+                        budget.entry()
+                        parts(entry.name)
+                        listing.append((entry.name, self._stat(held, entry.name)))
+                for name, info in listing:
+                    budget.check()
+                    if getattr(info, "st_file_attributes", 0) & 0x400 or stat.S_ISLNK(info.st_mode):
+                        raise EvidenceError("cleanup_unsafe_entry")
+                    if stat.S_ISDIR(info.st_mode):
+                        remove(directory + "/" + name, info)
+                    elif stat.S_ISREG(info.st_mode):
                         if os.name == "nt":
-                            os.unlink(parent / name)
+                            self._win_remove_file(held, name, info)
                         else:
-                            os.unlink(name, dir_fd=parent)
+                            current = self._stat(held, name)
+                            if _state(current) != _state(info):
+                                raise EvidenceError("cleanup_entry_changed")
+                            os.unlink(name, dir_fd=held)
+                    else:
+                        raise EvidenceError("cleanup_unsafe_entry")
             components = parts(directory)
             with self.directory("/".join(components[:-1])) as parent:
+                if identity(self._stat(parent, components[-1])) != identity(expected):
+                    raise EvidenceError("cleanup_entry_changed")
+                budget.check()
                 if os.name == "nt":
                     os.rmdir(parent / components[-1])
                 else:
                     os.rmdir(components[-1], dir_fd=parent)
-        remove(relative)
+        components = parts(relative)
+        with self.directory("/".join(components[:-1])) as parent:
+            current = self._stat(parent, components[-1])
+        if expected is not None and identity(current) != identity(expected):
+            raise EvidenceError("cleanup_entry_changed")
+        remove(relative, current)
 
     def git(self, arguments, *, budget=None):
         if not getattr(self, "_git_projection", False):
@@ -652,7 +725,12 @@ def runner_context(engine_dir):
                 records.append([path, hashlib.sha256(root.read(path, budget)[0]).hexdigest()])
             root.validate()
         dependencies = []
-        for distribution in importlib.metadata.distributions():
+        # pytest and CLI startup can list the same search directory more than
+        # once. Count each search location once, retaining distinct locations
+        # (including conflicting installed versions) in the dependency inventory.
+        search_paths = list(dict.fromkeys(os.path.normcase(os.path.abspath(p or os.curdir))
+                                         for p in sys.path))
+        for distribution in importlib.metadata.distributions(path=search_paths):
             budget.entry()
             name, version = distribution.metadata.get("Name"), distribution.version
             if not name or not version:

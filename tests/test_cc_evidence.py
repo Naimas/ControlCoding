@@ -897,6 +897,127 @@ def test_atomic_begin_does_not_overwrite_collision(tmp_path):
     assert [p.name for p in (tmp_path / "receipts").iterdir()] == ["attempt.json"]
 
 
+@pytest.mark.parametrize("kind", ["verification", "invariants"])
+@pytest.mark.parametrize("boundary", ["before_invocation", "before_acquisition"])
+@pytest.mark.parametrize("existing_receipt", [False, True])
+def test_attempt_acquisition_preserves_foreign_directory(
+        tmp_path, monkeypatch, kind, boundary, existing_receipt, record_property):
+    contract(tmp_path, ["pass"], kind=kind)
+    fixed = evidence.datetime.datetime.now(evidence.datetime.timezone.utc)
+    real_datetime = evidence.datetime.datetime
+    class Frozen(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz else fixed.replace(tzinfo=None)
+    chosen = evidence.uuid.UUID("00000000-0000-4000-8000-000000000015")
+    monkeypatch.setattr(evidence.datetime, "datetime", Frozen)
+    monkeypatch.setattr(evidence.uuid, "uuid4", lambda: chosen)
+    prefix, _, folder = evidence.TYPES[kind]
+    ident = prefix + "_" + fixed.strftime("%Y%m%dT%H%M%S%fZ") + "_" + chosen.hex
+    relative = ".controlcoding/" + folder + "_tmp/" + ident
+    directory = tmp_path / relative
+    sentinel = directory / "foreign.txt"
+    receipt = tmp_path / evidence._folder(kind) / (ident + ".json")
+    def occupy():
+        directory.mkdir(parents=True)
+        sentinel.write_bytes(b"FOREIGN before acquisition")
+    if existing_receipt:
+        receipt.parent.mkdir(parents=True)
+        receipt.write_bytes(b'{"foreign":"receipt bytes"}')
+    if boundary == "before_invocation":
+        occupy()
+    else:
+        original = inputs.SafeRoot.directory
+        @contextlib.contextmanager
+        def collide(self, path="", **kwargs):
+            if path == relative and kwargs.get("create"):
+                occupy()
+            with original(self, path, **kwargs) as held:
+                yield held
+        monkeypatch.setattr(inputs.SafeRoot, "directory", collide)
+    executed = []
+    def forbidden(*args, **kwargs):
+        executed.append(True)
+        raise AssertionError("foreign attempt must not execute commands")
+    monkeypatch.setattr(evidence, "run_command", forbidden)
+    code, result = invoke(tmp_path, kind)
+    strict_code, current = status(tmp_path, kind, strict=True)
+    record_property("acquisition", json.dumps({
+        "code": code, "status": result["status"], "executed": executed,
+        "foreignExists": sentinel.exists(), "strictCode": strict_code,
+        "assessment": current["evidence"]["assessment"]}))
+    assert sentinel.read_bytes() == b"FOREIGN before acquisition"
+    assert not executed
+    assert code == 1 and result["status"] == "incomplete"
+    assert result["temporaryCleanupPending"] is False
+    assert strict_code == 1 and not current["evidence"]["assessment"]["currentRequiredPass"]
+    if existing_receipt:
+        assert receipt.read_bytes() == b'{"foreign":"receipt bytes"}'
+    else:
+        assert not receipt.exists()
+
+
+@pytest.mark.parametrize("exit_path", ["normal", "collision", "body_error"])
+def test_exclusive_directory_releases_handles(tmp_path, monkeypatch, exit_path):
+    opened, closed = [], []
+    if os.name == "nt":
+        original_open = inputs.SafeRoot._win_open
+        def track_open(self, *args, **kwargs):
+            handle = original_open(self, *args, **kwargs)
+            original_close = self._close
+            def track_close(value):
+                closed.append(value)
+                return original_close(value)
+            self._close = track_close
+            opened.append(handle)
+            return handle
+        monkeypatch.setattr(inputs.SafeRoot, "_win_open", track_open)
+    else:
+        original_open, original_close = os.open, os.close
+        def track_open(*args, **kwargs):
+            handle = original_open(*args, **kwargs)
+            opened.append(handle)
+            return handle
+        def track_close(handle):
+            closed.append(handle)
+            return original_close(handle)
+        monkeypatch.setattr(os, "open", track_open)
+        monkeypatch.setattr(os, "close", track_close)
+    (tmp_path / "shared").mkdir()
+    if exit_path == "collision":
+        (tmp_path / "shared/attempt").mkdir()
+    with contextlib.ExitStack() as stack:
+        if exit_path != "normal":
+            stack.enter_context(pytest.raises(inputs.EvidenceError if exit_path == "collision" else RuntimeError))
+        with inputs.SafeRoot(tmp_path) as root:
+            with root.directory("shared/attempt", create=True, exclusive=True):
+                if exit_path == "body_error":
+                    raise RuntimeError("fixture body failure")
+    assert opened and sorted(opened) == sorted(closed)
+
+
+def test_real_timeout_is_incomplete_and_strictly_rejected(tmp_path, record_property):
+    kind = "verification"
+    value = contract(tmp_path, ["import time; time.sleep(30)", "pass"], kind=kind)
+    key = "suites" if kind == "verification" else "invariants"
+    value[key][0]["timeoutSeconds"] = 1
+    (tmp_path / f"controlcoding.{kind}.json").write_text(json.dumps(value))
+    code, result = invoke(tmp_path, kind)
+    receipt = result["receipt"]
+    row = receipt[key][0]
+    record_property("timeout_receipt", json.dumps(receipt))
+    assert code == 1 and receipt["status"] == "incomplete"
+    assert row["error"] == "timeout" and row["returnCode"] is not None
+    assert 1000 <= row["durationMs"] < 5000
+    assert len(receipt[key]) == 1
+    assert receipt["selection"]["omitted"] == ["check-1"]
+    assert not (tmp_path / receipt["tempDir"]).exists()
+    assert json.loads((tmp_path / result["receiptPath"]).read_text())["status"] == "incomplete"
+    strict_code, current = status(tmp_path, kind, strict=True)
+    assert strict_code == 1
+    assert "attempt_incomplete" in current["evidence"]["assessment"]["reasons"]
+
+
 def test_unexpected_execution_exception_finalizes_without_secret(tmp_path, cheap_context, monkeypatch):
     contract(tmp_path)
     def unexpected(*args, **kwargs):
@@ -1048,7 +1169,7 @@ def test_abrupt_death_leaves_running_receipt(tmp_path):
     assert status(project, strict=True)[0] == 1
 
 
-def test_real_simultaneous_attempts_have_separate_receipts(tmp_path):
+def test_real_simultaneous_attempts_have_separate_receipts(tmp_path, record_property):
     project = tmp_path / "project"; project.mkdir()
     contract(project, ["import time; time.sleep(0.2)"])
     argv = [sys.executable, "-B", str(ROOT / "scripts/cc.py"), "verify", "run", "--project-root", str(project), "--json"]
@@ -1064,7 +1185,16 @@ def test_real_simultaneous_attempts_have_separate_receipts(tmp_path):
             if child.poll() is None:
                 child.kill(); child.wait(timeout=5)
     assert len({r["receiptPath"] for r in results}) == 2
-    assert status(project, strict=True)[0] == 0
+    local_code, local_status = status(project, strict=True)
+    child = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/cc.py"),
+                            "verify", "status", "--project-root", str(project),
+                            "--require-current", "--json"], capture_output=True, text=True, timeout=30)
+    cli_status = json.loads(child.stdout)
+    diagnostic = {"receipts": results, "inProcess": local_status, "cli": cli_status,
+                  "currentRunner": inputs.runner_context(ROOT / "scripts")}
+    record_property("concurrent_receipt_assessments", json.dumps(diagnostic))
+    assert child.returncode == 0, diagnostic
+    assert local_code == 0, diagnostic
 
 
 @pytest.mark.parametrize("command", ["verify", "invariants"])
@@ -1126,3 +1256,160 @@ def test_unselected_missing_optional_executable_does_not_block_required_run(tmp_
     code, payload = invoke(tmp_path, all_suites=True)
     assert code == 1 and payload["status"] == "incomplete"
     assert "executable_unresolved" in payload["receipt"]["errors"]
+
+
+def test_runner_dependency_discovery_deduplicates_search_locations(tmp_path, monkeypatch):
+    metadata = tmp_path / "h15_fixture-1.0.dist-info"
+    metadata.mkdir()
+    description = metadata / "METADATA"
+    description.write_text("Metadata-Version: 2.1\nName: h15-fixture\nVersion: 1.0\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    before = inputs.runner_context(ROOT / "scripts")
+    monkeypatch.syspath_prepend(str(tmp_path / "."))
+    repeated = inputs.runner_context(ROOT / "scripts")
+    assert before["complete"] and repeated == before
+    description.write_text("Metadata-Version: 2.1\nName: h15-fixture\nVersion: 2.0\n")
+    changed = inputs.runner_context(ROOT / "scripts")
+    assert changed["complete"] and changed["dependenciesDigest"] != before["dependenciesDigest"]
+    other = tmp_path / "other"
+    other.mkdir()
+    duplicate = other / metadata.name
+    duplicate.mkdir()
+    (duplicate / "METADATA").write_bytes(description.read_bytes())
+    monkeypatch.syspath_prepend(str(other))
+    distinct = inputs.runner_context(ROOT / "scripts")
+    assert distinct["complete"] and distinct["dependencyCount"] == changed["dependencyCount"] + 1
+
+
+def test_safe_cleanup_removes_owned_readonly_file(tmp_path):
+    directory = tmp_path / "owned"
+    directory.mkdir()
+    target = directory / "object"
+    target.write_bytes(b"owned")
+    target.chmod(stat.S_IREAD)
+    with inputs.SafeRoot(tmp_path) as root:
+        root.remove_tree("owned")
+    assert not directory.exists()
+
+
+def test_safe_cleanup_preserves_replacement_observed_after_listing(tmp_path, monkeypatch):
+    directory = tmp_path / "owned"
+    directory.mkdir()
+    target = directory / "object"
+    target.write_bytes(b"original")
+    real_stat = inputs.SafeRoot._stat
+    real_remove = getattr(inputs.SafeRoot, "_win_remove_file", None)
+    changed = []
+    observations = []
+    def replace():
+        target.unlink()
+        target.write_bytes(b"FOREIGN replacement bytes")
+        changed.append(True)
+    def observed(self, parent, name):
+        if name == "object":
+            observations.append(name)
+            if len(observations) == 2:
+                replace()
+        return real_stat(self, parent, name)
+    def remove(self, parent, name, expected):
+        replace()
+        return real_remove(self, parent, name, expected)
+    if os.name == "nt" and real_remove is not None:
+        monkeypatch.setattr(inputs.SafeRoot, "_win_remove_file", remove)
+    else:
+        monkeypatch.setattr(inputs.SafeRoot, "_stat", observed)
+    with inputs.SafeRoot(tmp_path) as root, pytest.raises(inputs.EvidenceError, match="cleanup_entry_changed"):
+        root.remove_tree("owned")
+    assert changed and target.read_bytes() == b"FOREIGN replacement bytes"
+
+
+def test_safe_cleanup_budget_failure_keeps_unvisited_files(tmp_path, monkeypatch):
+    directory = tmp_path / "owned"
+    directory.mkdir()
+    for name in ("one", "two"):
+        (directory / name).write_bytes(b"preserved")
+    real = inputs.Budget
+    monkeypatch.setattr(inputs, "Budget", lambda: real(entries=1))
+    with inputs.SafeRoot(tmp_path) as root, pytest.raises(inputs.EvidenceError, match="entry_limit"):
+        root.remove_tree("owned")
+    assert {p.name: p.read_bytes() for p in directory.iterdir()} == {
+        "one": b"preserved", "two": b"preserved"}
+
+
+def test_cleanup_failure_has_stable_reason_and_never_current_pass(tmp_path, cheap_context, monkeypatch):
+    contract(tmp_path, ["pass"])
+    def refuse(*args, **kwargs):
+        raise inputs.EvidenceError("cleanup_unsafe_entry")
+    monkeypatch.setattr(inputs.SafeRoot, "remove_tree", refuse)
+    code, result = invoke(tmp_path)
+    assert code == 1 and result["status"] == "incomplete"
+    assert result["receipt"]["errors"] == ["temp_cleanup_failed", "temp_cleanup_cleanup_unsafe_entry"]
+    assert status(tmp_path, strict=True)[0] == 1
+
+
+def test_safe_cleanup_refuses_link_to_foreign_directory(tmp_path):
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    sentinel = foreign / "sentinel"
+    sentinel.write_bytes(b"FOREIGN")
+    link = owned / "link"
+    if os.name == "nt":
+        junction(link, foreign)
+    else:
+        link.symlink_to(foreign, target_is_directory=True)
+    with inputs.SafeRoot(tmp_path) as root, pytest.raises(inputs.EvidenceError, match="cleanup_unsafe_entry"):
+        root.remove_tree("owned")
+    assert sentinel.read_bytes() == b"FOREIGN" and link.is_dir()
+
+
+def test_safe_cleanup_does_not_change_foreign_hardlink_metadata(tmp_path):
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    foreign = tmp_path / "foreign"
+    foreign.write_bytes(b"FOREIGN hardlink")
+    target = owned / "link"
+    os.link(foreign, target)
+    foreign.chmod(stat.S_IREAD)
+    before = foreign.stat()
+    with inputs.SafeRoot(tmp_path) as root:
+        if os.name == "nt":
+            with pytest.raises(inputs.EvidenceError, match="cleanup_shared_file"):
+                root.remove_tree("owned")
+            assert target.exists()
+        else:
+            root.remove_tree("owned")
+    assert foreign.read_bytes() == b"FOREIGN hardlink"
+    assert foreign.stat().st_mode == before.st_mode
+
+
+def test_safe_cleanup_preserves_replaced_attempt_root(tmp_path):
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    expected = owned.stat()
+    owned.rename(tmp_path / "displaced")
+    owned.mkdir()
+    (owned / "foreign").write_bytes(b"FOREIGN replacement root")
+    with inputs.SafeRoot(tmp_path) as root, pytest.raises(inputs.EvidenceError, match="cleanup_entry_changed"):
+        root.remove_tree("owned", expected=expected)
+    assert (owned / "foreign").read_bytes() == b"FOREIGN replacement root"
+
+
+def test_lifecycle_preserves_replaced_attempt_root(tmp_path, cheap_context, monkeypatch):
+    contract(tmp_path, ["pass"])
+    real = evidence.run_command
+    replacements = []
+    def execute(*args, **kwargs):
+        directory = next((tmp_path / ".controlcoding/verification_tmp").iterdir())
+        directory.rename(tmp_path / "displaced-attempt")
+        directory.mkdir()
+        (directory / "foreign").write_bytes(b"FOREIGN attempt")
+        replacements.append(directory)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(evidence, "run_command", execute)
+    code, result = invoke(tmp_path)
+    assert code == 1 and result["status"] == "incomplete"
+    assert "temp_cleanup_cleanup_entry_changed" in result["receipt"]["errors"]
+    assert len(replacements) == 1 and (replacements[0] / "foreign").read_bytes() == b"FOREIGN attempt"
+    assert status(tmp_path, strict=True)[0] == 1

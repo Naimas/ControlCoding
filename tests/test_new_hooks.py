@@ -532,17 +532,23 @@ def test_f2_concurrent_edit_after_enumeration_is_never_recovered(
 
 
 def test_f2_concurrent_edit_during_tracked_read_reports_incomplete(
-    hook_project, bash_inspector, monkeypatch, capsys,
+    hook_project, bash_inspector, monkeypatch, capsys, record_property,
 ):
     target = hook_project.root / "core" / "test.py"
     target.write_bytes(b"first user edit\n")
     real_read = bash_inspector.os.read
     changed = False
+    identity = target.stat()
+    observations = []
 
     def read_then_replace(descriptor, size):
         nonlocal changed
+        held = os.fstat(descriptor)
+        tracked = (held.st_dev, held.st_ino) == (identity.st_dev, identity.st_ino)
         chunk = real_read(descriptor, size)
-        if chunk and not changed:
+        if chunk and tracked and not changed:
+            observations.append({"descriptor": descriptor, "device": held.st_dev,
+                                 "inode": held.st_ino, "bytesRead": len(chunk)})
             changed = True
             target.write_bytes(b"actor user edit\n")
         return chunk
@@ -555,7 +561,8 @@ def test_f2_concurrent_edit_during_tracked_read_reports_incomplete(
         bash_inspector.main()
 
     assert exit_result.value.code == 0
-    assert changed
+    record_property("tracked_read_mutation", json.dumps(observations))
+    assert changed and len(observations) == 1
     assert target.read_bytes() == b"actor user edit\n"
     assert index.read_bytes() == index_before
     message = _observation_message(capsys.readouterr().out)

@@ -291,12 +291,17 @@ def execute(project, kind, entries, selected, required, requested, policy, contr
                "outputPolicy": {"mode": "metadata-only-v1", "rawTextPersisted": False},
                "ci": {"verified": False, "present": os.environ.get("CI", "").lower() == "true"}}
     initialized = False
+    held_temp = None
     try:
         with inputs.SafeRoot(project) as root:
             # Check the output parent before any child can emit E3 JUnit reports.
             with root.directory(_folder(kind), create=True):
                 pass
-            with root.directory(temp, create=True):
+            with root.directory(temp, create=True, exclusive=True) as directory:
+                temp_identity = os.stat(directory) if os.name == "nt" else os.fstat(directory)
+                # Keep the POSIX inode alive until cleanup; names may be replaced.
+                if os.name != "nt":
+                    held_temp = os.dup(directory)
                 initialized = True
             receipt["inputs"]["before"] = inputs.capture_inputs(project, policy)
             receipt["runner"]["before"] = inputs.runner_context(engine_dir)
@@ -326,10 +331,12 @@ def execute(project, kind, entries, selected, required, requested, policy, contr
                 receipt["errors"].append("execution_error")
             finally:
                 try:
-                    root.remove_tree(temp)
+                    root.remove_tree(temp, expected=temp_identity)
                     initialized = False
-                except (OSError, inputs.EvidenceError):
+                except (OSError, inputs.EvidenceError) as exc:
                     receipt["errors"].append("temp_cleanup_failed")
+                    reason = exc.code if isinstance(exc, inputs.EvidenceError) else f"os_error_{exc.errno}"
+                    receipt["errors"].append("temp_cleanup_" + reason)
                 receipt["inputs"]["after"] = inputs.capture_inputs(project, policy)
                 receipt["runner"]["after"] = inputs.runner_context(engine_dir)
                 receipt["executionContext"]["after"] = inputs.execution_context(project, policy, entries)
@@ -350,6 +357,9 @@ def execute(project, kind, entries, selected, required, requested, policy, contr
         # durable receipt could not be written. Do not expose filesystem errors.
         return {"ok": False, "status": "incomplete", "issues": ["receipt_lifecycle_failed"],
                 "receiptPath": relative, "temporaryCleanupPending": initialized}, 1
+    finally:
+        if held_temp is not None:
+            os.close(held_temp)
     code = 130 if receipt["executionState"] == "interrupted" else (0 if receipt["status"] in ("passed", "passed_subset") else 1)
     return {"ok": code == 0, "status": receipt["status"], "receiptPath": relative, "receipt": receipt}, code
 

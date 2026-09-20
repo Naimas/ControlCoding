@@ -74,6 +74,13 @@ Use the same process-local isolation when reproducing CI locally. Ambient EOL
 normalization can otherwise make a fixture's raw worktree bytes differ from its
 index before a hook runs. Do not change your global Git configuration for this.
 
+Pytest fixtures use pytest's external temporary root (or an explicitly supplied
+`--basetemp`) and compact per-test names to keep Windows Git paths bounded.
+Keep `TEMP`/`TMP` or an explicit test base outside the source checkout. Pytest
+owns fixture retention and cleanup; the verifier's bounded attempt directory
+remains separate from the fixture tree. Do not place fixture bases inside the
+project when running the public-example checks.
+
 Each pytest suite writes JUnit XML, including failed-test captured output, to
 `.controlcoding/verification_receipts/<suite-id>.xml`. These reports survive the
 verifier's temporary-directory cleanup; schema-v2 JSON receipts retain output

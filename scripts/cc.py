@@ -2250,7 +2250,7 @@ def _default_verification_contract(project: Path) -> dict:
         # Per-suite diagnostics must outlive the runner's temporary-directory cleanup.
         # These files are overwritten on rerun; the JSON receipt remains separate.
         return (
-            f"python -m pytest {targets} -q --basetemp {{temp}}/{temp_name} "
+            f"python -m pytest {targets} -q "
             f"--junitxml {{project}}/.controlcoding/verification_receipts/{suite_id}.xml "
             "-o junit_logging=all -o junit_log_passing_tests=false"
         )
@@ -2305,6 +2305,7 @@ def _default_verification_contract(project: Path) -> dict:
         },
         {
             "id": "cli-regression",
+            "timeoutSeconds": 390,
             "kind": "regression",
             "required": True,
             "command": pytest_command(pytest_targets, "cli-regression", "pytest"),
@@ -8362,11 +8363,14 @@ def _init_publish(path: Path, data: bytes, observations: dict, created: list):
     identity = os.fstat(descriptor)
     owned = (identity.st_dev, identity.st_ino)
     try:
-        stream = os.fdopen(descriptor, "wb")
-        descriptor = -1
-        with stream:
+        # POSIX: retain the inode until cleanup so unlink/recreate cannot reuse
+        # its identity. Windows CRT handles must close before unlink/publication.
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(data)
             stream.flush()
+        if os.name == "nt":
+            os.close(descriptor)
+            descriptor = -1
         snapshot = _init_snapshot(stage)
         if snapshot is None or snapshot[:2] != owned or snapshot[-1] != data:
             raise OSError(f"init stage changed: {stage}")
@@ -8378,25 +8382,35 @@ def _init_publish(path: Path, data: bytes, observations: dict, created: list):
             raise OSError(f"init publication changed: {path}")
         observations[path] = (False, published)
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        # Revalidate directory identities before accessing the lexical stage name.
-        for parent in stage.parents:
-            expected = observations.get(parent)
-            if expected is not None and _init_snapshot(parent, directory=True) != expected[1]:
-                raise OSError(f"init stage cleanup refused: parent changed; inspect {stage}")
-        from cc_setup import _pack_safe_kind
-        entry = _pack_safe_kind(stage, expected="file")
-        if entry is not None:
-            if (entry.st_dev, entry.st_ino) != owned:
-                raise OSError(f"init stage cleanup refused: foreign replacement retained at {stage}")
-            stage.unlink()
-        # Unlinking the other hard link can change the published inode's ctime.
-        if path in created:
-            current = _init_snapshot(path)
-            if current is None or current[:2] != owned or current[-1] != data:
-                raise OSError(f"init output changed during cleanup: {path}")
-            observations[path] = (False, current)
+        try:
+            _init_cleanup_stage(stage, path, data, owned, observations, created)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+
+def _init_cleanup_stage(stage, path, data, owned, observations, created):
+    """Refuse observed replacement or modification; never delete foreign bytes."""
+    # Revalidate directory identities before accessing the lexical stage name.
+    for parent in stage.parents:
+        expected = observations.get(parent)
+        if expected is not None and _init_snapshot(parent, directory=True) != expected[1]:
+            raise OSError(f"init stage cleanup refused: parent changed; inspect {stage}")
+    from cc_setup import _pack_safe_kind
+    entry = _pack_safe_kind(stage, expected="file")
+    if entry is not None:
+        if (entry.st_dev, entry.st_ino) != owned:
+            raise OSError(f"init stage cleanup refused: foreign replacement retained at {stage}")
+        snapshot = _init_snapshot(stage)
+        if snapshot is None or snapshot[:2] != owned or snapshot[-1] != data:
+            raise OSError(f"init stage cleanup refused: changed stage retained at {stage}")
+        stage.unlink()
+    # Unlinking the other hard link can change the published inode's ctime.
+    if path in created:
+        current = _init_snapshot(path)
+        if current is None or current[:2] != owned or current[-1] != data:
+            raise OSError(f"init output changed during cleanup: {path}")
+        observations[path] = (False, current)
 
 
 def _apply_init(plan: dict, created: list):

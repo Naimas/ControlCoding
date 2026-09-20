@@ -22,6 +22,11 @@ def test_default_selection_covers_remediation_surfaces(source):
                 if source == "tracked" else cc._default_verification_contract(ROOT))
     selected, issues = cc._select_verification_suites(contract, [], [], False)
     assert not issues
+    budgets = {s["id"]: s["timeoutSeconds"] for s in selected}
+    assert budgets.pop("cli-regression") == 390
+    assert set(budgets.values()) == {300}
+    # pytest owns an external, short fixture tree; receipts stay in the project.
+    assert all("--basetemp" not in suite["command"] for suite in selected)
     targets = {token for suite in selected for token in shlex.split(suite["command"])
                if token.startswith("tests/") and token.endswith(".py")}
     assert {
@@ -46,7 +51,7 @@ def test_generated_optional_targets_exist_and_tracked_suites_agree(tmp_path):
     assert "tests/test_cc_runtime.py" not in optional["setup-runtime-regression"]["command"]
     tracked = json.loads((ROOT / "controlcoding.verification.json").read_text(encoding="utf-8"))
     def checks(policy):
-        return {s["id"]: (s["kind"], s["required"], s["command"])
+        return {s["id"]: (s["kind"], s["required"], s["command"], s.get("timeoutSeconds", 300))
                 for s in policy["suites"] if s["required"]}
     assert checks(tracked) == checks(cc._default_verification_contract(ROOT))
 

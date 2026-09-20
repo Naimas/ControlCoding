@@ -14059,17 +14059,37 @@ class TestInitPreservation:
         if which == "settings": assert (project / "CONTROLCODING.md").is_file()
         record_property("events", json.dumps(events)); record_property("returncode", 1)
 
-    @pytest.mark.parametrize("replacement", ["none", "file", "directory"])
+    @pytest.mark.parametrize("replacement", ["none", "file", "directory", "inplace"])
     def test_unsupported_publication_and_owned_stage_cleanup(self, tmp_path, monkeypatch, record_property, capsys, replacement):
+        import tempfile
         project = tmp_path / "project"; project.mkdir(); events = []; stages = []; real = os.link
+        descriptors = {}
+        real_mkstemp = tempfile.mkstemp
+        def mkstemp(*args, **kwargs):
+            descriptor, name = real_mkstemp(*args, **kwargs)
+            descriptors[name] = descriptor
+            return descriptor, name
+        monkeypatch.setattr(tempfile, "mkstemp", mkstemp)
+        identities = []
         def link(src, dst, *args, **kwargs):
             if Path(dst).name == "settings.json":
                 events.append("actual_link_failure"); stages.append(Path(src))
+                before = Path(src).stat()
+                held = None
+                if os.name != "nt":
+                    try:
+                        info = os.fstat(descriptors[str(src)])
+                        held = [info.st_dev, info.st_ino]
+                    except OSError:
+                        pass
                 if replacement != "none":
-                    Path(src).unlink()
-                    if replacement == "file": Path(src).write_bytes(b"foreign stage")
+                    if replacement != "inplace": Path(src).unlink()
+                    if replacement in {"file", "inplace"}: Path(src).write_bytes(b"foreign stage")
                     else: Path(src).mkdir()
                     events.append("stage_replacement_executed")
+                after = Path(src).stat()
+                identities.append({"before": [before.st_dev, before.st_ino],
+                                   "after": [after.st_dev, after.st_ino], "held": held})
                 raise OSError("fixture publication unsupported")
             return real(src, dst, *args, **kwargs)
         monkeypatch.setattr(os, "link", link)
@@ -14078,9 +14098,14 @@ class TestInitPreservation:
         assert events[0] == "actual_link_failure" and len(stages) == 1
         assert not (project / ".controlcoding/settings.json").exists()
         assert (project / "CONTROLCODING.md").exists()
+        record_property("stage_identities", json.dumps(identities))
         if replacement == "none": assert not stages[0].exists()
-        elif replacement == "file": assert stages[0].read_bytes() == b"foreign stage"
+        elif replacement in {"file", "inplace"}: assert stages[0].read_bytes() == b"foreign stage"
         else: assert stages[0].is_dir()
+        if os.name != "nt":
+            assert identities[0]["held"] == identities[0]["before"]
+            if replacement in {"file", "directory"}:
+                assert identities[0]["after"] != identities[0]["before"]
         assert "Partial initialization" in capsys.readouterr().out
         record_property("events", json.dumps(events)); record_property("returncode", 1)
 
