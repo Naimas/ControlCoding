@@ -49,8 +49,9 @@ python "/path/to/ControlCoding/scripts/cc.py" doctor --project-root .
 ```
 
 The result is a canonical project context, matching host adapters, local
-configuration, and a `doctor` report showing which protections are real for the
-selected host.
+configuration, and a `doctor` report of installation checks and the selected
+CC integration model. This report does not demonstrate that the host loaded a
+hook or delivered an event to it.
 
 Core requires Python 3.11+. Selected memory also requires a working SQLite
 `deserialize` API, checked before setup writes. The guide prints instructions;
@@ -95,6 +96,22 @@ metrics, adoption patterns, costs, and limitations.
 Start with the [installation guide](docs/install-controlcoding-on-your-project.md)
 or [Quick Start](docs/quick-start.md). For scope and licensing boundaries, see
 the [Release Model](docs/release-model.md) and [LICENSE](LICENSE).
+
+## Unreleased Development Work
+
+The [Unreleased changelog](CHANGELOG.md#unreleased) describes the Core changes
+under development after 3.0.2: preservation fixes for hook inspection and setup,
+runtime prerequisite checks, and verification receipts bound to source,
+execution context and the complete required selection. These changes do not
+constitute a new tagged release or stable-release approval.
+
+Validation follows [controlcoding.verification.json](controlcoding.verification.json)
+and the [contribution guide](CONTRIBUTING.md#running-tests). The required contract
+covers a maintained subset of the repository tests. Review the exact candidate's
+receipts, every configured CI matrix job and its skips; a passing local selection
+or individual job does not establish a complete required gate. A timeout leaves
+an incomplete result even when earlier checks passed. Current run results are
+available in the [verification workflow](https://github.com/Naimas/ControlCoding/actions/workflows/controlcoding-verification.yml).
 
 ## 3.0.2 Public Release
 
@@ -164,8 +181,9 @@ collapse into God files, duplicated logic, or scattered one-off scripts.
 | 🟩 | **Can it be used with Cursor?** | Yes. Cursor can be one of the hosts. ControlCoding does not require a specific IDE or model, but enforcement strength depends on the host and configuration. |
 
 > [!NOTE]
-> The status of a protection is part of the result, not a marketing claim. Use
-> `doctor` to see what is real for the active host and configuration.
+> Use `doctor` to inspect installation checks and the configured CC integration
+> model. Actual hook loading and event delivery require evidence from the named
+> host, version, operating system and tool route.
 
 ## Canonical Context And Project Setup Docs
 
