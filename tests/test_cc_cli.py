@@ -8560,7 +8560,7 @@ class TestMajorVersionPublicTruth:
         assert version == "3.0.2"
         assert issue == ""
 
-    def test_real_release_docs_describe_published_clean_history(self):
+    def test_real_release_docs_distinguish_tagged_history_from_current_source(self):
         repo_root = Path(__file__).resolve().parent.parent
         readme = (repo_root / "README.md").read_text(encoding="utf-8")
         changelog = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -8570,12 +8570,18 @@ class TestMajorVersionPublicTruth:
 
         combined = " ".join((readme + "\n" + changelog + "\n" + release_model).split())
 
-        assert "ControlCoding V1/Core `3.0.2` is the current public release" in readme
+        assert "ControlCoding V1/Core `3.0.2` is the latest **tagged** release" in readme
+        assert "**Status: development source. Requires Python 3.11+.**" in readme
+        assert "The `v3.0.2` files under GitHub Releases are an older snapshot." in readme
+        assert "archive/refs/heads/master.zip" in readme
         assert (
             "Licensed current ControlCoding material and embedded ControlWork "
             "components" in " ".join(changelog.split())
         )
-        assert "current published V1/Core release" in release_model
+        assert "`v3.0.2` is the latest tagged release, retained as an older snapshot." in release_model
+        assert "A new numbered release has not been published." in readme
+        assert "A new numbered release has not been published." in release_model
+        assert "no new version, tag or release is introduced" in " ".join(changelog.split())
         assert "clean public repository begins at `3.0.1`" in release_model
         assert "not a published release" not in combined
         assert "future `v3.0.2` tag" not in combined
