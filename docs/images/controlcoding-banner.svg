@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+  <title id="title">ControlCoding — Build with AI. Keep architectural control.</title>
+  <desc id="desc">Dark charcoal banner with warm orange branding and an abstract connected grid representing project structure.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#111416"/><stop offset="1" stop-color="#25201c"/></linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity=".035"/></pattern>
+  </defs>
+  <rect width="1280" height="360" rx="20" fill="url(#background)"/>
+  <rect width="1280" height="360" rx="20" fill="url(#grid)"/>
+  <path d="M48 312H1232" stroke="#ffffff" stroke-opacity=".12"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="48" y="44" width="54" height="54" rx="14" fill="#32251c" stroke="#f1a26a"/>
+    <text x="75" y="78" text-anchor="middle" fill="#f1a26a" font-size="21" font-weight="600">CC</text>
+    <text x="120" y="79" fill="#f2eee9" font-size="29" font-weight="700">ControlCoding</text>
+    <text x="49" y="164" fill="#f5f1ec" font-size="43" font-weight="600">Build with AI.</text>
+    <text x="49" y="218" fill="#f1a26a" font-size="43" font-weight="600">Keep architectural control.</text>
+    <text x="51" y="266" fill="#b2b8bd" font-size="18">Project structure. Explicit boundaries. Verification evidence.</text>
+    <text x="51" y="338" fill="#c1aaa0" font-size="11" letter-spacing="2.3">SOFTWARE GOVERNANCE FOR AI-ASSISTED DEVELOPMENT</text>
+  </g>
+  <g transform="translate(920 58)">
+    <path d="M28 38H202M115 38V98M28 98H202M28 98V155M115 98V212M202 98V155" stroke="#876245" stroke-width="2" fill="none"/>
+    <g stroke-width="1.5">
+      <rect x="90" y="12" width="50" height="50" rx="10" fill="#f1a26a" stroke="#f9bd92"/>
+      <rect x="3" y="72" width="50" height="50" rx="10" fill="#2c3c37" stroke="#81a793"/>
+      <rect x="90" y="72" width="50" height="50" rx="10" fill="#343c47" stroke="#8eabc9"/>
+      <rect x="177" y="72" width="50" height="50" rx="10" fill="#42342a" stroke="#c6986e"/>
+      <rect x="3" y="132" width="50" height="50" rx="10" fill="#2c3c37" stroke="#81a793"/>
+      <rect x="90" y="132" width="50" height="50" rx="10" fill="#42342a" stroke="#c6986e"/>
+      <rect x="177" y="132" width="50" height="50" rx="10" fill="#3e2d2c" stroke="#c4867d"/>
+      <rect x="90" y="192" width="50" height="50" rx="10" fill="#292d32" stroke="#68717b"/>
+    </g>
+    <path d="m104 36 8 8 14-16" stroke="#35251b" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

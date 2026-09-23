@@ -1,5 +1,7 @@
 # ControlCoding
 
+![ControlCoding — Build with AI. Keep architectural control.](docs/images/controlcoding-banner.svg)
+
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue) ![License PolyForm Shield](https://img.shields.io/badge/License-PolyForm%20Shield-yellow)
 
 **Build complex software with AI without losing architectural control.**
@@ -22,6 +24,19 @@ updates. A new numbered release has not been published.
 
 The verified Core update and its remaining limits are described under
 [Unreleased Development Work](#unreleased-development-work).
+
+## Desktop UI Preview
+
+The local development UI brings project structure, code-unit inspection and
+delivery evidence into one workspace. This screenshot shows the actual panel
+observing the ControlCoding source tree, with file details selected in the grid.
+Neutral cells mean completion is unverified; file presence alone is not proof
+of completed work.
+
+![ControlCoding development UI: Project Map code grid and file inspection](docs/images/project-map.png)
+
+*Development preview captured September 23, 2026. The desktop UI is not included
+in the current Core source download or the historical `v3.0.2` release.*
 
 ## Who It Is For
 
