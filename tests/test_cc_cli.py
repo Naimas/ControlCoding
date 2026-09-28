@@ -8570,7 +8570,7 @@ class TestMajorVersionPublicTruth:
 
         combined = " ".join((readme + "\n" + changelog + "\n" + release_model).split())
 
-        assert "ControlCoding V1/Core `3.0.2` is the latest **tagged** release" in readme
+        assert "ControlCoding V1/Core `3.0.2` is the latest **stable** Core release" in readme
         assert "**Status: development source. Requires Python 3.11+.**" in readme
         assert "The `v3.0.2` files under GitHub Releases are an older snapshot." in readme
         assert "archive/refs/heads/master.zip" in readme
@@ -8578,7 +8578,7 @@ class TestMajorVersionPublicTruth:
             "Licensed current ControlCoding material and embedded ControlWork "
             "components" in " ".join(changelog.split())
         )
-        assert "`v3.0.2` is the latest tagged release, retained as an older snapshot." in release_model
+        assert "`v3.0.2` is the latest stable Core release, retained as an older snapshot." in release_model
         assert "A new numbered release has not been published." in readme
         assert "A new numbered release has not been published." in release_model
         assert "no new version, tag or release is introduced" in " ".join(changelog.split())

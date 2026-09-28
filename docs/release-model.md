@@ -6,14 +6,21 @@ V1/Core release.
 ## Current Download and Tagged Releases
 
 The [current Core source ZIP](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip) follows `master` and contains the
-September 2026 preservation, setup and verification updates. It is development
+September 2026 preservation, setup, verification, knowledge and work-planning updates. It is development
 source; [download status and the exact verified baseline](../README.md#download-current-core)
 are maintained in the README.
 
-`v3.0.2` is the latest tagged release, retained as an older snapshot. Its release
+`v3.0.2` is the latest stable Core release, retained as an older snapshot. Its release
 assets predate those updates. A new numbered release has not been published.
 Use the current source download for the updated code; keep historical release
 results associated with their original tag.
+
+The separate [desktop preview dated September 28, 2026](https://github.com/Naimas/ControlCoding/releases/tag/desktop-preview-20260928)
+is a published prerelease. It provides the Windows x64 portable app, the complete
+desktop source/test archive and checksums. The tag pins its Core source; the
+automatically generated GitHub source archives contain Core and public docs.
+The desktop sources are the separate `controlcoding-desktop-source-20260928.zip`
+asset. See [preview scope and verification](desktop-preview-20260928.md).
 
 ## Current Package
 
@@ -34,7 +41,7 @@ Core includes:
 
 ## 3.0.2 Release Position
 
-ControlCoding `3.0.2` is the latest tagged V1/Core release, preceding the current
+ControlCoding `3.0.2` is the latest stable V1/Core release, preceding the current
 source update described above. It belongs to
 the Version 3 major release line because the public CLI is incompatible with the
 stable `v2.5.2` line in four ways: `cc replace start/status/complete` was
@@ -89,14 +96,16 @@ release.
 
 ## Agents And Studio
 
-`Agents` and `Studio` describe possible additive product layers, not packages
-shipped by this release.
+The optional desktop is available as the separately tagged development preview
+above. It is outside the V1/Core source-package manifest and does not replace
+the historical stable release. Its local/API/manual AI roles, reviewed memory
+and planning workflows retain the consent and verification boundaries documented
+for that preview.
 
-- An Agents release would require an explicit manifest, documented runtime
-  boundary, consent configuration, and verification evidence.
-- A Studio release would require a separately promoted UI implementation and
-  its own build, security, and integration gates.
-- Neither layer is a prerequisite for Core.
+There is no separately promoted autonomous Agents package. Explicit helper
+components remain optional, and neither desktop nor agent helpers are a
+prerequisite for Core. A prerelease publication does not establish full-product,
+independent or stable-release acceptance.
 
 ## Curated Benchmark Evidence
 

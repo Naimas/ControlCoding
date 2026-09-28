@@ -3,21 +3,36 @@
 ![ControlCoding — Build with AI. Keep architectural control.](docs/images/controlcoding-banner.svg)
 
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue) ![License PolyForm Shield](https://img.shields.io/badge/License-PolyForm%20Shield-yellow)
+[![Core verification](https://github.com/Naimas/ControlCoding/actions/workflows/controlcoding-verification.yml/badge.svg?branch=master)](https://github.com/Naimas/ControlCoding/actions/workflows/controlcoding-verification.yml)
 
 **Build complex software with AI without losing architectural control.**
 
-ControlCoding is a developer-side, source-available governance toolkit for
-keeping AI-assisted changes inside explicit architectural, authorization, and
+ControlCoding combines project rules and verification with an optional desktop
+workspace for architecture, documents, project memory and work planning. Keep
+your coding host, choose local AI, an API or manual chat exchange, and inspect
+the sources and evidence behind decisions.
+
+The source-available Core provides explicit architectural, authorization and
 verification boundaries. It operates alongside a project during development;
 it is not a runtime dependency of the software being built.
+
+| Start here | Download | Requirements |
+|---|---|---|
+| **Use the desktop UI** | [Windows x64 portable ZIP](https://github.com/Naimas/ControlCoding/releases/download/desktop-preview-20260928/observer-work-gantt-20260928.zip) | Windows x64 and Python 3.11+; unsigned development preview |
+| **Use Core with your coding host** | [Current Core source ZIP](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip) | Python 3.11+; [installation guide](docs/install-controlcoding-on-your-project.md) |
+| **Inspect or develop the desktop** | [Desktop source and tests](https://github.com/Naimas/ControlCoding/releases/download/desktop-preview-20260928/controlcoding-desktop-source-20260928.zip) | Combine with Core at tag `desktop-preview-20260928` |
+
+[Release notes and checksums](https://github.com/Naimas/ControlCoding/releases/tag/desktop-preview-20260928)
+· [Documentation index](docs/INDEX.md)
 
 ## Download Current Core
 
 **[Download current Core (ZIP)](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip)** · [Installation guide](docs/install-controlcoding-on-your-project.md)
 
 **Status: development source. Requires Python 3.11+.** This download follows
-`master` and includes the September 2026 preservation, setup and verification
-updates. A new numbered release has not been published.
+`master` and includes the September 2026 preservation, setup, verification,
+knowledge and work-planning updates. A new numbered release has not been published.
+The desktop preview has its own dated prerelease tag and downloads below.
 
 > **The `v3.0.2` files under GitHub Releases are an older snapshot.** They do not
 > contain these updates. Use the current Core download above for the updated code.
@@ -29,12 +44,38 @@ The verified Core update and its remaining limits are described under
 
 **[Download the Windows x64 desktop preview](https://github.com/Naimas/ControlCoding/releases/tag/desktop-preview-20260928)** · [Preview scope and verification](docs/desktop-preview-20260928.md)
 
-The optional portable app now includes project knowledge, reviewed memory
-consolidation, local/API/manual AI workflows and work planning with process
-dependencies and a calendar Gantt. Python 3.11+ remains external. This is an
-unsigned prerelease; whole-product quality and adoption acceptance remain open.
-The release also provides the complete desktop source and tests as a separate
-archive, keeping the Core repository boundary unchanged.
+The **September 28, 2026** preview brings the following workflows into one
+workspace. Each view uses the selected project and its authorized source scope.
+
+| Workspace | What you can do |
+|---|---|
+| **Project Map** | Explore the roadmap, architecture matrix and colored code grid; inspect file/symbol status, dependencies and static-analysis findings. |
+| **ControlWork** | Navigate a document circuit map, open formatted source documents, and inspect recorded work, sessions, decisions and evidence. |
+| **Memory & wiki** | Refresh selected sources incrementally, retain opted-in conversations, review derived wiki content and search with source citations. |
+| **AI & Sessions** | Assign local Ollama, OpenAI API or manual external-chat exchange per role; inspect and edit prompts and supported generation settings. |
+| **Memory consolidation** | Prepare source-bound proposals through local/API/manual workflows, then accept or reject them before publication into derived memory. |
+| **Work plan & Gantt** | Explore main blocks and subtasks, dependency arrows, parallel stages, calendar estimates, critical paths, buffers and float. |
+| **Setup & checks** | Review configuration and installation effects, run Core checks and inspect their actual results. |
+
+AI roles provide advice and reviewed proposals; code changes still require a
+separate coding host. Memory and automatic updates require explicit settings.
+Existing archives require a verified backup and explicit migration before using
+consolidation. Whole-product quality and adoption acceptance remain open.
+
+Extract the portable ZIP into a new empty folder. From PowerShell in that folder:
+
+```powershell
+.\Launch-Observer.ps1 -Python 'C:\path\to\python.exe' -Check
+.\Launch-Observer.ps1 -Python 'C:\path\to\python.exe'
+```
+
+Python 3.11+ must already be installed; the package includes the Electron runtime.
+The existing PowerShell execution policy applies. Choose a project in the app,
+then configure the source scope and optional AI roles. See the
+[desktop guide](docs/desktop-preview-20260928.md) for setup and verification limits.
+
+The complete desktop source and tests are supplied in a separate archive.
+Core remains usable independently, and its source ZIP does not include the UI.
 
 The local development UI brings project structure, code-unit inspection and
 delivery evidence into one workspace. This screenshot shows the actual panel
@@ -144,24 +185,24 @@ the [Release Model](docs/release-model.md) and [LICENSE](LICENSE).
 ## Unreleased Development Work
 
 The [Unreleased changelog](CHANGELOG.md#unreleased) describes the Core changes
-integrated into `master` after 3.0.2: preservation fixes for hook inspection and
-setup, runtime prerequisite checks, and verification receipts bound to source,
-execution context and the complete required selection. Use the
-[current Core download](#download-current-core) to obtain them.
+integrated into `master` after 3.0.2, including preservation and verification
+fixes, unified knowledge, reviewed memory consolidation and work scheduling.
+The dated desktop prerelease makes these development workflows available for
+inspection and testing; the numbered stable release remains unchanged.
 
-On September 20, 2026, the [merged Core update](https://github.com/Naimas/ControlCoding/commit/75e2dd67b805fe34d7ca587b23459a84a2d6d073)
-passed all four jobs in its [post-merge CI run](https://github.com/Naimas/ControlCoding/actions/runs/35520938199):
-Windows and Ubuntu, with Python 3.11 and 3.13. Every job accounted for 2,078
-canonical test cases and passed all ten required checks. Windows: 2,069 passed
-and nine platform skips per runtime; Ubuntu: 2,047 passed and 31 platform skips.
-Every skipped case passed on the opposite OS in the same runtime. Dependency
-and candidate installation also passed. These results belong to that exact
-commit; later commits have their own workflow results.
+The [September 28 publication commit](https://github.com/Naimas/ControlCoding/commit/16e7ff9b5813328d778849ea545e1f6dbba19b99)
+passed all four jobs in its [Core CI matrix](https://github.com/Naimas/ControlCoding/actions/runs/36435197370):
+Windows and Ubuntu, with Python 3.11 and 3.13. The same commit passed all ten
+required checks locally on Windows/Python 3.13: 2,055 pytest cases passed and
+23 were skipped. The published portable app passed 15 Gantt desktop checks.
+These results belong to that exact commit and artifact; later commits have
+their own workflow results. See [preview verification](docs/desktop-preview-20260928.md)
+for additional source-bound checks and limits.
 
-This is a verified development update. Named editor-host loading and event
-delivery, broader setup/update/removal behavior, consent/data handling and
-representative memory evaluation remain separate validation requirements.
-A new tagged release and stable-release approval have not been declared.
+Independent answer/citation grading, real session-resumption and multi-day
+adoption evidence, live remote API validation and broader release review remain
+open. Named editor-host loading and event delivery also require separate
+evidence. A published prerelease does not close these acceptance requirements.
 
 Validation follows [controlcoding.verification.json](controlcoding.verification.json)
 and the [contribution guide](CONTRIBUTING.md#running-tests). The required contract
@@ -173,7 +214,7 @@ available in the [verification workflow](https://github.com/Naimas/ControlCoding
 
 ## 3.0.2 Public Release
 
-ControlCoding V1/Core `3.0.2` is the latest **tagged** release and is retained as
+ControlCoding V1/Core `3.0.2` is the latest **stable** Core release and is retained as
 an older snapshot. It predates the updates in the [current Core download](#download-current-core).
 The following notes describe `3.0.2` only. It applies
 PolyForm Shield 1.0.0 consistently to current ControlCoding and embedded
@@ -305,7 +346,7 @@ ControlCoding is AI-agnostic, not credential-agnostic.
 - Vendor-approved connector systems are acceptable when used inside the vendor's own product flow
 - The user's host surface (Claude Code, Codex CLI, VS Code, Cursor, or another chosen tool) is external to ControlCoding
 - The current V1/Core source package does not include the desktop Studio/gateway UI
-- Any future ControlCoding-owned UI must use official API or local-runtime integration and preserve an explicit primary-surface boundary
+- The optional desktop preview uses explicit official API, local-runtime or user-mediated manual exchange workflows
 - ControlCoding does **not** support embedding Claude.ai or ChatGPT consumer login inside a CC-owned interface
 - ControlCoding does **not** support reusing consumer OAuth/session tokens across third-party products
 - ControlCoding does **not** support hidden automatic agent calls with opaque backend, cost, or permission boundaries
@@ -346,31 +387,19 @@ ControlCoding aims to make the supported path clear through surface authority co
 
 ### Public Product Tiers
 
-ControlCoding's public packaging is:
+ControlCoding's current distribution separates Core from the optional desktop:
 
 | Tier | What it includes | Typical use |
 |---|---|---|
 | **Core** | The V1 source package: public contract, hooks, CLI/setup, memory, tests, and verification | Default baseline for teams or solo developers |
-| **Agents** | A possible additive helper layer with separate consent and verification requirements | Not a package shipped by this release |
-| **Studio** | A possible desktop UI layer | Not shipped by this release |
+| **Desktop preview** | Windows app, Project Map, ControlWork, AI role settings, memory and Gantt | Optional prerelease, distributed separately with its desktop sources |
+| **Agent helpers** | Explicit helper roles, prompts and optional consultation components | Chosen-host helpers or configured desktop advice; no separate autonomous-agent package |
 
-Current implementation note:
-
-- the runtime still uses engagement config and UI modes under the hood
-- those are implementation knobs, not the preferred public product menu
-- for the current public release order, keep the promised `Agents` story explicit and host-chat-defined: prompt, folder, and behavior contract first
-- API-backed routed specialists belong to the later Version II path, not the current release baseline
-- `local_only` is a policy boundary, not a provider selection; it never selects Ollama or any other adapter
-- tandem stays off until both backend fields are configured explicitly; the two roles may use the same registered backend when that is an intentional choice
-- external calls expose backend, model, consent context, and a compatible `costStatus`; unavailable configured backends fail without a silent provider fallback
-
-Recommended release order:
-
-- publish `Core` first as the default serious baseline
-- keep `Core + manual consultation` inside that `Core` release story
-- if `Agents` are exposed in the release story, keep them explicit on the chosen official host through prompt, folder, and behavior contracts
-- move API-backed routed specialists to the later Version II path
-- keep `Studio` / CC UI as the last optional extra, not as part of the current release path
+Core engagement and desktop role assignments have separate configuration and
+authority. `local_only` in Core is a policy boundary, not an Ollama selection.
+The desktop's [AI role settings](docs/panel-ai-roles.md) choose the actual provider,
+model and supported options. External requests use the configured consent and
+limits; an unavailable provider does not silently switch to another one.
 
 For the public packaging split and the current release position of each layer, see [docs/release-model.md](docs/release-model.md).
 
@@ -527,14 +556,16 @@ The project-definition package follows the usage model already chosen in base se
 - `Core`: direct structured planning by the main chat
 - `Core` with manual consultation: same direct kickoff, but one bounded external consultation path is allowed if a blocking uncertainty remains
 - `Agents`: specialist-assisted planning with explicit host-chat helper roles and explicit provenance
-- `Studio`: future/internal UI path, not part of the current public release story
+- `Studio`: a Core engagement label; downloading the separate desktop preview does not enable autonomous specialists
 
 If you run `setup-project`, CC can also scaffold the first engineering documents from that input.
 
 CC working documents stay local-only in the public install path. The base setup no longer asks the adopter to decide that.
 
-No bundled graphical installer is included in this release. Project framing
-and kickoff docs remain a separate `setup-project` step after installation.
+Core is distributed as source. The optional desktop preview offers a reviewed
+Setup workflow over the Core commands; it is a portable app, not an OS installer.
+Project framing and kickoff docs remain a separate `setup-project` step after
+installation.
 
 The chat collects tier/runtime choices before `setup --engagement` applies the
 reviewed `engagement` section of the handoff. Those choices include:
@@ -550,12 +581,12 @@ reviewed `engagement` section of the handoff. Those choices include:
 `Core + manual consultation` stays separate from that matrix. It is a bounded,
 user-mediated planning escape hatch, not hidden specialist orchestration.
 
-Current release freeze:
+Core consultation scope:
 
 - `Core + manual consultation` is the public manual second-opinion path
 - the current public `Agents` path is explicit helper work on the chosen host through prompt, folder, and behavior contracts
-- API-backed routed specialists belong to the later Version II path
-- `Studio` / CC UI is deferred and remains a later optional extra
+- autonomous coding-agent orchestration is outside the current public baseline
+- the separate desktop preview provides configured local/API/manual advisory roles
 
 `cc.py doctor` then validates that the installation is coherent.
 For the selected host it reports the four gate slots explicitly:
@@ -608,7 +639,8 @@ The import stores concise engineering summaries only. It does not persist raw
 chat transcripts or claim hidden routed/automatic orchestration parity. This
 bridge path matches the current release-oriented `Agents` story: explicit helper
 roles on the chosen host with prompt, folder, and behavior contracts.
-API-backed routed specialists belong to the later Version II path.
+The desktop's local/API/manual role workflow is separate from this Core bridge;
+see [AI role assignments](docs/panel-ai-roles.md).
 
 Runtime gate behavior now matches that distinction:
 
@@ -911,7 +943,6 @@ templates/
     SETUP.md                      # Setup guide with 5 configuration profiles
   tests/
     test_domain_invariants.py.example  # Invariant test template with examples by domain
-prompts/                          # Prompt scripts for multi-step development tasks
 tests/                            # Test suite; publish a current count only from a verified final release run
   test_check_boundaries.py        # Boundary enforcement tests
   test_check_dangerous_commands.py # Dangerous command blocking tests
@@ -928,6 +959,8 @@ benchmarks/
 
 Local maintainer-only working docs (gitignored, not published)
 
+_work/                            # Internal plans, reviews and handoffs
+prompts/                          # Local development prompts
 CLAUDE.md                         # Local host-native context for this repo (maintainer legacy)
 STATUS.md                         # Local project state
 ROADMAP.md                        # Local roadmap
