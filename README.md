@@ -20,7 +20,6 @@ it is not a runtime dependency of the software being built.
 |---|---|---|
 | **Use the desktop UI** | [Windows x64 portable ZIP](https://github.com/Naimas/ControlCoding/releases/download/desktop-preview-20260928/observer-work-gantt-20260928.zip) | Windows x64 and Python 3.11+; unsigned development preview |
 | **Use Core with your coding host** | [Current Core source ZIP](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip) | Python 3.11+; [installation guide](docs/install-controlcoding-on-your-project.md) |
-| **Inspect or develop the desktop** | [Desktop source and tests](https://github.com/Naimas/ControlCoding/releases/download/desktop-preview-20260928/controlcoding-desktop-source-20260928.zip) | Combine with Core at tag `desktop-preview-20260928` |
 
 [Release notes and checksums](https://github.com/Naimas/ControlCoding/releases/tag/desktop-preview-20260928)
 · [Documentation index](docs/INDEX.md)
@@ -74,13 +73,11 @@ The existing PowerShell execution policy applies. Choose a project in the app,
 then configure the source scope and optional AI roles. See the
 [desktop guide](docs/desktop-preview-20260928.md) for setup and verification limits.
 
-The complete desktop source and tests are supplied in a separate archive.
 Core remains usable independently, and its source ZIP does not include the UI.
 
-For newer development changes, use the [desktop/source branch](https://github.com/Naimas/ControlCoding/tree/desktop/source)
-and the exact Core commit named in its README. It includes
-[graph-guided retrieval and reviewed wiki workflows](docs/graph-wiki.md);
-these source changes do not update the downloadable desktop preview.
+The [graph-guided retrieval and reviewed wiki guide](docs/graph-wiki.md)
+describes newer development work. Those updates are not included in the dated
+desktop preview linked above.
 
 The local development UI brings project structure, code-unit inspection and
 delivery evidence into one workspace. This screenshot shows the actual panel
