@@ -1,0 +1,36 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const {app,dialog}=require('electron');
+const option=n=>process.argv.find(a=>a.startsWith('--'+n+'='))?.slice(n.length+3),wait=ms=>new Promise(r=>setTimeout(r,ms));
+const checks=[],record=(name,value)=>{assert(value,name);checks.push(name);};
+setTimeout(()=>app.exit(2),120000).unref();
+async function run(){
+ const root=path.join(option('fixtures'),'Paged library');fs.mkdirSync(path.join(root,'docs'),{recursive:true});
+ for(let i=0;i<126;i++)fs.writeFileSync(path.join(root,'docs',String(i).padStart(3,'0')+'.md'),`# Document ${i}\nLibrary evidence ${i}.`);
+ const panel=await require(path.join(option('build'),'panel-app.cjs')).start(),web=panel.window.webContents;
+ const js=s=>web.executeJavaScript(s,true),until=async predicate=>{const end=Date.now()+10000;while(!predicate()&&Date.now()<end)await wait(30);assert(predicate());await wait(40);};
+ dialog.showOpenDialog=async()=>({canceled:false,filePaths:[root]});await js('window.panel.chooseProject()');await js('window.panel.preferences({tab:"Memory"})');panel.show();
+ await js(`window.panel.knowledge('configure',${JSON.stringify({scopes:['project'],automatic:false,worker:false,retention:'transcript',embedding:''})})`);
+ await js("window.panel.knowledge('sync')");await until(()=>panel.store.value.knowledgeLibrary?.total===126);
+ record('initial UI shows 50 of 126 sources',panel.store.value.knowledgeLibrary.rows.length===50&&await js('document.querySelectorAll(".knowledge-memory .knowledge-columns>.cw-list>.cw-record").length===50'));
+ const next=()=>js('Array.from(document.querySelectorAll(\'[aria-label="Library pages"] button\')).find(b=>b.textContent==="Next 50").click()');
+ await next();await until(()=>panel.store.value.knowledgeLibrary?.offset===50);const middle=panel.store.value.knowledgeLibrary;
+ record('second server window begins at the next source',middle.rows[0].path==='docs/050.md');
+ await next();await until(()=>panel.store.value.knowledgeLibrary?.offset===100);
+ record('last page renders only remaining records and disables next',panel.store.value.knowledgeLibrary.rows.length===26&&await js('Array.from(document.querySelectorAll(\'[aria-label="Library pages"] button\')).find(b=>b.textContent==="Next 50").disabled'));
+ await js('(()=>{const input=[...document.querySelectorAll(".knowledge-memory input")].find(e=>e.placeholder==="Title, path or conversation summary");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(input,"Document 125");input.dispatchEvent(new Event("input",{bubbles:true}));})()');
+ await until(()=>panel.store.value.knowledgeLibrary?.query==='Document 125');
+ record('search reaches records beyond the first window',panel.store.value.knowledgeLibrary.total===1&&panel.store.value.knowledgeLibrary.rows[0].path==='docs/125.md');
+ const old=panel.store.value.knowledgeLibrary;
+ fs.writeFileSync(path.join(root,'docs','125.md'),'# Changed final document\nChanged evidence.');
+ await panel.store.knowledge.call('sync','manual');
+ await panel.store.knowledge.run('library',{kind:'sources',query:old.query,offset:0,snapshot:old.snapshot});
+ record('old navigation snapshot is visibly rejected',panel.store.value.knowledgeError==='library_snapshot_changed');
+ await until(()=>panel.store.value.knowledgeLibrary?.total===0);
+ record('UI reloads a coherent first window after source changes',panel.store.value.knowledgeLibrary.offset===0&&panel.store.value.knowledgeLibrary.snapshot!==old.snapshot);
+ panel.window.setContentSize(400,820);web.setZoomFactor(1.25);await wait(150);
+ record('paged controls fit at 320 CSS pixels',await js('document.documentElement.scrollWidth<=innerWidth+1'));
+ fs.writeFileSync(path.join(option('artifacts'),'library.png'),(await web.capturePage()).toPNG());
+ fs.writeFileSync(path.join(option('artifacts'),'result.json'),JSON.stringify({passed:true,checks},null,2));app.exit(0);
+}
+run().catch(error=>{fs.writeFileSync(path.join(option('artifacts'),'result.json'),JSON.stringify({passed:false,checks,error:String(error.stack)},null,2));app.exit(1);});

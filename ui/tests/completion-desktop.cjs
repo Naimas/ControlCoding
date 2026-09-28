@@ -1,0 +1,73 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const {app,dialog}=require('electron');
+const option=n=>process.argv.find(a=>a.startsWith('--'+n+'='))?.slice(n.length+3);
+const checks=[],errors=[],wait=ms=>new Promise(r=>setTimeout(r,ms));let web,lastScript='';
+const record=(label,value)=>{assert(value,label);checks.push(label);};
+const watchdog=setTimeout(()=>app.exit(2),180000);watchdog.unref();
+async function run(){
+ const root=path.join(option('fixtures'),'Knowledge example'),other=path.join(option('fixtures'),'Other project');fs.mkdirSync(root,{recursive:true});fs.mkdirSync(other,{recursive:true});
+ const source=path.join(root,'design.md');fs.writeFileSync(source,'# Architecture\nSeparate the service from presentation.\n<script>window.PWNED=true</script>');
+ fs.writeFileSync(path.join(root,'.env'),'PRIVATE_CANARY');
+ const panel=await require(path.join(option('build'),'panel-app.cjs')).start();web=panel.window.webContents;
+ web.on('console-message',(_e,level,message)=>{if(level>=2)errors.push(message);});
+ const js=s=>{lastScript=s;return web.executeJavaScript(s,true);};
+ const ready=async predicate=>{const end=Date.now()+20000;while(!predicate()&&Date.now()<end)await wait(40);assert(predicate(),'operation completes');await wait(80);};
+ const click=async expression=>{const b=await js(`(()=>{const e=${expression};if(!e)throw Error('Missing target');e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);b.x=Math.round(b.x*web.getZoomFactor());b.y=Math.round(b.y*web.getZoomFactor());web.sendInputEvent({type:'mouseMove',...b});web.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...b});web.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...b});await wait(70);};
+ const id=s=>`document.getElementById(${JSON.stringify(s)})`,button=s=>`Array.from(document.querySelectorAll('.cw-management button')).find(b=>b.textContent===${JSON.stringify(s)})`;
+ const type=async(name,value)=>{await click(id(name));web.sendInputEvent({type:'keyDown',keyCode:'A',modifiers:['control']});web.sendInputEvent({type:'keyUp',keyCode:'A',modifiers:['control']});await web.insertText(value);await wait(60);};
+ const shot=async name=>fs.writeFileSync(path.join(option('artifacts'),name+'.png'),(await web.capturePage()).toPNG());
+
+ dialog.showOpenDialog=async()=>({canceled:false,filePaths:[root]});await js('window.panel.chooseProject()');await js('window.panel.preferences({tab:"Setup"})');await wait(80);
+ const change=async(name,value)=>js(`(()=>{const e=document.getElementById(${JSON.stringify(name)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+ await click(id('wizard-open'));await change('wizard-workflow','install');await type('wizard-name','UI installed project');await change('wizard-host','codex_cli');await click(id('wizard-preview'));await ready(()=>!!panel.store.value.jobPlan&&!panel.store.value.busy);
+ record('full install preview leaves project intact: '+JSON.stringify(panel.store.value.jobPlan.handoff?.setup?.name),!fs.existsSync(path.join(root,'.controlcoding'))&&panel.store.value.jobPlan.handoff.setup.name==='UI installed project');
+ record('governed memory choice is visible',panel.store.value.jobPlan.handoff.setup.memory_default_policy==='governed_scope');
+ await click(id('job-confirm'));await ready(()=>!!panel.store.value.jobRun&&!panel.store.value.busy);
+ record('canonical installer completes from real UI',panel.store.value.jobRun.status==='completed');
+ record('canonical context and governed database were generated',fs.existsSync(path.join(root,'CONTROLCODING.md'))&&fs.existsSync(path.join(root,'.controlcoding/memory')));
+ record('job log retained outside project',fs.existsSync(panel.store.value.jobRun.log)&&!panel.store.value.jobRun.log.startsWith(root));
+ const contract=command=>fs.writeFileSync(path.join(root,'controlcoding.verification.json'),JSON.stringify({schemaVersion:1,requiredKinds:['targeted'],suites:[{id:'fixture',kind:'targeted',required:true,command}]}));
+ const python=option('python').replaceAll('\\','/');contract(`"${python}" -B -c "print(42)"`);
+ await js('window.panel.preferences({tab:"Checks"})');await wait(60);await change('checks-kind','verify_run');await click(id('checks-preview'));await ready(()=>!!panel.store.value.jobPlan&&!panel.store.value.busy);
+ record('checks preview exposes project command',panel.store.value.jobPlan.suites[0].command.includes('print(42)'));
+ await click(id('job-confirm'));await ready(()=>!!panel.store.value.jobRun&&!panel.store.value.busy);
+ record('real verification writes canonical receipts',panel.store.value.jobRun.status==='completed'&&fs.readdirSync(path.join(root,'.controlcoding/verification_receipts')).some(n=>n.endsWith('.json')));
+ await shot('checks-result');
+ await click(id('checks-preview'));await ready(()=>!!panel.store.value.jobPlan&&!panel.store.value.busy);contract(`"${python}" -B -c "raise SystemExit(7)"`);await click(id('job-confirm'));await ready(()=>!!panel.store.value.jobRun&&!panel.store.value.busy);
+ record('changed contract invalidates approval',panel.store.value.jobRun.status==='failed'&&panel.store.value.jobRun.output.includes('preview_mismatch'));
+ await click(id('checks-preview'));await ready(()=>!!panel.store.value.jobPlan&&!panel.store.value.busy);await click(id('job-confirm'));await ready(()=>!!panel.store.value.jobRun&&!panel.store.value.busy);
+ record('failed verification is not marked passed',panel.store.value.jobRun.status==='failed'&&panel.store.value.jobRun.exitCode===1);
+ contract(`"${python}" -B -c "import os,time;from pathlib import Path;Path('started.txt').write_text(str(os.getpid()));time.sleep(40);Path('escaped.txt').write_text('bad')"`);
+ await click(id('checks-preview'));await ready(()=>!!panel.store.value.jobPlan&&!panel.store.value.busy);await click(id('job-confirm'));await ready(()=>fs.existsSync(path.join(root,'started.txt')));
+ const ownedPid=Number(fs.readFileSync(path.join(root,'started.txt'),'utf8'));await panel.store.select(other);record('project switch blocked during execution',panel.store.value.project===root);
+ await click(id('job-cancel'));await ready(()=>!panel.store.value.busy);let alive=true;try{process.kill(ownedPid,0);}catch{alive=false;}
+ record('cancel stops owned verification descendant',!alive&&panel.store.value.jobRun.status==='cancelled'&&!fs.existsSync(path.join(root,'escaped.txt')));
+ await js('window.panel.preferences({tab:"Memory"})');await js('window.panel.workManagePreview({action:"init",name:"UI memory",purpose:"Reviewed fixture"})');await js('window.panel.workManageCommit()');
+ const {AIProvider}=require(path.join(option('build'),'ai-provider.cjs'));const {AISession}=require(path.join(option('build'),'ai-session.cjs'));
+ const transportCalls=[];panel.store.ai=new AISession(panel.store,new AIProvider(async(url,options)=>{transportCalls.push({url,options});if(url.endsWith('/api/tags'))return {models:[{name:'fixture-model'}]};if(url.endsWith('/models'))return {data:[{id:'fixture-model'}]};return {done:true,message:{content:'<script>window.PWNED=true</script> Advisory answer.'}};}));panel.store.publish();
+ await js('window.panel.preferences({tab:"Agents"})');await wait(60);await click(id('ai-connect'));await ready(()=>!!panel.store.value.aiConnection&&!panel.store.value.busy);await change('ai-model','fixture-model');await type('ai-prompt','Review the selected architecture.');await click(id('ai-archive'));await click(id('ai-preview'));
+ record('AI preview does not send chat',transportCalls.length===1&&panel.store.value.aiPreview.messages.at(-1).content==='Review the selected architecture.');
+ await click(id('ai-send'));await ready(()=>panel.store.value.aiMessages.length===2&&!panel.store.value.busy);
+ record('reply is real controller state and rendered as inert text',await js('window.PWNED===undefined&&document.querySelector(".ai-conversation").innerText.includes("<script>")&&!document.querySelector(".ai-conversation script")'));
+ record('opted-in exchange autoarchives through Core',panel.store.value.aiArchive?.saved===true&&panel.store.value.work.sessions.some(s=>s.notes.some(n=>n.text.includes('Advisory answer'))));
+ record('project secrets not automatically sent',!JSON.stringify(transportCalls).includes('PRIVATE_CANARY'));
+ await shot('ai-session');
+ record('preload rejects execution arguments',await js('window.panel.jobRun({command:"forged"}).then(()=>false,()=>true)'));
+ record('main rejects arbitrary jobs',await js('window.panel.jobPreview({kind:"shell",answers:{},suites:[]}).then(()=>false,()=>true)'));
+ await change('ai-provider','openai');await type('ai-key','SYNTHETIC_SECRET');await click(id('ai-connect'));await ready(()=>panel.store.value.aiConnection==='openai'&&!panel.store.value.busy);
+ record('API key is excluded from snapshots and cleared in renderer',!JSON.stringify(panel.snapshot()).includes('SYNTHETIC_SECRET')&&await js('document.getElementById("ai-key").value===""'));
+ await js('window.panel.configRead()');const draft=structuredClone(panel.store.value.configuration.draft);draft.design_paths=['design.md'];draft.decisions.architecture.mode='ai';await js(`window.panel.configAnalysis(${JSON.stringify(draft)})`);
+ const packet=panel.store.value.configAnalysis;record('AI setup context includes selected design only',packet.design_excerpts[0].text.includes('Separate the service')&&!JSON.stringify(packet).includes('PRIVATE_CANARY'));
+ const proposal={schema_version:1,request_id:packet.request_id,suggestions:[{field:'architecture',value:'Separate service and presentation',rationale:'The selected design names both responsibilities.',evidence:['design.md']}]};
+ panel.store.ai.provider.send=async()=>({text:JSON.stringify(proposal),incomplete:false});panel.store.ai.clear();await wait(60);await change('ai-context','setup');await type('ai-prompt','Return the requested setup proposals as JSON.');await click(id('ai-preview'));await click(id('ai-send'));await ready(()=>panel.store.value.aiMessages.length===2&&!panel.store.value.busy);await click(id('ai-import-proposal'));await ready(()=>panel.store.value.configuration?.local_changes&&!panel.store.value.busy);
+ record('provider answer enters human proposal review without applying',panel.store.value.configuration.draft.decisions.architecture.status==='proposed'&&!fs.existsSync(path.join(root,'.controlcoding/panel-setup-draft.json')));
+
+ for(const tab of ['Setup','Checks','Agents']){await js(`window.panel.preferences({tab:${JSON.stringify(tab)}})`);panel.window.setContentSize(400,620);web.setZoomFactor(1.25);await wait(160);const end=Date.now()+3000;while(await js('innerWidth!==320')&&Date.now()<end)await wait(30);record(tab+' fits 320 CSS pixels',await js('innerWidth===320&&document.documentElement.scrollWidth<=innerWidth+1'));}
+ await shot('compact');web.setZoomFactor(1);panel.window.setBounds({width:1100,height:850});
+ await js('window.panel.preferences({theme:"light"})');await wait(100);await shot('ai-light');
+ await panel.store.select(other);record('project switch clears previous conversation and job results',panel.store.value.aiMessages.length===0&&panel.store.value.jobRun===null&&panel.store.value.aiPreview===null);
+ record('no renderer errors',errors.length===0);
+ fs.writeFileSync(path.join(option('artifacts'),'completion-desktop.json'),JSON.stringify({checks,errors,versions:process.versions},null,2));app.exit(0);
+}
+run().catch(async error=>{fs.writeFileSync(path.join(option('artifacts'),'failure.json'),JSON.stringify({error:String(error),stack:error.stack,lastScript,checks,errors},null,2));if(web)fs.writeFileSync(path.join(option('artifacts'),'failure.png'),(await web.capturePage()).toPNG());app.exit(1);});

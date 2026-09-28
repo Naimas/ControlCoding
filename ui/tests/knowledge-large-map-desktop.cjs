@@ -1,0 +1,30 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const {app,dialog}=require('electron');
+const option=n=>process.argv.find(a=>a.startsWith('--'+n+'='))?.slice(n.length+3),wait=ms=>new Promise(r=>setTimeout(r,ms));
+const checks=[];setTimeout(()=>app.exit(2),90000).unref();
+async function run(){
+ const root=path.join(option('fixtures'),'Synthetic map');fs.mkdirSync(root,{recursive:true});
+ const panel=await require(path.join(option('build'),'panel-app.cjs')).start(),web=panel.window.webContents;
+ const errors=[];web.on('console-message',(_e,level,message)=>{if(level>=2)errors.push(message);});
+ const js=s=>web.executeJavaScript(s,true),until=async s=>{const end=Date.now()+20000;while(!await js(s)&&Date.now()<end)await wait(50);assert(await js(s),s);};
+ dialog.showOpenDialog=async()=>({canceled:false,filePaths:[root]});await js('window.panel.chooseProject()');await js('window.panel.preferences({tab:"Memory"})');
+ panel.window.setContentSize(1280,920);panel.show();await wait(200);
+ const started=Date.now();panel.store.value.knowledgeCatalog={sources:Array.from({length:5000},(_,i)=>({id:'synthetic-'+i,path:`docs/architecture-${i}-record.md`,title:'Architecture record '+i,kind:'document',revision:'a'.repeat(64),excerpt:'Architecture reference'})),wiki:[],conversations:[],edges:[]};panel.store.publish();
+ await until('document.getElementById("knowledge-svg")?.dataset.records==="5000"');
+ const renderMs=Date.now()-started;
+ assert(await js('document.querySelectorAll("[data-record]").length<=256'));checks.push('5000-record model uses bounded document chips');
+ assert(await js('document.querySelectorAll(".knowledge-records .knowledge-record").length===200'));checks.push('source navigator starts with 200 records');
+ await js('document.querySelector(".circuit-cluster").dispatchEvent(new MouseEvent("click",{bubbles:true}))');await wait(450);
+ assert(await js('document.querySelectorAll("#circuit-topic-members [data-member]").length<=200'));checks.push('topic membership keeps full count with bounded list');
+ await js('(()=>{const e=document.querySelector("#circuit-topic-members input");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(e,"Architecture record 4999");e.dispatchEvent(new Event("input",{bubbles:true}));})()');
+ await until('document.querySelectorAll("#circuit-topic-members [data-member]").length===1');checks.push('topic search finds a record beyond the first window');
+ assert(await js('document.getElementById("knowledge-svg").dataset.records==="5000"'));checks.push('search does not replace the continuous map');
+ panel.window.setContentSize(400,820);web.setZoomFactor(1.25);await wait(200);
+ assert(await js('document.documentElement.scrollWidth<=innerWidth+1'));checks.push('large map controls fit narrow viewport');
+ assert.equal(errors.length,0);checks.push('no renderer errors');
+ await js('document.getElementById("circuit-viewport").scrollIntoView({block:"center"})');await wait(200);
+ fs.writeFileSync(path.join(option('artifacts'),'result.json'),JSON.stringify({passed:true,checks,renderMs,scope:'synthetic renderer model only; not ingestion or service capacity',errors},null,2));
+ fs.writeFileSync(path.join(option('artifacts'),'large-map.png'),(await web.capturePage()).toPNG());app.exit(0);
+}
+run().catch(error=>{fs.writeFileSync(path.join(option('artifacts'),'result.json'),JSON.stringify({passed:false,checks,error:String(error.stack)},null,2));app.exit(1);});

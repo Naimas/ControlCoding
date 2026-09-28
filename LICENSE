@@ -1,0 +1,86 @@
+# ControlCoding And Embedded ControlWork Source-Available License
+
+Copyright (c) 2024-2026 Stefano Tonello.
+
+Required Notice: ControlCoding by Stefano Tonello (Naimas), https://github.com/Naimas/ControlCoding
+Licensor Line of Business: AI-assisted software development governance, verification, and developer tooling.
+
+All original ControlCoding and embedded ControlWork material in this repository
+is source-available under PolyForm Shield License 1.0.0, unless a file contains
+a more specific third-party license notice. This includes software,
+documentation, methodology, tests, workflows, configuration, templates, host
+adapters, and generated examples.
+
+Canonical license URL:
+https://polyformproject.org/licenses/shield/1.0.0
+
+SPDX identifier:
+`PolyForm-Shield-1.0.0`
+
+Internal business use and commercial use are permitted when the use does not
+provide a product that competes with ControlCoding, ControlWork, or another
+product offered by the licensor.
+
+Providing a competing developer tool, hosted service, white-label distribution,
+or other use outside these terms requires a separate written commercial license
+from Stefano Tonello.
+
+Commercial license requests are described in `COMMERCIAL_LICENSE.md`.
+
+ControlWork originated as the Project Plane inside ControlCoding and is also
+available as a standalone product. Embedded and standalone ControlWork use the
+same PolyForm Shield license model while retaining distinct product identities.
+
+Historical note: versions previously released under MIT, CC-BY-SA, or other
+terms remain governed by the terms under which those versions were published.
+This license describes this repository state and future versions unless a later
+release states otherwise.
+
+When a file has a more specific third-party copyright or license notice, that
+notice controls only for the material it identifies.
+
+## Practical Summary
+
+This summary does not replace the PolyForm Shield terms.
+
+Summary:
+
+- Use, modification, and distribution are permitted for purposes allowed by
+  PolyForm Shield.
+- Internal business use and noncompeting commercial use are permitted.
+- ControlCoding and ControlWork may be used to build, maintain, verify, or
+  manage other software, including commercial software.
+- Providing a product or service that competes with ControlCoding,
+  ControlWork, or another product offered by the licensor is not permitted.
+- Repackaging, renaming, white-labeling, hosting, embedding, or redistributing
+  this material does not avoid the noncompete condition.
+- Redistribution must preserve copyright, license, and attribution notices.
+- Competing products and uses outside these terms require separate written
+  permission.
+
+## Product Boundary
+
+ControlCoding covers methodology, host context, hooks, CLI tools, local memory,
+verification gates, agent-facing structure, and coding governance.
+
+ControlWork covers portable Work Plane / Project Plane memory, including
+`CONTROLWORK.md`, `.controlwork/`, source review, decisions, plans, outputs,
+graph projections, retrieval, handoff packets, context packets, and compatible
+standalone or embedded workflows.
+
+ControlWork compatibility with ControlCoding does not merge the two products or
+their names. Embedded, imported, synced, exported, and standalone ControlWork
+components remain covered by PolyForm Shield. They may be used for permitted
+development and project work, but not to provide a competing product or service.
+
+## Attribution Requirement
+
+Any shared copy, fork, modified version, package collection, or redistribution
+of repository material must preserve visible attribution:
+
+ControlCoding by Stefano Tonello
+https://github.com/Naimas/ControlCoding
+
+Modified versions must clearly state that they are modified and must not imply
+that they are official ControlCoding or ControlWork releases unless explicitly
+approved in writing by Stefano Tonello.
