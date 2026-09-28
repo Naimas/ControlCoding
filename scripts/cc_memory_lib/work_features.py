@@ -401,8 +401,8 @@ def mutate_current_scan_record(project: Path, target_path: str, *, expected_cont
     )
 
 
-def _default_registry() -> dict:
-    now = utc_iso()
+def _default_registry(now: str | None = None) -> dict:
+    now = utc_iso() if now is None else now
     return {
         "schemaVersion": 1,
         "categories": [
@@ -503,6 +503,11 @@ def metadata_value(lines: list[str], key: str) -> str:
 
 def entry_from_path(project: Path, path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
+    return entry_from_text(project, path, text)
+
+
+def entry_from_text(project: Path, path: Path, text: str) -> dict:
+    """Parse a captured entry without opening or modifying its source."""
     lines = text.splitlines()
     title = path.stem
     for line in lines:
@@ -1337,26 +1342,19 @@ def append_unique(items: list[str], value: str) -> list[str]:
     return items
 
 
-def cmd_session_start(args) -> int:
-    project = args.project_root.resolve()
-    ensure_feature_layout(project)
-    session_id = slug(args.session_id) if args.session_id else session_id_for(args.topic)
-    path = session_file(project, session_id)
-    if path.exists():
-        print(json.dumps({"ok": False, "error": "session already exists", "path": rel(project, path)}, indent=2))
-        return 1
-    now = utc_iso()
-    payload = {
+def session_start_payload(session_id, topic, summary, mode, operator, categories, now):
+    """Build a portable session record; persistence remains with the caller."""
+    return {
         "schemaVersion": 1,
         "id": session_id,
         "startedAt": now,
         "endedAt": "",
-        "mode": args.mode,
-        "operator": getattr(args, "operator", "manual") or "manual",
-        "topic": args.topic,
+        "mode": mode,
+        "operator": operator or "manual",
+        "topic": topic,
         "status": "active",
-        "summary": args.summary,
-        "categories": normalize_list(args.category),
+        "summary": summary,
+        "categories": normalize_list(categories),
         "memoryChanged": [],
         "packets": [],
         "decisions": [],
@@ -1366,6 +1364,18 @@ def cmd_session_start(args) -> int:
         "createdAt": now,
         "updatedAt": now,
     }
+
+
+def cmd_session_start(args) -> int:
+    project = args.project_root.resolve()
+    ensure_feature_layout(project)
+    session_id = slug(args.session_id) if args.session_id else session_id_for(args.topic)
+    path = session_file(project, session_id)
+    if path.exists():
+        print(json.dumps({"ok": False, "error": "session already exists", "path": rel(project, path)}, indent=2))
+        return 1
+    payload = session_start_payload(session_id, args.topic, args.summary, args.mode,
+                                    getattr(args, "operator", "manual"), args.category, utc_iso())
     write_session(project, payload)
     print(json.dumps({"ok": True, "session": payload, "path": rel(project, path)}, indent=2))
     return 0
@@ -1478,6 +1488,11 @@ def write_suggestion_state(project: Path, payload: dict) -> None:
 
 def _apply_suggestion_state(project: Path, suggestions: list[dict], edges: list[dict]) -> tuple[list[dict], dict[str, int]]:
     state = read_suggestion_state(project)
+    return apply_suggestion_snapshot(state, suggestions, edges)
+
+
+def apply_suggestion_snapshot(state: dict, suggestions: list[dict], edges: list[dict]) -> tuple[list[dict], dict[str, int]]:
+    """Apply already captured review records, without filesystem access."""
     reviewed = state.get("suggestions", {})
     counts = {"suggested": 0, "accepted": 0, "rejected": 0, "audit_only": 0}
     visible: list[dict] = []
@@ -1784,6 +1799,11 @@ def ensure_project_base_document(
 
 def portable_graph(project: Path) -> dict:
     entries = portable_graph_entries(project)
+    return graph_from_entries(entries, read_suggestion_state(project))
+
+
+def graph_from_entries(entries: list[dict], suggestion_state: dict) -> dict:
+    """Build the portable graph from a caller-owned, stable source capture."""
     nodes = []
     edges = []
     suggestions = []
@@ -1853,7 +1873,7 @@ def portable_graph(project: Path) -> dict:
                 "status": "suggested",
                 "reason": "Shared terms: " + ", ".join(overlap[:8]),
             })
-    suggestions, suggestion_counts = _apply_suggestion_state(project, suggestions, edges)
+    suggestions, suggestion_counts = apply_suggestion_snapshot(suggestion_state, suggestions, edges)
     return {
         "contractVersion": GRAPH_CONTRACT_VERSION,
         "nodeTypes": PORTABLE_GRAPH_NODE_TYPES,
@@ -2222,6 +2242,11 @@ def lifecycle_points(lifecycle: str) -> int:
 
 def retrieve_matches(project: Path, query: str, limit: int = 10, include_legacy: bool = False) -> dict:
     graph = portable_graph(project)
+    return retrieve_from_graph(graph, query, limit, include_legacy, scan_retrieval_warnings(project, query, limit=5))
+
+
+def retrieve_from_graph(graph: dict, query: str, limit: int = 10, include_legacy: bool = False, scan_warnings: dict | None = None) -> dict:
+    """Use the same ranking on a supplied graph, without rescanning sources."""
     terms = set(graph_tokens(query))
     suggestion_neighbors: dict[str, list[dict]] = {}
     for relation in [*graph["suggestions"], *graph["edges"]]:
@@ -2275,7 +2300,7 @@ def retrieve_matches(project: Path, query: str, limit: int = 10, include_legacy:
         "contractVersion": GRAPH_CONTRACT_VERSION,
         "matches": matches[: max(1, limit)],
         "exclusionReport": {"count": len(excluded), "items": excluded[:20]},
-        "scanEvidenceWarnings": scan_retrieval_warnings(project, query, limit=5),
+        "scanEvidenceWarnings": scan_warnings or {},
     }
 
 
@@ -2287,6 +2312,11 @@ def cmd_retrieve(args) -> int:
 
 def build_rag_pack_payload(project: Path, query: str, limit: int = 10, include_legacy: bool = False) -> dict:
     retrieval = retrieve_matches(project, query, limit=limit, include_legacy=include_legacy)
+    return rag_pack_from_retrieval(retrieval, query)
+
+
+def rag_pack_from_retrieval(retrieval: dict, query: str) -> dict:
+    """Render a context packet in memory; no output file or provider call."""
     citations = []
     for index, match in enumerate(retrieval["matches"], start=1):
         citation = dict(match)

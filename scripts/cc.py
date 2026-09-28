@@ -7646,14 +7646,16 @@ def _build_public_project_setup_contract_document(user_host: str) -> str:
     )
 
 
-def _build_host_integration_assets(project: Path, user_host: str, host_instructions: dict | None = None) -> dict[str, str]:
+def _build_host_integration_assets(project: Path, user_host: str, host_instructions: dict | None = None,
+                                   *, workspace_tasks_present: bool | None = None) -> dict[str, str]:
     assets = _build_host_launcher_assets(project, user_host)
     editor_profile = _host_editor_profile(user_host)
     task_template_path = _host_task_template_relpath(user_host)
     manifest = json.dumps(_build_vscode_tasks_manifest(user_host), indent=2, ensure_ascii=False) + "\n"
     assets[task_template_path] = manifest
     vscode_tasks = project / VSCODE_TASKS_RELATIVE_PATH
-    workspace_tasks_present = vscode_tasks.exists()
+    if workspace_tasks_present is None:
+        workspace_tasks_present = vscode_tasks.exists()
     editor_tasks_installed = editor_profile["auto_install_supported"] and not workspace_tasks_present
     if editor_tasks_installed:
         assets[str(VSCODE_TASKS_RELATIVE_PATH).replace("\\", "/")] = manifest
@@ -8185,25 +8187,68 @@ def _init_recheck(observations: dict):
             raise OSError(f"init path changed after preflight: {path}; inspect and preview again")
 
 
-def _plan_init(project: Path, central_hooks: bool = False):
+def _validate_init_config(config: dict, config_path: Path, *, required_hooks_location=None):
+    """Validate minimal-init config containers without normalizing custom fields."""
+    for key, default, allowed in [("hooks_location", "local", {"local", "central"}),
+                                  ("documentation_mode", "managed", {"managed", "project_managed"}),
+                                  ("cc_artifact_mode", "local_only", {"local_only", "shared_repo"})]:
+        value = config.get(key, default)
+        if not isinstance(value, str) or value not in allowed:
+            raise ValueError(f"init config conflict at {config_path}: invalid {key}")
+    if required_hooks_location is not None and config.get("hooks_location", "local") != required_hooks_location:
+        raise ValueError(f"init config conflict at {config_path}: hooks_location must be {required_hooks_location}; reconcile explicitly")
+    protected_zones = config.get("protected_zones", [])
+    if protected_zones is not None and not isinstance(protected_zones, (list, dict)):
+        raise ValueError(f"init config conflict at {config_path}: protected_zones must be a list or deny/warn object")
+    if isinstance(protected_zones, dict):
+        for level in ("deny", "warn"):
+            entries = protected_zones.get(level)
+            if entries is not None and not isinstance(entries, list):
+                raise ValueError(f"init config conflict at {config_path}: protected_zones.{level} must be a list")
+
+
+def _validate_init_settings(settings: dict, settings_path: Path):
+    """Validate minimal-init hook/settings containers without executing commands."""
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError(f"init settings conflict at {settings_path}: hooks must be an object")
+    for entries in hooks.values():
+        if not isinstance(entries, list):
+            raise ValueError(f"init settings conflict at {settings_path}: hook events must contain lists")
+        for entry in entries:
+            if (not isinstance(entry, dict) or not isinstance(entry.get("matcher", ""), str)
+                    or not isinstance(entry.get("hooks", []), list)):
+                raise ValueError(f"init settings conflict at {settings_path}: invalid hook entry")
+            for hook in entry.get("hooks", []):
+                if not isinstance(hook, dict) or not isinstance(hook.get("command", ""), str):
+                    raise ValueError(f"init settings conflict at {settings_path}: invalid hook command")
+    if "mcpServers" in settings and not isinstance(settings["mcpServers"], dict):
+        raise ValueError(f"init settings conflict at {settings_path}: mcpServers must be an object")
+
+
+def _plan_init(project: Path, central_hooks: bool = False, *,
+               observe=None, recheck=None):
     """Build detached init outputs, retaining every consumed input for revalidation."""
     from copy import deepcopy
+    # Optional bounded readers serve importable preview clients; CLI defaults stay unchanged.
+    observe = _init_observe if observe is None else observe
+    recheck = _init_recheck if recheck is None else recheck
     observations, files, directories = {}, {}, {}
-    if _init_observe(project, observations, directory=True) is None:
+    if observe(project, observations, directory=True) is None:
         raise OSError(f"init requires an existing ordinary project directory: {project}")
 
     def directory(path):
-        snapshot = _init_observe(path, observations, directory=True)
+        snapshot = observe(path, observations, directory=True)
         directories[path] = "keep" if snapshot is not None else "create"
 
     def source(path):
-        snapshot = _init_observe(path, observations)
+        snapshot = observe(path, observations)
         if snapshot is None:
             raise OSError(f"required init source missing: {path}")
         return snapshot[-1]
 
     def output(path, data, *, retain=False, reason="identical bytes"):
-        snapshot = _init_observe(path, observations)
+        snapshot = observe(path, observations)
         if snapshot is not None and not retain and snapshot[-1] != data:
             raise OSError(f"init conflict at {path}: existing bytes differ; reconcile explicitly before init")
         files[path] = {"data": data, "action": "keep" if snapshot is not None else "create",
@@ -8212,8 +8257,8 @@ def _plan_init(project: Path, central_hooks: bool = False):
     def json_input(name):
         target = _control_plane_path(project, name)
         legacy = _legacy_control_plane_path(project, name)
-        canonical = _init_observe(target, observations)
-        legacy_snapshot = _init_observe(legacy, observations)
+        canonical = observe(target, observations)
+        legacy_snapshot = observe(legacy, observations)
         selected = canonical if canonical is not None else legacy_snapshot
         read_path = target if canonical is not None else legacy
         try:
@@ -8226,8 +8271,8 @@ def _plan_init(project: Path, central_hooks: bool = False):
 
     canonical = _canonical_context_path(project)
     legacy = _legacy_context_path(project)
-    context_snapshot = _init_observe(canonical, observations)
-    legacy_snapshot = _init_observe(legacy, observations)
+    context_snapshot = observe(canonical, observations)
+    legacy_snapshot = observe(legacy, observations)
     if context_snapshot is not None:
         output(canonical, context_snapshot[-1], retain=True, reason="existing context retained, contents not validated")
     if legacy_snapshot is not None:
@@ -8287,9 +8332,9 @@ def _plan_init(project: Path, central_hooks: bool = False):
     output(fitness_dest, source(SCRIPT_DIR / "fitness_check.py"))
 
     git_dir = project / ".git"
-    _init_observe(git_dir, observations, directory=True)
+    observe(git_dir, observations, directory=True)
     git_hooks = git_dir / "hooks"
-    if _init_observe(git_hooks, observations, directory=True) is not None:
+    if observe(git_hooks, observations, directory=True) is not None:
         for name, text in [("pre-commit", _build_repo_precommit_hook_script(hooks_dest, fitness_dest)),
                            ("post-commit", _build_repo_postcommit_hook_script(hooks_dest))]:
             output(git_hooks / name, text.encode("utf-8"), retain=True,
@@ -8298,23 +8343,8 @@ def _plan_init(project: Path, central_hooks: bool = False):
     directory(_control_plane_dir(project))
     config_path, config_snapshot, config = json_input("cc_config.json")
     mode = "central" if central_hooks else "local"
-    for key, default, allowed in [("hooks_location", "local", {"local", "central"}),
-                                  ("documentation_mode", "managed", {"managed", "project_managed"}),
-                                  ("cc_artifact_mode", "local_only", {"local_only", "shared_repo"})]:
-        value = config.get(key, default)
-        if not isinstance(value, str) or value not in allowed:
-            raise ValueError(f"init config conflict at {config_path}: invalid {key}")
     config_present = config_snapshot is not None or observations[_legacy_control_plane_path(project, "cc_config.json")][1] is not None
-    if config_present and config.get("hooks_location", "local") != mode:
-        raise ValueError(f"init config conflict at {config_path}: hooks_location must be {mode}; reconcile explicitly")
-    protected_zones = config.get("protected_zones", [])
-    if protected_zones is not None and not isinstance(protected_zones, (list, dict)):
-        raise ValueError(f"init config conflict at {config_path}: protected_zones must be a list or deny/warn object")
-    if isinstance(protected_zones, dict):
-        for level in ("deny", "warn"):
-            entries = protected_zones.get(level)
-            if entries is not None and not isinstance(entries, list):
-                raise ValueError(f"init config conflict at {config_path}: protected_zones.{level} must be a list")
+    _validate_init_config(config, config_path, required_hooks_location=mode if config_present else None)
     if config_snapshot is None:
         config = deepcopy(config)
         config.setdefault("documentation_mode", "managed")
@@ -8330,7 +8360,7 @@ def _plan_init(project: Path, central_hooks: bool = False):
     block = _build_gitignore_block(central_hooks=central_hooks,
                                   documentation_mode=config.get("documentation_mode", "managed"),
                                   cc_artifact_mode=config.get("cc_artifact_mode", "local_only"))
-    ignore_snapshot = _init_observe(ignore, observations)
+    ignore_snapshot = observe(ignore, observations)
     if ignore_snapshot is not None:
         lines = ignore_snapshot[-1].decode("utf-8").splitlines()
         required = block.splitlines()
@@ -8339,21 +8369,7 @@ def _plan_init(project: Path, central_hooks: bool = False):
     output(ignore, block.encode("utf-8"), retain=True, reason="complete required ignore block retained")
 
     settings_path, settings_snapshot, settings = json_input("settings.json")
-    hooks = settings.get("hooks", {})
-    if not isinstance(hooks, dict):
-        raise ValueError(f"init settings conflict at {settings_path}: hooks must be an object")
-    for entries in hooks.values():
-        if not isinstance(entries, list):
-            raise ValueError(f"init settings conflict at {settings_path}: hook events must contain lists")
-        for entry in entries:
-            if (not isinstance(entry, dict) or not isinstance(entry.get("matcher", ""), str)
-                    or not isinstance(entry.get("hooks", []), list)):
-                raise ValueError(f"init settings conflict at {settings_path}: invalid hook entry")
-            for hook in entry.get("hooks", []):
-                if not isinstance(hook, dict) or not isinstance(hook.get("command", ""), str):
-                    raise ValueError(f"init settings conflict at {settings_path}: invalid hook command")
-    if "mcpServers" in settings and not isinstance(settings["mcpServers"], dict):
-        raise ValueError(f"init settings conflict at {settings_path}: mcpServers must be an object")
+    _validate_init_settings(settings, settings_path)
     # Resolve detached inputs consistently; retain settings for conflict comparison.
     merged = _resolve_hook_commands(deepcopy(settings), hooks_dest)
     base = _resolve_hook_commands(deepcopy(BASE_SETTINGS), hooks_dest)
@@ -8362,7 +8378,7 @@ def _plan_init(project: Path, central_hooks: bool = False):
         raise ValueError(f"init conflict at {settings_path}: hook configuration needs changes; reconcile explicitly before init")
     output(settings_path, (json.dumps(merged, indent=2) + "\n").encode("utf-8"),
            retain=True, reason="semantically compatible settings retained")
-    _init_recheck(observations)
+    recheck(observations)
     return {"observations": observations, "directories": directories, "files": files}
 
 

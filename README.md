@@ -27,6 +27,15 @@ The verified Core update and its remaining limits are described under
 
 ## Desktop UI Preview
 
+**[Download the Windows x64 desktop preview](https://github.com/Naimas/ControlCoding/releases/tag/desktop-preview-20260928)** · [Preview scope and verification](docs/desktop-preview-20260928.md)
+
+The optional portable app now includes project knowledge, reviewed memory
+consolidation, local/API/manual AI workflows and work planning with process
+dependencies and a calendar Gantt. Python 3.11+ remains external. This is an
+unsigned prerelease; whole-product quality and adoption acceptance remain open.
+The release also provides the complete desktop source and tests as a separate
+archive, keeping the Core repository boundary unchanged.
+
 The local development UI brings project structure, code-unit inspection and
 delivery evidence into one workspace. This screenshot shows the actual panel
 observing the ControlCoding source tree, with file details selected in the grid.
@@ -37,6 +46,12 @@ of completed work.
 
 *Development preview captured September 23, 2026. The desktop UI is not included
 in the current Core source download or the historical `v3.0.2` release.*
+
+![Work Gantt with a main block, parallel tasks, dependency arrows, buffer and float](docs/images/work-gantt.png)
+
+*Gantt captured from the actual app on September 28, 2026 using a synthetic
+branch-and-join project. Dates and task states are fixture data, not reported
+progress of the ControlCoding project.*
 
 ## Who It Is For
 

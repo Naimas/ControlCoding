@@ -433,6 +433,14 @@ in the same ceremony. This includes local `INDEX.md` files and any required
 realigned. The minimum ceremony artifacts are mandatory, and impact determines
 which additional documents must be updated.
 
+When the optional embedded knowledge coordinator is enabled, finish source
+realignment with `python scripts/cc_knowledge.py --project-root . --event
+commit-ceremony sync` (one command). The open desktop or an explicitly enabled
+worker also reconciles source hashes and observes HEAD changes every 30 seconds.
+This updates source-bound memory and wiki projections; it does not certify that
+the ceremony was followed. Neural indexing runs separately and never blocks Git.
+See [unified knowledge](../unified-knowledge.md) for scope and retention settings.
+
 **Why the commit message is not enough:**
 
 The commit message is a single line. The structured commit protocol produces up to 6 artifacts that serve different audiences:

@@ -2154,6 +2154,18 @@ def cmd_memory_work_promote(
 WORK_CAPTURE_LIFECYCLES = {"captured", "active", "needs_review", "superseded", "legacy"}
 
 
+def _work_capture_content(area, title, body, lifecycle, source, category, stamp):
+    """Render the shared portable capture format without reading or writing."""
+    lines = [f"# {title}", "", f"- **Area**: {area}",
+             f"- **Lifecycle**: {lifecycle}", f"- **Captured**: {stamp}"]
+    if source:
+        lines.append(f"- **Source**: {source}")
+    if category:
+        lines.append(f"- **Category**: {category}")
+    lines.extend(["", "## Body", "", body.strip(), ""])
+    return "\n".join(lines)
+
+
 def cmd_memory_work_capture(
     project: Path,
     area: str,
@@ -2179,6 +2191,8 @@ def cmd_memory_work_capture(
             _controlwork_context_template(project.name or "ControlWork Project", "Project knowledge and work memory"),
             encoding="utf-8",
         )
+    # Standalone capture refreshes the portable scan index in ensure_project().
+    work_features.refresh_file_index(project)
     approved_category = ""
     if category:
         try:
@@ -2189,19 +2203,7 @@ def cmd_memory_work_capture(
     stamp = work_features.utc_stamp()
     filename = f"{stamp}-{work_features.slug(title)}.md"
     path = project / work_features.MEMORY_ROOT / area / filename
-    lines = [
-        f"# {title}",
-        "",
-        f"- **Area**: {area}",
-        f"- **Lifecycle**: {lifecycle}",
-        f"- **Captured**: {stamp}",
-    ]
-    if source:
-        lines.append(f"- **Source**: {source}")
-    if approved_category:
-        lines.append(f"- **Category**: {approved_category}")
-    lines.extend(["", "## Body", "", body.strip(), ""])
-    path.write_text("\n".join(lines), encoding="utf-8")
+    path.write_text(_work_capture_content(area, title, body, lifecycle, source, approved_category, stamp), encoding="utf-8")
     payload = {"ok": True, "path": _relative_path(project, path)}
     _print_json_or_text(json_output, payload, f"Captured Work Plane memory: {payload['path']}")
     return 0

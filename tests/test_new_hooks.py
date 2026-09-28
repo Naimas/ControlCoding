@@ -118,6 +118,12 @@ def hook_project(tmp_path):
 
     init_result = _run_git(root, env, "init", "--quiet")
     assert init_result.returncode == 0, init_result.stderr
+    # A clean fixture must be byte-identical to its index. The production hook
+    # deliberately reports raw mismatches, including Git newline normalization.
+    # Isolate the fixture from a machine-wide core.autocrlf=true setting; tests
+    # of normalization/filter behavior set their own policy explicitly.
+    config_result = _run_git(root, env, "config", "core.autocrlf", "false")
+    assert config_result.returncode == 0, config_result.stderr
     add_result = _run_git(root, env, "add", "--all")
     assert add_result.returncode == 0, add_result.stderr
     commit_result = _run_git(

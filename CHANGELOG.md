@@ -4,6 +4,22 @@ All notable changes to ControlCoding are documented in this file.
 
 ## Unreleased
 
+### Added — desktop development preview, September 28, 2026
+
+- Optional Windows x64 portable panel with Project Map, document circuit view,
+  formatted source reader, guided setup, editable AI roles and manual handoff.
+- Incremental project knowledge, retained conversations, reviewed wiki and
+  citation-backed retrieval, with explicit scope, privacy and refresh controls.
+- Reviewed memory consolidation through local/API/manual packets, a bounded
+  opt-in queue, source-bound proposals, approved context and guarded undo.
+- Hierarchical work planning with process stages, finish-to-start dependencies,
+  calendar estimates, blockers, owner-conflict findings, buffers and total float.
+
+The [desktop preview](docs/desktop-preview-20260928.md) is published separately
+from the Core source contract. It is unsigned and is not stable-release or
+whole-product acceptance. Human quality evaluation, real continuity/adoption,
+live remote-provider coverage and wider plan review remain open.
+
 ### Fixed
 
 - Replace automatic recovery in the optional Bash post-tool inspector with

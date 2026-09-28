@@ -75,11 +75,30 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `cc_evidence_inputs.py` | Bounded input snapshots, confined file reads and runner/context identity. |
 | `cc_evidence_process.py` | Bounded command execution and metadata-only pipe capture. |
 | `cc_docs.py` | Documentation maintenance commands. |
+| `cc_document_reader.py` | Hash-bound Markdown reader with bounded project-local images. |
+| `cc_documentation_observer.py` | Read-only Markdown inventory for the document map. |
 | `cc_feature.py` | Feature lifecycle commands. |
 | `cc_init_module.py` | Module initialization commands. |
+| `cc_knowledge.py` | Embedded knowledge commands and opt-in maintenance worker. |
+| `cc_knowledge_adoption.py` | Read-only adoption observations; no automatic acceptance. |
+| `cc_knowledge_evaluate.py` | Offline scoring of frozen retrieval evaluation packets. |
+| `cc_knowledge_review.py` | Convert blinded human citation judgments for an exact run. |
 | `cc_memory.py` | Project Memory Engine facade. |
+| `cc_panel_jobs.py` | Fixed desktop Core jobs: reviewed install/engagement/project setup, governed memory, doctor and canonical verification with process results. |
+| `cc_panel_bridge.py` | One-request private stdio transport for the optional desktop observer; bounded versioned requests and sanitized results. |
+| `cc_panel_configuration.py` | Versioned guided setup drafts, AI proposal handoff/review, detached Core plans and source-bound explicit application. |
+| `cc_panel_transaction.py` | Windows exclusive writer for reviewed setup plans, rollback and interruption journal; no renderer-chosen destinations. |
+| `cc_controlwork_manage.py` | Reviewed portable ControlWork initialization, selected text imports, captures and session summaries; bounded shared transaction writes. |
+| `cc_controlwork_observer.py` | Bounded read-only ControlWork records, sessions, graph and retrieval over retained inputs; no initialization, indexing or provider calls. |
+| `cc_project_map_model.py` | Pure, bounded Project Map validation, status projection and node explanations; no project reads or enforcement. |
+| `cc_project_map_controls.py` | Read-only feature, evidence and scoped policy projections using canonical owners; no lifecycle edits, project commands or permission grants. |
+| `cc_project_map_analyzers.py` | Pure bounded Python syntax metrics and conservative local import candidate matching; no filesystem reads or project execution. |
+| `cc_project_map_analysis.py` | Retained-input quality/dependency projection, explicit coding-intent comparison and report links; no acceptance promotion or source writes. |
+| `cc_project_map_definition.py` | Reviewed map identities and bounded definition persistence; source-bound preview and exclusive Windows commit, no lifecycle or permission edits. |
+| `cc_project_map_sources.py` | Bounded read-only source inventory and static structural proposals for Project Map; no target execution or writes. |
 | `cc_review.py` | Review command helpers. |
 | `cc_setup.py` | Setup workflow helpers. |
+| `cc_setup_service.py` | Bounded read-only setup observations and canonical minimal-init previews; no project installation or memory initialization. |
 | `codewarden_summary.py` | CodeWarden summary reporting. |
 | `controlwork_mcp.py` | Optional read-only ControlWork MCP surface. |
 | `fitness_check.py` | Architectural fitness checks. |
@@ -104,6 +123,45 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `cc_memory_lib/graph.py` | Memory graph operations. |
 | `cc_memory_lib/ids.py` | Stable identifier helpers. |
 | `cc_memory_lib/impact.py` | Change impact analysis. |
+| `cc_memory_lib/knowledge_adoption.py` | Adoption receipt observations and elapsed-coverage checks. |
+| `cc_memory_lib/knowledge_archive_stream.py` | Streaming logical archive serialization. |
+| `cc_memory_lib/knowledge_backup.py` | Bounded backup and restore into an absent archive. |
+| `cc_memory_lib/knowledge_catalog.py` | Bounded knowledge graph transport. |
+| `cc_memory_lib/knowledge_consolidation.py` | Bounded persistent manual consolidation proposals and source snapshots. |
+| `cc_memory_lib/knowledge_consolidation_privacy.py` | Forget propagation through consolidation jobs and derived claims. |
+| `cc_memory_lib/knowledge_consolidation_review.py` | Atomic selected wiki publication and guarded undo. |
+| `cc_memory_lib/knowledge_consolidation_store.py` | Explicit schema migration and durable consolidation tables. |
+| `cc_memory_lib/knowledge_consolidation_validation.py` | Structural and semantic archive validation before backup, restore and review commits. |
+| `cc_memory_lib/knowledge_consolidation_execution.py` | Durable bounded attempts, strict proposal imports and event queue execution policy. |
+| `cc_memory_lib/knowledge_consolidation_execution_validation.py` | Version-three attempt, queue, progress and metadata integrity checks. |
+| `cc_memory_lib/knowledge_consolidation_selection.py` | Incremental original-passage selection and revision-aware analysis progress. |
+| `cc_memory_lib/knowledge_consolidation_context.py` | Current approved-memory context, original citations, backlinks and bounded history. |
+| `cc_memory_lib/knowledge_consolidation_prior.py` | Bounded relevant approved-memory snapshots backed by current original evidence. |
+| `cc_memory_lib/knowledge_checkpoints.py` | Durable acquisition checkpoint batches. |
+| `cc_memory_lib/knowledge_dev.py` | Read-only canonical Dev projections. |
+| `cc_memory_lib/knowledge_evaluation.py` | Frozen evaluation contracts and scoring. |
+| `cc_memory_lib/knowledge_following.py` | Operator source-status ledger. |
+| `cc_memory_lib/knowledge_graph.py` | Snapshot-bound graph windows. |
+| `cc_memory_lib/knowledge_identity.py` | Stable source identity and unambiguous rename detection. |
+| `cc_memory_lib/knowledge_import.py` | Rich-document extraction from verified bytes. |
+| `cc_memory_lib/knowledge_library.py` | Server-side source, wiki and conversation pagination. |
+| `cc_memory_lib/knowledge_ocr.py` | Reviewed OCR sidecars bound to original PDF bytes. |
+| `cc_memory_lib/knowledge_query.py` | Ranked current-passage retrieval with graph metadata. |
+| `cc_memory_lib/knowledge_ranking.py` | Streaming lexical statistics and BM25 ranks. |
+| `cc_memory_lib/knowledge_read_batches.py` | Pinned-ancestor reuse for bounded file batches. |
+| `cc_memory_lib/knowledge_scan.py` | Resumable source acquisition. |
+| `cc_memory_lib/knowledge_semantic.py` | Opt-in loopback neural embeddings. |
+| `cc_memory_lib/knowledge_service.py` | Embedded source, wiki, conversation and query coordinator. |
+| `cc_memory_lib/knowledge_source_errors.py` | Persistent acquisition diagnostics and retry state. |
+| `cc_memory_lib/knowledge_sources.py` | Approved-source snapshots and passage identities. |
+| `cc_memory_lib/knowledge_staging.py` | Private preparation checkpoints before publication. |
+| `cc_memory_lib/knowledge_store.py` | Serialized local archive transactions. |
+| `cc_memory_lib/knowledge_vector_rank.py` | Bounded-batch exact vector ranking. |
+| `cc_memory_lib/knowledge_wiki.py` | Source-bound topic pages and unreviewed AI drafts. |
+| `cc_memory_lib/knowledge_wiki_review.py` | Protected human sections and revision-bound review proposals. |
+| `cc_memory_lib/knowledge_work.py` | Reviewed work relations over observed canonical sources. |
+| `cc_memory_lib/knowledge_work_controls.py` | Shared feature-owner projections for work views. |
+| `cc_memory_lib/knowledge_work_schedule.py` | Revision-bound work planning overlay, process dependencies, calendar estimates, blockers and critical path. |
 | `cc_memory_lib/ledger.py` | Transactional memory ledger. |
 | `cc_memory_lib/lifecycle.py` | Memory lifecycle transitions. |
 | `cc_memory_lib/lockfile.py` | Memory write locking. |

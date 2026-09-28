@@ -15,6 +15,7 @@ import subprocess
 import sys
 import traceback
 import zipfile
+from collections import Counter
 from copy import deepcopy
 from contextlib import contextmanager, redirect_stdout
 from pathlib import Path, PurePosixPath
@@ -2291,33 +2292,102 @@ def test_p3c0_projection_atomic_replacement_during_read_is_rejected(tmp_path, ca
 
 def test_p3c0_memory_connection_is_the_only_production_transaction_owner():
     package_root = Path(__file__).resolve().parent.parent / "scripts" / "cc_memory_lib"
-    transaction_sites: dict[str, list[tuple[str, int]]] = {
-        "begin": [],
-        "commit": [],
-        "rollback": [],
-    }
+    sites = Counter()
+    connects = Counter()
+
+    class Boundaries(ast.NodeVisitor):
+        def __init__(self, module_name):
+            self.module_name = module_name
+            self.function = "<module>"
+
+        def visit_FunctionDef(self, node):
+            previous, self.function = self.function, node.name
+            self.generic_visit(node)
+            self.function = previous
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node):
+            method = node.func
+            if isinstance(method, ast.Attribute):
+                if method.attr in {"commit", "rollback"}:
+                    sites[self.module_name, self.function, method.attr.upper()] += 1
+                elif method.attr == "execute" and node.args and isinstance(node.args[0], ast.Constant):
+                    sql = node.args[0].value
+                    if isinstance(sql, str) and sql.strip().upper() in {"BEGIN", "COMMIT", "ROLLBACK"}:
+                        sites[self.module_name, self.function, sql.strip().upper()] += 1
+                elif (method.attr == "connect" and isinstance(method.value, ast.Name)
+                      and method.value.id in {"sqlite3", "sqlite"}):
+                    connects[self.module_name, self.function, method.value.id] += 1
+            self.generic_visit(node)
+
     for module_path in sorted(package_root.glob("*.py")):
         tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-            ):
-                if node.func.attr in {"commit", "rollback"}:
-                    transaction_sites[node.func.attr].append((module_path.name, node.lineno))
-                elif (
-                    node.func.attr == "execute"
-                    and node.args
-                    and isinstance(node.args[0], ast.Constant)
-                    and isinstance(node.args[0].value, str)
-                    and node.args[0].value.strip().upper() == "BEGIN"
-                ):
-                    transaction_sites["begin"].append((module_path.name, node.lineno))
+        Boundaries(module_path.name).visit(tree)
 
-    assert set(transaction_sites) == {"begin", "commit", "rollback"}
-    for sites in transaction_sites.values():
-        assert len(sites) == 1
-        assert sites[0][0] == "store.py"
+    # Every explicit transaction site in this package has a named database
+    # domain. Any new site, even in a knowledge module, requires review here.
+    assert sites == Counter({
+        ("store.py", "_memory_connection", "BEGIN"): 1,
+        ("store.py", "_memory_connection", "COMMIT"): 1,
+        ("store.py", "_memory_connection", "ROLLBACK"): 1,
+        ("knowledge_adoption.py", "observe", "BEGIN"): 1,
+        ("knowledge_adoption.py", "observe", "ROLLBACK"): 1,
+        ("knowledge_store.py", "database", "COMMIT"): 2,
+        ("knowledge_backup.py", "restore", "COMMIT"): 1,
+        # Explicit schema upgrade after an external verified backup, under the
+        # knowledge archive writer lock; failure rolls back the DDL atomically.
+        ("knowledge_consolidation_store.py", "migrate", "COMMIT"): 1,
+        ("knowledge_consolidation_store.py", "migrate", "ROLLBACK"): 1,
+    })
+    # Direct connection creation is similarly closed. The two store.py sites
+    # are the canonical Dev writer and a private in-memory snapshot reader.
+    # Runtime is an in-memory capability probe, never a project database.
+    assert connects == Counter({
+        ("store.py", "_connect", "sqlite3"): 1,
+        ("store.py", "_connect_readonly_db", "sqlite3"): 1,
+        ("knowledge_store.py", "database", "sqlite3"): 1,
+        ("knowledge_adoption.py", "observe", "sqlite3"): 1,
+        ("knowledge_backup.py", "restore", "sqlite3"): 1,
+        # Backup readers reconstruct disposable SQLite candidates; neither
+        # connects to the project archive or owns its writer transaction.
+        ("knowledge_consolidation_store.py", "_verify_backup", "sqlite3"): 1,
+        ("knowledge_consolidation_store.py", "_verify_v2_backup", "sqlite3"): 1,
+        ("runtime.py", "memory_runtime_error", "sqlite"): 1,
+    })
+
+    # Canonical Dev memory keeps one BEGIN/commit/rollback owner and one path.
+    from cc_memory_lib import schema as memory_schema
+    assert (memory_schema.CONTROL_DIRNAME, memory_schema.MEMORY_DIRNAME,
+            memory_schema.DB_FILENAME) == (".controlcoding", "memory", "memory.db")
+    assert ast.unparse(next(node for node in ast.parse(
+        (package_root / "store.py").read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_db_path").body[-1].value) == (
+        "_memory_dir(project) / DB_FILENAME")
+
+    # Adoption opens the distinct knowledge archive in SQLite URI read-only
+    # mode, pins one snapshot, then explicitly releases it without a commit.
+    adoption = (package_root / "knowledge_adoption.py").read_text(encoding="utf-8")
+    assert "root / '.controlcoding' / 'knowledge' / 'knowledge.db'" in adoption
+    assert "archive.as_uri() + '?mode=ro', uri=True" in adoption
+    assert not any(key[0] == "knowledge_adoption.py" and key[2] == "COMMIT" for key in sites)
+
+    # The embedded archive has its own locked writer; backup restore commits
+    # only a disposable candidate before copying through that writer lease.
+    knowledge = (package_root / "knowledge_store.py").read_text(encoding="utf-8")
+    backup = (package_root / "knowledge_backup.py").read_text(encoding="utf-8")
+    assert "directory / 'knowledge.db'" in knowledge
+    assert "with database(root, create=True) as target:" in backup
+    assert "candidate = sqlite3.connect('')" in backup
+    assert "with target:" in backup
+
+    # Acquisition checkpoints receive that archive connection and use its
+    # context manager to commit progress and rows together. They never open a
+    # second database or issue an independent commit.
+    checkpoints = (package_root / "knowledge_checkpoints.py").read_text(encoding="utf-8")
+    assert "with self.db:" in checkpoints
+    assert "put(self.db, key, value)" in checkpoints
+    assert "put(self.db, self.progress_key, self.progress)" in checkpoints
 
 
 def test_p3c0_schema_migration_requires_caller_owned_transaction():
