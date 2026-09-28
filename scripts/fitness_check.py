@@ -43,6 +43,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from cc_layout import is_contained, managed_path
+
 # ============================================================
 # DEFAULT CONFIGURATION
 # ============================================================
@@ -1317,12 +1319,12 @@ def _normalize_scoped_pattern_rule(rule: dict, rule_type: str) -> dict | None:
 def _load_scoped_pattern_rules_from_cc_config(root: Path,
                                               config_key: str,
                                               rule_type: str) -> list[dict]:
-    config_path = root / CC_CONFIG_FILE
-    if not config_path.exists():
-        legacy = root / LEGACY_CC_CONFIG_FILE
+    config_path = managed_path(root, CC_CONFIG_FILE)
+    if not config_path.exists() and not is_contained(root):
+        legacy = managed_path(root, LEGACY_CC_CONFIG_FILE)
         if legacy.exists():
             config_path = legacy
-    if not config_path.exists():
+    if not config_path.exists() and not is_contained(root):
         return []
 
     try:
@@ -1343,9 +1345,9 @@ def _load_scoped_pattern_rules_from_cc_config(root: Path,
 
 
 def _load_gateway_rules_from_cc_config(root: Path) -> list[dict]:
-    config_path = root / CC_CONFIG_FILE
+    config_path = managed_path(root, CC_CONFIG_FILE)
     if not config_path.exists():
-        legacy = root / LEGACY_CC_CONFIG_FILE
+        legacy = managed_path(root, LEGACY_CC_CONFIG_FILE)
         if legacy.exists():
             config_path = legacy
     if not config_path.exists():
@@ -1655,9 +1657,9 @@ def compute_instability(import_data: dict, zones: dict[str, Path],
 
 def load_history(root: Path) -> list[dict]:
     """Load fitness history from JSONL."""
-    path = root / HISTORY_FILE
-    if not path.exists():
-        legacy = root / LEGACY_HISTORY_FILE
+    path = managed_path(root, HISTORY_FILE)
+    if not path.exists() and not is_contained(root):
+        legacy = managed_path(root, LEGACY_HISTORY_FILE)
         if legacy.exists():
             path = legacy
     if not path.exists():
@@ -1676,7 +1678,7 @@ def load_history(root: Path) -> list[dict]:
 
 def save_snapshot(root: Path, snapshot: dict):
     """Append current snapshot to fitness history."""
-    path = root / HISTORY_FILE
+    path = managed_path(root, HISTORY_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
@@ -2172,10 +2174,12 @@ def _fitness_source_label(root: Path, path: Path) -> str:
 
 
 def _find_cc_config_path(root: Path) -> Path | None:
-    config_path = root / CC_CONFIG_FILE
+    config_path = managed_path(root, CC_CONFIG_FILE)
     if config_path.exists():
         return config_path
-    legacy = root / LEGACY_CC_CONFIG_FILE
+    if is_contained(root):
+        return None
+    legacy = managed_path(root, LEGACY_CC_CONFIG_FILE)
     if legacy.exists():
         return legacy
     return None
@@ -2253,6 +2257,8 @@ def load_config_with_evidence(root: Path) -> tuple[dict, list[dict]]:
             })
             print("WARNING: fitness.json is invalid, using shared/default config",
                   file=sys.stderr)
+    if is_contained(root) and "cc" not in config["skip_dirs"]:
+        config["skip_dirs"].append("cc")
     return config, evidence
 
 
@@ -2472,7 +2478,7 @@ def main():
 
     # Wiring matrix mode: generate and exit
     if args.wiring_matrix:
-        output = root / "devlog" / "wiring-matrix.md"
+        output = managed_path(root, "devlog", "wiring-matrix.md")
         content = generate_wiring_matrix(root, config["skip_dirs"], output)
         print(f"Generated {output}")
         print(content)

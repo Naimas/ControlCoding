@@ -6,6 +6,7 @@ import datetime as _dt
 import json
 import sqlite3
 from pathlib import Path
+from cc_layout import managed_path
 from typing import Any
 
 from .graph import GRAPH_CONTRACT_VERSION
@@ -349,10 +350,10 @@ def _artifact_status(project: Path, db_data: dict[str, Any], metadata: dict[str,
             else "",
         }
 
-    dev_context_root = project / CONTROL_DIRNAME / DEV_CONTEXT_PACKET_DIRNAME
+    dev_context_root = managed_path(project, CONTROL_DIRNAME, DEV_CONTEXT_PACKET_DIRNAME)
     rag_packet_files = _list_rag_packet_files(dev_context_root)
-    work_context_root = project / CONTROLWORK_DIRNAME / "context-packets"
-    work_views_root = project / CONTROLWORK_DIRNAME / CONTROLWORK_MEMORY_DIRNAME / "views"
+    work_context_root = managed_path(project, CONTROLWORK_DIRNAME, "context-packets")
+    work_views_root = managed_path(project, CONTROLWORK_DIRNAME, CONTROLWORK_MEMORY_DIRNAME, "views")
 
     return {
         "views": {
@@ -408,8 +409,8 @@ def _controlwork_area_counts(root: Path) -> dict[str, int | None]:
 
 
 def _project_plane(project: Path) -> dict[str, Any]:
-    root = project / CONTROLWORK_DIRNAME
-    context_path = project / CONTROLWORK_CONTEXT_FILENAME
+    root = managed_path(project, CONTROLWORK_DIRNAME)
+    context_path = managed_path(project, CONTROLWORK_CONTEXT_FILENAME)
     config_path = root / "config.json"
     link_path = root / "link.json"
     config = _read_json(config_path)
@@ -420,9 +421,9 @@ def _project_plane(project: Path) -> dict[str, Any]:
         resolved = external_path.resolve()
         external_validation = {
             "path": str(resolved),
-            "hasCanonicalContext": (resolved / CONTROLWORK_CONTEXT_FILENAME).exists(),
-            "hasConfig": (resolved / CONTROLWORK_DIRNAME / "config.json").exists(),
-            "hasMemoryRoot": (resolved / CONTROLWORK_DIRNAME / CONTROLWORK_MEMORY_DIRNAME).exists(),
+            "hasCanonicalContext": managed_path(resolved, CONTROLWORK_CONTEXT_FILENAME).exists(),
+            "hasConfig": managed_path(resolved, CONTROLWORK_DIRNAME, "config.json").exists(),
+            "hasMemoryRoot": managed_path(resolved, CONTROLWORK_DIRNAME, CONTROLWORK_MEMORY_DIRNAME).exists(),
         }
         external_validation["ok"] = all(
             bool(external_validation[key])
@@ -653,7 +654,7 @@ def _bootstrap_payload(
     derived = _artifact_status(project, db_data, db_metadata)
     project_plane = _project_plane(project)
     dev_plane = {
-        "hasControlDir": (project / CONTROL_DIRNAME).exists(),
+        "hasControlDir": managed_path(project, CONTROL_DIRNAME).exists(),
         "hasManifest": manifest_path.exists(),
         "hasDatabase": db_path.exists(),
         "initialized": bool(manifest_path.exists() and db_path.exists() and not db_warnings),

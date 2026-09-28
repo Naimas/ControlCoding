@@ -42,9 +42,27 @@ from visual_check_utils import (
     kill_process,
 )
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 # Default screenshot output location (relative to project root)
 DEFAULT_OUTPUT = "screenshots/visual_check.png"
 DEFAULT_DELAY = 3.0
+
+
+def _default_output_path(value: str | None) -> str:
+    """Route only an omitted built-in screenshot path into contained storage."""
+    if value is not None:
+        return value
+    project = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+    if is_contained(project):
+        return str(managed_path(project, DEFAULT_OUTPUT))
+    return DEFAULT_OUTPUT
 
 
 def main():
@@ -64,7 +82,7 @@ def main():
         help=f"Seconds to wait before taking screenshot (default: {DEFAULT_DELAY})",
     )
     parser.add_argument(
-        "--output", default=DEFAULT_OUTPUT,
+        "--output", default=None,
         help=f"Screenshot output path (default: {DEFAULT_OUTPUT})",
     )
     parser.add_argument(
@@ -80,6 +98,7 @@ def main():
         help="Write a structured JSON report alongside screenshots",
     )
     args = parser.parse_args()
+    args.output = _default_output_path(args.output)
 
     # Resolve multi-screenshot delays
     delays = None

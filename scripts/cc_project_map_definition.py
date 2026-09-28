@@ -2,6 +2,7 @@
 
 See docs/project-map-definition.md for Windows commit and recovery boundaries.
 """
+from cc_layout import managed_path, managed_relative, logical_relative, is_contained
 from contextlib import ExitStack
 import copy
 import hashlib
@@ -110,9 +111,9 @@ def read_definition(root, root_identity):
     root = _root(str(root))
     try:
         with _Snapshots(root, {}, ReadPolicy(file_bytes=LIMIT * 3)) as reader:
-            if reader.observe(root / JOURNAL, {}) is not None:
+            if reader.observe(managed_path(root, JOURNAL), {}) is not None:
                 raise DefinitionError('recovery_required')
-            saved = reader.observe(root / LOCATION, {})
+            saved = reader.observe(managed_path(root, LOCATION), {})
             reader.recheck()
             data = saved[-1] if saved is not None else None
             require(data is None or len(data) <= LIMIT, 'definition_limit')
@@ -257,6 +258,7 @@ def change_definition(observation, definition, change):
 
 
 def preview_change(request, expected_preview, snapshot, revision, change):
+    root = _root(request['project_root'])
     observation = observe_project_map(request, expected_preview=expected_preview)
     require(observation['projection']['bundle']['snapshot_id'] == snapshot, 'stale_snapshot')
     definition, current = read_definition(request['project_root'], observation['root_identity'])
@@ -268,7 +270,7 @@ def preview_change(request, expected_preview, snapshot, revision, change):
     changes = [{'before': before.get(r['id']), 'after': r} for r in proposed['entries'] if before.get(r['id']) != r]
     binding = {'root_identity': observation['root_identity'], 'snapshot': snapshot, 'revision': revision, 'change': change, 'definition': proposed}
     return {'approval_id': digest(encoded(binding)), 'revision': revision, 'snapshot': snapshot,
-            'path': LOCATION, 'changes': changes, 'write_supported': os.name == 'nt'}, proposed, observation
+            'path': managed_relative(root, LOCATION), 'changes': changes, 'write_supported': os.name == 'nt'}, proposed, observation
 
 
 def _exclusive(path, create=False):
@@ -333,13 +335,13 @@ def commit_change(request, expected_preview, snapshot, revision, change, approva
                 if source['identity']:
                     saved = reader.observe(root / source['locator']['path'], {})
                     require(saved is not None and 'sha256:' + digest(saved[-1]) == source['identity'], 'stale_snapshot')
-            for directory in (root / '.controlcoding', root / '.controlcoding/project-map'):
+            for directory in (managed_path(root, '.controlcoding'), managed_path(root, '.controlcoding/project-map')):
                 try:
                     directory.mkdir()
                 except FileExistsError:
                     pass
                 reader.observe(directory, {}, directory=True)
-            target = root / LOCATION
+            target = managed_path(root, LOCATION)
             fd = None
             before = None
             if revision != 'absent':
@@ -353,7 +355,7 @@ def commit_change(request, expected_preview, snapshot, revision, change, approva
                 require(not target.exists(), 'definition_conflict')
             reader.recheck()
             # CREATE_NEW also arbitrates other MAP writers, without reclaiming stale locks.
-            journal = _exclusive(root / JOURNAL, create=True)
+            journal = _exclusive(managed_path(root, JOURNAL), create=True)
             stack.callback(os.close, journal)
             journal_created = True
             data = encoded(proposed)
@@ -365,6 +367,6 @@ def commit_change(request, expected_preview, snapshot, revision, change, approva
             _ordinary(os.fstat(fd), False, 'definition')
             _write(fd, data)
             _delete_owned(journal)
-            return {'revision': digest(data), 'path': LOCATION, 'saved': True}
+            return {'revision': digest(data), 'path': managed_relative(root, LOCATION), 'saved': True}
     except (OSError, SetupServiceError) as error:
         raise DefinitionError('recovery_required' if journal_created else 'definition_busy') from None

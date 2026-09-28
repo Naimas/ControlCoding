@@ -6,6 +6,7 @@ Derived pages are explicitly extractive, and answers quote evidence, not guesses
 import json
 import re
 import time
+from cc_layout import managed_relative
 from .knowledge_store import database, get, put, now, KnowledgeError
 from .knowledge_sources import capture, passages, digest, references, head, SCOPES, LIMITS
 from .knowledge_semantic import OllamaEmbedding, encode_vector
@@ -266,15 +267,18 @@ def index(root, adapter=None):
 
 
 def status(root):
+    archive_path = managed_relative(root, '.controlcoding/knowledge/knowledge.db')
     with database(root) as db:
         if db is None or get(db, 'policy') is None:
-            return {'schema_version': 1, 'enabled': False, 'defaults': DEFAULT, 'limits': LIMITS}
+            return {'schema_version': 1, 'enabled': False, 'archive_path': archive_path,
+                    'defaults': DEFAULT, 'limits': LIMITS}
         counts = {table: db.execute('SELECT count(*) FROM ' + table + (' WHERE deleted=0' if table == 'sources' else '')).fetchone()[0]
                   for table in ('sources', 'chunks', 'edges', 'wiki', 'conversations', 'turns')}
         counts['embedded'] = db.execute('SELECT count(*) FROM chunks WHERE vector IS NOT NULL').fetchone()[0]
         from .knowledge_following import read as following
         from .knowledge_work import snapshot as work_snapshot
-        return {'schema_version': 1, 'enabled': True, 'policy': get(db, 'policy'), 'counts': counts,
+        return {'schema_version': 1, 'enabled': True, 'archive_path': archive_path,
+                'policy': get(db, 'policy'), 'counts': counts,
                 'generation': get(db, 'generation', 0), 'work_revision': work_snapshot(db), 'last_reconcile': get(db, 'last_reconcile'),
                 'needs_reconcile': get(db, 'needs_reconcile', True), 'head': get(db, 'head'),
                 'last_change': get(db, 'last_change'), 'embedding_identity': get(db, 'embedding_identity'),
@@ -417,12 +421,15 @@ def read_conversation(root, identifier):
             'SELECT * FROM turns WHERE conversation=? ORDER BY sequence LIMIT 512', (identifier,))]}
 
 
-def query(root, text, semantic=True, adapter=None):
+def query(root, text, semantic=True, adapter=None, retrieval=None):
     from .knowledge_query import query as run_query
-    return run_query(root, text, semantic, adapter)
+    return run_query(root, text, semantic, adapter, retrieval)
 
 
 def dispatch(root, action, value=None):
+    from .knowledge_wiki_tools import ACTIONS as WIKI_TOOLS, dispatch as wiki_tools
+    if type(action) is str and action in WIKI_TOOLS:
+        return wiki_tools(root, action, value)
     if action in ('consolidation-settings', 'consolidation-prepare', 'consolidation-attempt',
                   'consolidation-import', 'consolidation-fail', 'consolidation-queue',
                   'consolidation-prune'):
@@ -494,8 +501,8 @@ def dispatch(root, action, value=None):
     if action == 'conversation-read':
         return read_conversation(root, value)
     if action == 'query':
-        require(type(value) is dict and set(value) == {'text', 'semantic'})
-        return query(root, value['text'], value['semantic'])
+        require(type(value) is dict and {'text', 'semantic'} <= set(value) <= {'text', 'semantic', 'retrieval'})
+        return query(root, value['text'], value['semantic'], retrieval=value.get('retrieval'))
     require(type(value) is str and re.fullmatch('[A-Za-z0-9_-]{1,80}', value))
     with database(root) as db:
         initialized(db)

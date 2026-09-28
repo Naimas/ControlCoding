@@ -32,16 +32,29 @@ from pathlib import Path
 from fastmcp import FastMCP
 from cc_lockfile import LockfileGuard, LockfileTimeoutError, adjacent_lockfile_guard
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        import sys
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 # --- Configuration ---
 
 PROJECT_ROOT = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
-STATUS_FILE = PROJECT_ROOT / os.environ.get("SESSION_STATUS_FILE", "STATUS.md")
+STATUS_FILE = (PROJECT_ROOT / os.environ["SESSION_STATUS_FILE"]
+               if "SESSION_STATUS_FILE" in os.environ
+               else managed_path(PROJECT_ROOT, "STATUS.md"))
 CONTROL_PLANE_DIR = ".controlcoding"
 LEGACY_CONTROL_PLANE_DIR = ".claude"
 
 
 def _control_plane_dir() -> Path:
-    canonical = PROJECT_ROOT / CONTROL_PLANE_DIR
+    canonical = managed_path(PROJECT_ROOT, CONTROL_PLANE_DIR)
+    if is_contained(PROJECT_ROOT):
+        return canonical
     if canonical.exists():
         return canonical
     legacy = PROJECT_ROOT / LEGACY_CONTROL_PLANE_DIR

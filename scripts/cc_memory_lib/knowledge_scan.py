@@ -6,6 +6,7 @@ import re
 import time
 
 from cc_setup_service import _Snapshots, _root
+from cc_layout import is_contained, managed_path, source_path
 from .knowledge_store import ordinary, get, put, KnowledgeError
 from .knowledge_import import EXTRACTOR_VERSION
 
@@ -51,9 +52,12 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
     def walk(relative, recursive=False, depth=0, kind='document'):
         nonlocal entries
         tick()
-        path = root / relative
+        logical = Path(relative)
+        logical_name = logical.as_posix()
+        owned_namespace = logical.parts and logical.parts[0] in ('.controlcoding', '.controlwork')
+        path = root if logical_name == '.' else source_path(root, logical_name) if owned_namespace else root / logical
         names = listing(path)
-        directories[relative.as_posix()] = names
+        directories[logical.as_posix()] = names
         if names is None:
             return
         entries += len(names)
@@ -66,23 +70,26 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
             if any(c in name for c in ':\\/') or name.endswith(('.', ' ')):
                 raise KnowledgeError('unsupported_path')
             child = path / name
+            child_logical = logical / name
             if child.is_dir():
                 if recursive:
                     ordinary(child, True)
                     if depth >= 7:
                         raise KnowledgeError('source_budget')
-                    walk(child.relative_to(root), True, depth + 1, kind)
+                    walk(child_logical, True, depth + 1, kind)
             elif name.upper() != 'AGENTS.MD' and (
                     kind == 'rich-document' and child.suffix.lower() in ('.docx', '.xlsx', '.pdf') or
                     kind != 'rich-document' and (child.suffix.lower() in ('.md', '.txt') or
                     kind in ('session', 'receipt') and child.suffix.lower() == '.json')):
-                key = child.relative_to(root).as_posix()
+                key = child_logical.as_posix()
                 if kind == 'rich-document' and rich_paths is not None and key not in rich_paths:
                     continue
-                files.setdefault(key, (kind, fingerprint(child)))
+                physical_key = child.relative_to(root).as_posix()
+                files.setdefault(key, (kind, fingerprint(child), physical_key))
                 if kind == 'rich-document' and child.suffix.lower() == '.pdf':
-                    companion = root / (key + '.ocr.json')
-                    sidecars[key] = fingerprint(companion) if os.path.lexists(companion) else None
+                    companion = Path(str(child) + '.ocr.json')
+                    sidecars[key] = (fingerprint(companion) if os.path.lexists(companion) else None,
+                                     companion.relative_to(root).as_posix())
                 if len(files) > LIMITS['files']:
                     raise KnowledgeError('source_budget')
 
@@ -104,6 +111,14 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
                 walk(Path('.controlcoding') / folder, kind='receipt')
         else:
             walk(Path('_work') / ('plans' if scope == 'plans' else 'handoff'), True, kind=scope)
+    if is_contained(root) and 'project' in scopes:
+        # These CC-owned canonical documents moved physically, but their source
+        # IDs and stored paths remain in the established project namespace.
+        for name in ('CONTROLCODING.md', 'CONTROLWORK.md', 'PROJECT.md', 'STATUS.md', 'ROADMAP.md', 'BUGS.md'):
+            physical = managed_path(root, name)
+            if physical.is_file():
+                logical = 'cc/' + name
+                files.setdefault(logical, ('document', fingerprint(physical), physical.relative_to(root).as_posix()))
     manifest = digest(json.dumps([VERSION, EXTRACTOR_VERSION, str(root), scopes, rich_paths, files, directories, sidecars, ocr_records], sort_keys=True))
     if db is not None and get(db, PREFIX + 'manifest') != manifest:
         with db:
@@ -116,9 +131,9 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
     from .knowledge_source_errors import failure, success
     from .knowledge_read_batches import SnapshotBatches
     with SnapshotBatches(root, _Snapshots) as readers:
-        for relative, (kind, signature) in sorted(files.items()):
+        for relative, (kind, signature, physical_relative) in sorted(files.items()):
             tick()
-            companion_signature = sidecars.get(relative)
+            companion_signature, companion_relative = sidecars.get(relative, (None, None))
             used += signature[2] + (companion_signature[2] if companion_signature else 0)
             cap = 1024 * 1024 if kind == 'rich-document' else LIMITS['file_bytes']
             if used > LIMITS['total_bytes']:
@@ -135,7 +150,7 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
                 if signature[2] > cap or (companion_signature and companion_signature[2] > 65536):
                     raise KnowledgeError('source_budget')
                 if source is None:
-                    raw, sidecar_raw = readers.read(relative, cap, relative in sidecars)
+                    raw, sidecar_raw = readers.read(physical_relative, cap, companion_signature is not None)
                     if ocr_records and relative in ocr_records and kind == 'rich-document':
                         sidecar_raw = json.dumps(ocr_records[relative]).encode('utf-8')
                     revision = digest(raw)
@@ -163,7 +178,8 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
                     heading = re.search(r'^#\s+(.+)', body, re.M)
                     source = {'id': 'source:' + digest(relative), 'path': relative,
                               'title': (heading[1].strip() if heading else Path(relative).name)[:180],
-                              'revision': revision, 'body': body, 'kind': kind}
+                              'revision': revision, 'body': body, 'kind': kind,
+                              'physicalPath': physical_relative}
                     if db is not None:
                         stored = db.execute('SELECT id,revision FROM sources WHERE path=? AND revision=? AND deleted=0',
                                             (relative, source['revision'])).fetchone()
@@ -181,16 +197,19 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
         raise failures[0]
     # Metadata validation guards normal edits across bounded reads. The service
     # performs a fresh uncached content capture before publishing changed sources.
-    for relative, (_, signature) in files.items():
+    for relative, (_, signature, physical_relative) in files.items():
         tick()
-        if fingerprint(root / relative) != signature:
+        if fingerprint(root / physical_relative) != signature:
             raise KnowledgeError('changed_input')
-    for relative, signature in sidecars.items():
-        companion = root / (relative + '.ocr.json')
+    for relative, (signature, physical_relative) in sidecars.items():
+        companion = root / physical_relative
         if (fingerprint(companion) if os.path.lexists(companion) else None) != signature:
             raise KnowledgeError('changed_input')
     for relative, names in directories.items():
         tick()
-        if listing(root / relative) != names:
+        logical = Path(relative)
+        owned_namespace = logical.parts and logical.parts[0] in ('.controlcoding', '.controlwork')
+        physical = root if relative == '.' else source_path(root, relative) if owned_namespace else root / logical
+        if listing(physical) != names:
             raise KnowledgeError('changed_input')
     return sources

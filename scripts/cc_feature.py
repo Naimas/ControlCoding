@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from cc_layout import managed_path
+
 FEATURE_STATE_SCHEMA_VERSION = "cc-feature-state/v1"
 FEATURE_STATES = {"planned", "active", "verifying", "passing", "blocked", "completed", "aborted"}
 FEATURE_IN_PROGRESS_STATES = {"active", "verifying", "passing", "blocked"}
@@ -44,7 +46,7 @@ def _now_iso() -> str:
 
 
 def _registry_path(project: Path) -> Path:
-    return project / ".controlcoding" / "features" / "features.json"
+    return managed_path(project, ".controlcoding", "features", "features.json")
 
 
 def _project_relative_label(project: Path, path: Path) -> str:

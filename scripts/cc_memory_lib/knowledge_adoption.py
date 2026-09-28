@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import stat
 import uuid
+from cc_layout import managed_path
 
 SCHEMA_VERSION = 1
 MAX_FUTURE = timedelta(minutes=5)
@@ -58,14 +59,15 @@ def observe(project, kind, note, *, now=None):
     if not root.is_dir():
         raise ValueError('project must be a directory')
     instant = now or datetime.now(timezone.utc)
-    archive = root / '.controlcoding' / 'knowledge' / 'knowledge.db'
+    archive = managed_path(root, '.controlcoding', 'knowledge', 'knowledge.db')
     counts = {name: 0 for name in TABLES}
     flags = {'archive_present': False, 'schema_supported': False,
              'policy_present': False, 'needs_reconcile': None,
              'source_failures': None, 'quick_check_ok': None}
     digest = None
     if archive.exists() or archive.is_symlink():
-        for directory in (root / '.controlcoding', root / '.controlcoding' / 'knowledge'):
+        for directory in (managed_path(root, '.controlcoding'),
+                          managed_path(root, '.controlcoding', 'knowledge')):
             _ordinary_directory(directory)
         _ordinary(archive)
         # URI mode=ro prevents SQLite from creating or initializing an archive.

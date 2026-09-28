@@ -9,6 +9,7 @@ from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ET
 
 from cc_setup_service import ReadPolicy, SetupServiceError, _Snapshots, _root
+from cc_layout import source_path
 
 TEXT_LIMIT = 256 * 1024
 IMAGE_LIMIT = 384 * 1024
@@ -137,8 +138,9 @@ def read_document(root_value, source, expected_hash, images):
         raise DocumentError('invalid_images')
     try:
         root = _root(root_value)
+        physical_source = _physical_document_path(root, source)
         with _Snapshots(root, {}, POLICY) as reader:
-            entry = reader.observe(root / source, {})
+            entry = reader.observe(physical_source, {})
             if entry is None or hashlib.sha256(entry[-1]).hexdigest() != expected_hash:
                 raise DocumentError('changed_input')
             raw = entry[-1]
@@ -152,7 +154,7 @@ def read_document(root_value, source, expected_hash, images):
                     target = image_path(source, reference)
                     if PurePosixPath(target).suffix.lower() not in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'):
                         raise DocumentError('unsupported_image')
-                    image = reader.observe(root / target, {})
+                    image = reader.observe(_physical_document_path(root, target), {})
                     if image is None:
                         raise DocumentError('missing_image')
                     data = image[-1]
@@ -165,7 +167,8 @@ def read_document(root_value, source, expected_hash, images):
                     asset.update(status='unavailable', reason=error.code)
                 assets.append(asset)
             reader.recheck()
-        return {'project_root': root_value, 'document': {'path': source, 'sha256': expected_hash,
+        physical_relative = physical_source.relative_to(root).as_posix()
+        return {'project_root': root_value, 'document': {'path': source, 'physicalPath': physical_relative, 'sha256': expected_hash,
                 'markdown': markdown, 'bytes': len(raw), 'images': assets}}
     except DocumentError:
         raise
@@ -173,3 +176,10 @@ def read_document(root_value, source, expected_hash, images):
         raise DocumentError(error.code) from None
     except (OSError, UnicodeError):
         raise DocumentError('invalid_document') from None
+
+
+def _physical_document_path(root, relative):
+    """Keep adopter documents literal; only explicit managed namespaces route."""
+    if relative.split('/', 1)[0] in ('.controlcoding', '.controlwork'):
+        return source_path(root, relative)
+    return root / relative

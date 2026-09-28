@@ -72,11 +72,32 @@
       "description": "Run optional hook and Bash observation safety regressions."
     },
     {
+      "id": "contained-storage-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_layout.py tests/test_cc_contained_core.py tests/test_cc_contained_memory.py tests/test_cc_contained_migration.py -q --junitxml {project}/.controlcoding/verification_receipts/contained-storage-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify contained storage, legacy compatibility, real hook dispatch, memory and backed-up migration preservation."
+    },
+    {
       "id": "invariant-manifest",
       "kind": "invariant",
       "required": true,
       "command": "python scripts/cc.py invariants run --project-root .",
       "description": "Run executable project invariants declared in controlcoding.invariants.json."
+    },
+    {
+      "id": "external-storage-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_external.py -q --junitxml {project}/.controlcoding/verification_receipts/external-storage-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify read-only external sources, process refusal, provenance and evidence invalidation."
+    },
+    {
+      "id": "graph-wiki-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_graph_wiki.py tests/test_cc_knowledge_ranking.py tests/test_cc_knowledge_wiki_review.py -q --junitxml {project}/.controlcoding/verification_receipts/graph-wiki-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify graph retrieval, original citations, reviewed wiki findings and guarded revision recovery."
     },
     {
       "id": "diff-check",

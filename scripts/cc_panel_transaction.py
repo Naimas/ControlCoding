@@ -1,4 +1,5 @@
 """Internal Windows writer for reviewed panel plans; never accepts renderer paths."""
+from cc_layout import managed_path, managed_relative, logical_relative, is_contained
 from contextlib import ExitStack
 import hashlib
 import json
@@ -54,7 +55,7 @@ def commit(root, inputs, trusted, changes, approval_id, planned_directories=()):
             # from being overwritten; retained existing ancestors prevent relinking.
             for path in [p for p, (_, snap, _) in reader.entries.items() if snap is None]:
                 del reader.entries[path]
-            directories = {root / '.controlcoding', *planned_directories}
+            directories = {managed_path(root, '.controlcoding'), *planned_directories}
             if any(not p.is_relative_to(root) or p == root for p in directories):
                 raise PanelWriteError('invalid_plan')
             for path in changes:
@@ -68,7 +69,7 @@ def commit(root, inputs, trusted, changes, approval_id, planned_directories=()):
                 except FileExistsError:
                     pass
                 reader.observe(path, {}, directory=True)
-            journal = _exclusive(root / JOURNAL, create=True)
+            journal = _exclusive(managed_path(root, JOURNAL), create=True)
             stack.callback(os.close, journal)
             backup = {'schema_version': 1, 'approval_id': approval_id, 'state': 'prepared', 'files': [
                 {'path': p.relative_to(root).as_posix(), 'before': handles[p][1].decode('utf-8') if p in handles else None,

@@ -61,10 +61,10 @@ def test_bm25_normalizes_length_and_breaks_equal_scores_by_id(tmp_path):
         'docs/a.md', 'docs/m.md', 'docs/z.md']
 
 
-def test_graph_neighbor_is_metadata_not_a_retrieval_candidate(tmp_path):
+def test_graph_neighbor_becomes_original_retrieval_candidate(tmp_path):
     seed(tmp_path, {'hit': 'needle', 'neighbor': 'unrelated'}, [('hit', 'neighbor')])
     result = service.query(tmp_path, 'needle', False)
-    assert paths(result) == ['docs/hit.md']
+    assert paths(result) == ['docs/hit.md', 'docs/neighbor.md']
     assert result['edges'][0]['target'] == 'neighbor'
 
 

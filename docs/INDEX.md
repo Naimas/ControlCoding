@@ -9,6 +9,8 @@ ControlCoding V1/Core source release.
 
 1. [Install ControlCoding On Your Project](./install-controlcoding-on-your-project.md)
 2. [Quick Start](./quick-start.md)
+   - [Contained project storage](./contained-storage.md): keep managed material in `cc/`.
+   - [External read-only mode](./external-mode.md): separate memory/evidence workspace with no product files or hooks.
 3. [Release Model](./release-model.md)
 4. [System Architecture](./controlcoding-system-architecture.md)
 5. [Project Memory Engine](./project-memory-engine.md), when local project
@@ -36,6 +38,8 @@ performance claims.
 | Contract | A behavior, file shape, or compatibility promise backed by implementation or tests. |
 | Plan | Public planning material that is not a shipped-feature promise. |
 | Reference | Supporting technical or historical material. |
+
+Graph retrieval and integrated wiki: [usage, review and limits](./graph-wiki.md).
 
 ## Current Documents
 

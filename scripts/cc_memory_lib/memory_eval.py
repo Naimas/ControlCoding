@@ -20,6 +20,7 @@ from .scoring import retrieval_scoring_config_payload
 from .sessions import cmd_memory_session_link, cmd_memory_session_start
 from .store import _now_iso, _print_json_or_text, _relative_path
 from .vector import cmd_memory_vector_rebuild
+from cc_layout import managed_path
 
 MEMORY_EVAL_VERSION = "cc-memory-eval/v1"
 MEMORY_EVAL_QUERY = "payment settlement ledger evidence"
@@ -56,13 +57,13 @@ def _safe_slug(value: str) -> str:
 
 def _make_fixture_root(project: Path) -> Path:
     stamp = _safe_slug(_now_iso())
-    return project / ".controlcoding" / "tmp" / "memory-eval" / stamp
+    return managed_path(project, ".controlcoding/tmp/memory-eval", stamp)
 
 
 def _cleanup_empty_eval_dirs(project: Path) -> None:
     for path in [
-        project / ".controlcoding" / "tmp" / "memory-eval",
-        project / ".controlcoding" / "tmp",
+        managed_path(project, ".controlcoding/tmp/memory-eval"),
+        managed_path(project, ".controlcoding/tmp"),
     ]:
         try:
             path.rmdir()

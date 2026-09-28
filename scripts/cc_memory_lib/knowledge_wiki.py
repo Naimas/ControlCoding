@@ -9,7 +9,7 @@ import re
 from .knowledge_sources import digest
 from .knowledge_store import KnowledgeError, database, get, put, now
 
-COMPILER = 4
+COMPILER = 5
 TOPICS = (
     ('sessions', 'Conversations and continuity', r'conversation|session|handoff'),
     ('decisions', 'Decisions and rationale', r'decision|rationale|\badr\b'),
@@ -115,17 +115,35 @@ def freshness(db, dependencies):
 
 
 def lint(db):
-    issues, pages = [], 0
+    issues, pages, anchors, checks = [], 0, {}, {'original_links': 0, 'dependencies': 0}
     for row in db.execute('SELECT id,body,dependencies FROM wiki'):
         pages += 1
         deps = json.loads(row['dependencies'])
+        checks['dependencies'] += len(deps)
         issues.extend({'page': row['id'], **issue} for issue in freshness(db, deps))
         if row['id'].startswith('wiki:draft:'):
+            if not deps:
+                issues.append({'page': row['id'], 'code': 'orphan_page'})
             ids = {d['citation'] for d in deps}
+            if len(ids) != len(deps):
+                issues.append({'page': row['id'], 'code': 'duplicate_citation_id'})
             for identifier in set(re.findall(r'\[(S\d+)\]', row['body'])) - ids:
                 issues.append({'page': row['id'], 'code': 'citation_invalid', 'citation': identifier})
-    return {'pages': pages, 'issues': issues, 'checked_at': now(),
-            'notice': 'Checks source revisions and anchors; does not judge factual entailment or contradictions.'}
+    from cc_documentation_observer import references
+    paths = {r[0] for r in db.execute('SELECT path FROM sources WHERE deleted=0')}
+    for row in db.execute('SELECT id,path,body FROM sources WHERE deleted=0'):
+        seen = set()
+        for identifier in re.findall(r'\{#([\w-]+)\}|<a\s+id=[\"\x27]([\w-]+)', row['body']):
+            identifier = next(x for x in identifier if x)
+            if identifier in seen:
+                issues.append({'page': row['id'], 'code': 'duplicate_anchor_id', 'anchor': identifier})
+            seen.add(identifier)
+        for target in set(references(row['body'], row['path'])):
+            checks['original_links'] += 1
+            if target not in paths:
+                issues.append({'page': row['id'], 'code': 'link_outside_index_or_missing', 'path': target})
+    return {'pages': pages, 'issues': issues[:1000], 'truncated': len(issues) > 1000, 'checked_at': now(), 'checks': checks,
+            'notice': 'Checks original links, duplicate explicit IDs, source revisions and anchors. Links outside the index may be intentionally out of scope. Semantic findings require review.'}
 
 
 def save_draft(root, value):

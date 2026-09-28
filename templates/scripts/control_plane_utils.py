@@ -12,8 +12,18 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
 
 # ---------------------------------------------------------------------------
 # Schema constants (Appendix C)
@@ -369,6 +379,23 @@ ENGAGEMENT_DEFAULTS = {
 DEFAULT_ENGAGEMENT_PATH = ".controlcoding/cc_engagement.json"
 DEFAULT_GATEWAY_PATH = ".controlcoding/gateway_config.json"
 
+
+def _runtime_project_root() -> Path:
+    return Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+
+
+def _resolve_control_plane_default(path: str | os.PathLike[str]) -> str:
+    """Resolve only built-in CC defaults; preserve caller-selected paths."""
+    value = os.fspath(path)
+    if value in {DEFAULT_ENGAGEMENT_PATH, DEFAULT_GATEWAY_PATH}:
+        project_root = _runtime_project_root()
+        # Legacy tools intentionally resolve their relative defaults at call
+        # time from the caller's working directory.  Contained adopters need
+        # an actual namespace path because the managed root is no longer cwd.
+        if is_contained(project_root):
+            return str(managed_path(project_root, value))
+    return value
+
 LOCAL_TANDEM_MIN_RAM_GB = 32.0
 LOCAL_TANDEM_RECOMMENDED_RAM_GB = 64.0
 LOCAL_TANDEM_MIN_VRAM_GB = 12.0
@@ -662,7 +689,7 @@ def load_engagement(config_path=DEFAULT_ENGAGEMENT_PATH):
     Returns the config dict with defaults applied for missing keys.
     If the file does not exist, returns defaults.
     """
-    path = os.path.abspath(config_path)
+    path = os.path.abspath(_resolve_control_plane_default(config_path))
     config = normalize_engagement_config({})
 
     if not os.path.exists(path):
@@ -679,7 +706,7 @@ def load_engagement(config_path=DEFAULT_ENGAGEMENT_PATH):
 
 def save_engagement(config, config_path=DEFAULT_ENGAGEMENT_PATH):
     """Save engagement configuration to JSON file using atomic write."""
-    atomic_write(config_path, normalize_engagement_config(config))
+    atomic_write(_resolve_control_plane_default(config_path), normalize_engagement_config(config))
 
 
 def get_active_components(config=None, config_path=DEFAULT_ENGAGEMENT_PATH):
@@ -933,7 +960,7 @@ def check_specialist_runtime(role_ref,
       allowed, enforced, reason, detail, component, role_ref,
       backend, model, execution_mode, specialist_path
     """
-    config_path = os.path.abspath(config_path)
+    config_path = os.path.abspath(_resolve_control_plane_default(config_path))
     config_was_provided = config is not None
     config_file_exists = os.path.exists(config_path)
     if config is None:

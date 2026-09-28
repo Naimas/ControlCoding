@@ -24,9 +24,15 @@ import fnmatch
 import json
 import os
 import re
+import stat
 import sys
 import threading
 from pathlib import Path
+
+try:
+    from hook_utils import LayoutError, is_contained, managed_path
+except ImportError:
+    from templates.hooks.hook_utils import LayoutError, is_contained, managed_path
 
 CONTROL_PLANE_DIR = ".controlcoding"
 LEGACY_CONTROL_PLANE_DIR = ".claude"
@@ -137,8 +143,33 @@ def parse_lock_file(lock_path):
 def find_all_lock_files(project_root):
     """Walk the repo and find all .feature-lock.json files.
 
-    Returns list of absolute paths. Skips .git, node_modules, __pycache__.
+    Contained adopters keep lock state in the CC control plane while ``owns``
+    patterns continue to identify real application source paths. Legacy
+    projects retain their inline module lock layout.
     """
+    project_root = Path(project_root)
+    if is_contained(project_root):
+        lock_root = managed_path(project_root, CONTROL_PLANE_DIR, "module-locks")
+        if not lock_root.exists():
+            return []
+        root_info = lock_root.lstat()
+        if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+            raise LayoutError("unsafe_module_lock_root")
+        files = []
+        for path in lock_root.rglob(".feature-lock.json"):
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise LayoutError("unsafe_module_lock")
+            files.append(str(path))
+
+        # An inline lock would silently bypass the contained ownership model.
+        # Do not select one based on traversal order; migration must move it.
+        for dirpath, dirnames, filenames in os.walk(project_root):
+            dirnames[:] = [name for name in dirnames if name not in {".git", "cc", "node_modules", "__pycache__", ".venv", "venv"}]
+            if ".feature-lock.json" in filenames:
+                raise LayoutError("contained_inline_module_lock")
+        return sorted(files)
+
     skip_dirs = {".git", CONTROL_PLANE_DIR, LEGACY_CONTROL_PLANE_DIR, "node_modules", "__pycache__", ".venv", "venv"}
     result = []
     root_str = str(project_root)
@@ -197,9 +228,8 @@ def _reset_resolver_cache():
 
 def _active_module_path(project_root):
     """Return canonical active_module path with legacy fallback."""
-    root = Path(project_root)
-    canonical = root / CONTROL_PLANE_DIR / "active_module.json"
-    legacy = root / LEGACY_CONTROL_PLANE_DIR / "active_module.json"
+    canonical = managed_path(project_root, CONTROL_PLANE_DIR, "active_module.json")
+    legacy = managed_path(project_root, LEGACY_CONTROL_PLANE_DIR, "active_module.json")
     if canonical.exists():
         return canonical
     if legacy.exists():
@@ -326,12 +356,15 @@ def resolve_active_module(project_root):
     with _cache_lock:
         if not _duplicate_check_done:
             _duplicate_check_done = True
-            dup_name, dup_paths = check_duplicate_modules(project_root)
-            if dup_name:
-                _duplicate_error = (
-                    f"Duplicate module name '{dup_name}' found in: "
-                    + ", ".join(str(p) for p in dup_paths)
-                )
+            try:
+                dup_name, dup_paths = check_duplicate_modules(project_root)
+                if dup_name:
+                    _duplicate_error = (
+                        f"Duplicate module name '{dup_name}' found in: "
+                        + ", ".join(str(p) for p in dup_paths)
+                    )
+            except (LayoutError, OSError) as exc:
+                _duplicate_error = f"Feature lock discovery is unsafe: {exc}"
 
     if _duplicate_error:
         return {
@@ -447,7 +480,13 @@ def check_module_perimeter(file_path, project_root,
         )
 
     # Resolve active module
-    resolved = resolve_active_module(project_root)
+    try:
+        resolved = resolve_active_module(project_root)
+    except (LayoutError, OSError) as exc:
+        return _make_result(
+            "deny", "unsafe_lock_state",
+            f"Feature lock discovery is unsafe: {exc}", None, "disabled",
+        )
 
     # No module active -> feature lock disabled, everything passes
     if resolved["module"] is None and resolved["error"] is None:
@@ -528,7 +567,13 @@ def check_module_perimeter(file_path, project_root,
                 )
 
     # Find the lock file for this module
-    lock_data, lock_path = find_lock_for_module(project_root, module_name)
+    try:
+        lock_data, lock_path = find_lock_for_module(project_root, module_name)
+    except (LayoutError, OSError) as exc:
+        return _make_result(
+            "deny", "unsafe_lock_state",
+            f"Feature lock discovery is unsafe: {exc}", module_name, source,
+        )
 
     if lock_data is None:
         # Module declared but no lock file found

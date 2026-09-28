@@ -1,4 +1,5 @@
 """Two-stage desktop setup drafts and source-bound Core configuration plans."""
+from cc_layout import managed_path, managed_relative, logical_relative, is_contained
 import copy
 import datetime
 import hashlib
@@ -115,8 +116,8 @@ def boundaries(value):
 
 def _capture(root, reader):
     require(reader.observe(root, {}, directory=True) is not None, 'missing_root')
-    require(reader.observe(root / JOURNAL, {}) is None, 'recovery_required')
-    snap = reader.observe(root / DRAFT, {})
+    require(reader.observe(managed_path(root, JOURNAL), {}) is None, 'recovery_required')
+    snap = reader.observe(managed_path(root, DRAFT), {})
     if snap is None:
         return default_draft(root), 'absent'
     require(len(snap[-1]) <= MAX_DRAFT, 'draft_limit')
@@ -133,7 +134,7 @@ def read_draft(root_value):
     with _Snapshots(root, {}, ReadPolicy()) as reader:
         draft, revision = _capture(root, reader)
         reader.recheck()
-        return {'draft': draft, 'revision': revision, 'saved': revision != 'absent', 'path': DRAFT}
+        return {'draft': draft, 'revision': revision, 'saved': revision != 'absent', 'path': managed_relative(root, DRAFT)}
 
 
 def _value(draft, field):
@@ -175,11 +176,11 @@ def _generate(root, draft, reader, core):
     context = setup._render_context_content(answers, core.CANONICAL_CONTEXT_FILENAME)
     require(context is not None, 'missing_source')
     context += '\n## Project Intent\n\n' + (draft['goal'] or '(not recorded)') + '\n\n## Verification Commands [advisory]\n\n' + (_value(draft, 'verification') or '(not decided)') + '\n'
-    outputs[root / core.CANONICAL_CONTEXT_FILENAME] = context.encode('utf-8')
+    outputs[managed_path(root, core.CANONICAL_CONTEXT_FILENAME)] = context.encode('utf-8')
     def config(name):
-        p = root / '.controlcoding' / name
+        p = managed_path(root, '.controlcoding', name)
         snap = reader.observe(p, {})
-        legacy = reader.observe(root / '.claude' / name, {})
+        legacy = None if is_contained(root) else reader.observe(root / '.claude' / name, {})
         if snap is None:
             snap = legacy
         return load_json(snap[-1]) if snap else {}
@@ -189,11 +190,11 @@ def _generate(root, draft, reader, core):
         draft['documentation_mode'], 'local', 'local_only', 'deferred',
         module_boundaries={zone: [p for p,z,_ in rows if z == zone] for zone in ('stable','shared','features')},
         planning=setup._planning_profile_for_tier('core'))
-    outputs[root / '.controlcoding/cc_config.json'] = encoded(settings)
+    outputs[managed_path(root, '.controlcoding/cc_config.json')] = encoded(settings)
     old_block = core._build_gitignore_block(central_hooks=False,
-        documentation_mode=existing.get('documentation_mode', 'managed'), cc_artifact_mode=existing.get('cc_artifact_mode', 'local_only'))
+        documentation_mode=existing.get('documentation_mode', 'managed'), cc_artifact_mode=existing.get('cc_artifact_mode', 'local_only'), project_root=root)
     new_block = core._build_gitignore_block(central_hooks=False,
-        documentation_mode=draft['documentation_mode'], cc_artifact_mode='local_only')
+        documentation_mode=draft['documentation_mode'], cc_artifact_mode='local_only', project_root=root)
     ignore = reader.observe(root / '.gitignore', {})
     if ignore is None:
         outputs[root / '.gitignore'] = new_block.encode('utf-8')
@@ -203,9 +204,9 @@ def _generate(root, draft, reader, core):
         outputs[root / '.gitignore'] = original.replace(old_block, new_block).encode('utf-8')
     gateway = setup._build_gateway_config(config('gateway_config.json'), draft['user_host'])
     gateway['hostInstructions'] = setup._build_host_instructions_config('recommended', [])
-    outputs[root / '.controlcoding/gateway_config.json'] = encoded(gateway)
-    rendered, spec = core._render_expected_host_context(root, draft['user_host'], root / core.CANONICAL_CONTEXT_FILENAME,
-                                                       context, core.CANONICAL_CONTEXT_FILENAME)
+    outputs[managed_path(root, '.controlcoding/gateway_config.json')] = encoded(gateway)
+    rendered, spec = core._render_expected_host_context(root, draft['user_host'], managed_path(root, core.CANONICAL_CONTEXT_FILENAME),
+                                                       context, managed_relative(root, core.CANONICAL_CONTEXT_FILENAME))
     if rendered is not None:
         outputs[root / spec['path']] = rendered.encode('utf-8')
     # The shared asset builder checks presence, never imports target code.
@@ -215,12 +216,13 @@ def _generate(root, draft, reader, core):
     # generated editor tasks as foreign on every subsequent preview.
     if tasks is not None:
         initial = core._build_host_integration_assets(root, draft['user_host'], gateway['hostInstructions'], workspace_tasks_present=False)
-        manifest = reader.observe(root / core.HOST_INTEGRATION_MANIFEST_RELATIVE_PATH, {})
+        manifest = reader.observe(managed_path(root, core.HOST_INTEGRATION_MANIFEST_RELATIVE_PATH), {})
         if (initial.get('.vscode/tasks.json', '').encode('utf-8') == tasks[-1] and manifest is not None
                 and initial[str(core.HOST_INTEGRATION_MANIFEST_RELATIVE_PATH).replace('\\', '/')].encode('utf-8') == manifest[-1]):
             assets = initial
     for relative_path, content in assets.items():
-        outputs[root / relative_path] = content.encode('utf-8')
+        path = managed_path(root, relative_path) if relative_path.startswith('.controlcoding/') else root / relative_path
+        outputs[path] = content.encode('utf-8')
     return outputs, kept, plan['directories']
 
 
@@ -231,7 +233,7 @@ def prepare(root_value, draft, revision, operation):
     require(revision == 'absent' or type(revision) is str and re.fullmatch('[a-f0-9]{64}', revision), 'invalid_revision')
     import cc as core
     trusted = {core.SCRIPT_DIR / n: 'scripts/'+n for n in
-               ('cc_panel_configuration.py', 'cc_panel_transaction.py', 'cc_setup_service.py', 'cc_project_map_definition.py')}
+               ('cc_layout.py', 'cc_panel_configuration.py', 'cc_panel_transaction.py', 'cc_setup_service.py', 'cc_project_map_definition.py')}
     if operation == 'apply':
         trusted.update({**_trusted(core), core.SCRIPT_DIR / 'cc_setup.py': 'scripts/cc_setup.py'})
     with _Snapshots(root, trusted, ReadPolicy()) as reader:
@@ -240,7 +242,7 @@ def prepare(root_value, draft, revision, operation):
         blockers, notices = [], []
         for path in trusted:
             require(reader.observe(path, {}) is not None, 'missing_source')
-        outputs, kept, planned_directories = {root / DRAFT: encoded(draft)}, {}, {}
+        outputs, kept, planned_directories = {managed_path(root, DRAFT): encoded(draft)}, {}, {}
         owned = {}
         if operation == 'apply':
             pending = [f for f in FIELDS if draft['decisions'][f]['mode'] == 'ai' and draft['decisions'][f]['status'] != 'accepted']
@@ -258,22 +260,22 @@ def prepare(root_value, draft, revision, operation):
                        'Memory remains deferred. No Git repository, provider, agent or project-definition package is initialized.']
             if reader.observe(root / '.git/hooks', {}, directory=True) is None:
                 notices.append('No ordinary Git hooks directory found: repository gates will not be installed.')
-            previous = reader.observe(root / RECEIPT, {})
+            previous = reader.observe(managed_path(root, RECEIPT), {})
             if previous is not None:
                 receipt = load_json(previous[-1])
                 require(type(receipt.get('schema_version')) is int and receipt['schema_version'] == 1 and type(receipt.get('files')) is dict
                         and len(receipt['files']) <= 256 and all(type(v) is str and re.fullmatch('[a-f0-9]{64}', v) for v in receipt['files'].values()), 'invalid_receipt')
                 owned = receipt['files']
-            outputs[root / RECEIPT] = encoded({'schema_version': 1, 'draft_sha256': digest(encoded(draft)),
+            outputs[managed_path(root, RECEIPT)] = encoded({'schema_version': 1, 'draft_sha256': digest(encoded(draft)),
                 'configured_not_verified': True, 'files': {**owned, **{p.relative_to(root).as_posix(): digest(data) for p,data in outputs.items()}}})
         changes, files = {}, []
-        replaceable = {root / DRAFT, root / RECEIPT, root / '.gitignore', root / '.controlcoding/cc_config.json', root / '.controlcoding/gateway_config.json'}
+        replaceable = {managed_path(root, DRAFT), managed_path(root, RECEIPT), root / '.gitignore', managed_path(root, '.controlcoding/cc_config.json'), managed_path(root, '.controlcoding/gateway_config.json')}
         for path, data in sorted(outputs.items(), key=lambda item: str(item[0])):
             require(path.is_relative_to(root), 'invalid_plan')
             require(len(data) <= 1024 * 1024, 'output_limit')
             snap = reader.observe(path, {})
             name = path.relative_to(root).as_posix()
-            if snap and name in owned and owned[name] == digest(snap[-1]) and not name.startswith(('hooks/', 'tools/', '.git/')):
+            if snap and name in owned and owned[name] == digest(snap[-1]) and not logical_relative(root, name).startswith(('hooks/', 'tools/', '.git/')):
                 replaceable.add(path)
             action = 'create' if snap is None else 'keep' if snap[-1] == data else 'update' if path in replaceable else 'conflict'
             if action == 'conflict':
@@ -282,7 +284,7 @@ def prepare(root_value, draft, revision, operation):
                 changes[path] = data
             files.append({'path': path.relative_to(root).as_posix(), 'action': action, 'bytes': len(data), 'sha256': digest(data),
                           'before_sha256': digest(snap[-1]) if snap else None})
-            if name in ('CONTROLCODING.md', '.controlcoding/cc_config.json', '.controlcoding/gateway_config.json', '.gitignore'):
+            if logical_relative(root, name) in ('CONTROLCODING.md', '.controlcoding/cc_config.json', '.controlcoding/gateway_config.json', '.gitignore'):
                 before_text = snap[-1].decode('utf-8', errors='replace') if snap else ''
                 after_text = data.decode('utf-8', errors='replace')
                 files[-1]['content_review'] = {'before': before_text[:8192], 'after': after_text[:8192],

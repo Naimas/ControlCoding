@@ -1,4 +1,5 @@
 """Bounded read-only quality projection; see docs/project-map-analysis.md."""
+from cc_layout import managed_path, managed_relative
 import copy
 import json
 import os
@@ -97,11 +98,11 @@ def preview_analysis(request, preview_id, snapshot, revision, controls_scope_id=
     root = _root(request['project_root'])
     try:
         with _Snapshots(root, {}, ReadPolicy()) as reader:
-            item = reader.observe(root / CONFIG, {})
+            item = reader.observe(managed_path(root, CONFIG), {})
             raw = item[-1] if item else None
             config = configuration(raw)
             reader.recheck()
-        result = {'schema_version': 1, 'adapter': ADAPTER, 'config': CONFIG,
+        result = {'schema_version': 1, 'adapter': ADAPTER, 'config': managed_relative(root, CONFIG),
                   'config_identity': analyzers.digest(raw) if raw is not None else None,
                   'configuration': config, 'parser': runtime_identity(runtime), 'limits': LIMITS,
                   'python_parser': 'python-' + '.'.join(map(str, sys.version_info[:3])),
@@ -258,7 +259,7 @@ class Projection:
 
     def intent(self, raw):
         config = self.scope['configuration']
-        sid = self.source(CONFIG, raw)
+        sid = self.source(managed_relative(self.root, CONFIG), raw)
         root = next(n['id'] for n in self.bundle['nodes'] if n['kind'] == 'system')
         for path in config['expectedFiles']:
             if path in self.files:
@@ -338,7 +339,7 @@ def observe_analysis(request, preview_id, snapshot, revision, controls_scope_id,
         with _Snapshots(root, {}, ReadPolicy()) as reader:
             identity = reader.observe(root, {}, directory=True)
             require(analyzers.digest((os.path.normcase(str(root)) + '\0' + repr(identity)).encode()) == observation['root_identity'], 'changed_input')
-            item = reader.observe(root / CONFIG, {})
+            item = reader.observe(managed_path(root, CONFIG), {})
             raw = item[-1] if item else None
             require((analyzers.digest(raw) if raw is not None else None) == scope['config_identity'], 'changed_input')
             projection = Projection(observation, scope, root, reader, tick)

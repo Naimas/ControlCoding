@@ -50,6 +50,22 @@ PROTECTED_HOOK_PATTERNS = [
     "active_module.json",
 ]
 
+# These targets exist only after the fixed contained-layout marker selects the
+# CC namespace.  Keeping this separate prevents an unrelated application
+# `cc/` directory from becoming an implicit ControlCoding installation.
+CONTAINED_SELF_PROTECTION_PATTERNS = [
+    "cc/layout.json",
+    "cc/hooks/",
+    "cc/.controlcoding/settings.json",
+    "cc/.controlcoding/cc_config.json",
+    "cc/.controlcoding/hooks_lifted.json",
+    "cc/.controlcoding/lift_request.json",
+    "cc/.claude/settings.json",
+    "cc/.claude/cc_config.json",
+    "cc/.claude/hooks_lifted.json",
+    "cc/.claude/lift_request.json",
+]
+
 # --- CONFIGURE THESE FOR YOUR PROJECT ---
 
 # Each entry: (path_segment, description, action)
@@ -378,12 +394,16 @@ try:
     from hook_utils import (
         control_plane_path,
         find_project_root,
+        is_contained,
+        LayoutError,
         normalize_protected_zones,
     )
 except ImportError:
     from templates.hooks.hook_utils import (
         control_plane_path,
         find_project_root,
+        is_contained,
+        LayoutError,
         normalize_protected_zones,
     )
 
@@ -421,7 +441,10 @@ def main():
     # 1. Self-protection: block modifications to hook files and settings
     # even when a legacy global hook lift is active.
     if HOOK_SELF_PROTECTION:
-        for pattern in PROTECTED_HOOK_PATTERNS:
+        patterns = list(PROTECTED_HOOK_PATTERNS)
+        if is_contained(project_root):
+            patterns.extend(CONTAINED_SELF_PROTECTION_PATTERNS)
+        for pattern in patterns:
             if any(_parts_match_pattern(parts, pattern) for parts in path_parts_candidates):
                 if HAS_LOGGER:
                     log_event(project_root, "DENY", "self-protection", norm,
@@ -484,6 +507,8 @@ if __name__ == "__main__":
         main()
     except SystemExit:
         raise
+    except LayoutError as exc:
+        _emit_block(f"CONTROL CODING: contained layout is invalid or unsafe ({exc}).")
     except Exception as exc:
         try:
             _root = _find_project_root()

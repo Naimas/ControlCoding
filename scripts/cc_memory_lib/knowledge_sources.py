@@ -5,15 +5,30 @@ import os
 from pathlib import Path
 import re
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from cc_setup_service import _Snapshots, _root
+from cc_layout import source_path
 from cc_documentation_observer import references
 from .knowledge_store import KnowledgeError
 
 SCOPES = ('project', 'work', 'plans', 'handoffs', 'dev-views', 'dev-memory', 'rich-documents')
 LIMITS = {'files': 5000, 'sources': 6144, 'conversations': 1000, 'file_bytes': 262144, 'total_bytes': 128 * 1024 * 1024,
           'chunks': 50000, 'entries': 60000, 'seconds': 30}
+
+_EXTERNAL_SNAPSHOT = ContextVar('cc_external_snapshot', default=False)
+
+
+@contextmanager
+def external_snapshot():
+    """External facade binds original content hashes; projection has no Git HEAD."""
+    token = _EXTERNAL_SNAPSHOT.set(True)
+    try:
+        yield
+    finally:
+        _EXTERNAL_SNAPSHOT.reset(token)
 
 
 @dataclass(frozen=True)
@@ -27,6 +42,23 @@ class KnowledgeReadPolicy:
 
 def digest(value):
     return hashlib.sha256(value if isinstance(value, bytes) else value.encode('utf-8')).hexdigest()
+
+
+def physical_source_path(root, relative, kind=''):
+    """Return a project-relative physical locator while retaining logical IDs."""
+    if kind == 'conversation' or str(relative).startswith('dev-memory/'):
+        return ''
+    try:
+        label = str(relative).replace('\\', '/')
+        if label.split('/', 1)[0] in ('.controlcoding', '.controlwork'):
+            physical = source_path(root, label)
+        else:
+            # Root-level documents belong to the adopter. Contained CC copies
+            # have their own explicit `cc/<name>` logical source identity.
+            physical = Path(root).resolve() / label
+        return physical.relative_to(Path(root).resolve()).as_posix()
+    except (ValueError, OSError):
+        return ''
 
 
 def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
@@ -58,6 +90,8 @@ def passages(source):
 
 
 def head(root):
+    if _EXTERNAL_SNAPSHOT.get():
+        return None
     # No hooks run; no user-supplied command or revision expression.
     import subprocess
     try:

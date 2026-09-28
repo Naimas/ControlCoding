@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+from cc_layout import managed_path
 
 from .migrations import TARGET_SCHEMA_VERSION, inspect_schema
 from .schema import (
@@ -63,6 +64,10 @@ _CONTROLWORK_EXPECTED_VIEW_FILENAMES = {
     "handoff-packet.md",
     "category-registry.md",
 }
+
+
+def _managed_path(project: Path, logical: str | Path, *parts: str) -> Path:
+    return managed_path(project, Path(logical).as_posix(), *parts)
 
 
 def _reject_json_constant(value: str) -> None:
@@ -121,20 +126,20 @@ def _read_bounded_json_object(
 
 
 def projection_path(project: Path) -> Path:
-    return project / CONTROL_DIRNAME / MEMORY_DIRNAME / HEALTH_PROJECTION_FILENAME
+    return _managed_path(project, CONTROL_DIRNAME, MEMORY_DIRNAME, HEALTH_PROJECTION_FILENAME)
 
 
 def writer_lock_path(project: Path) -> Path:
     # The lock parent must pre-exist independently of generated memory state.
-    return project / WRITER_LOCK_FILENAME
+    return _managed_path(project, WRITER_LOCK_FILENAME)
 
 
 def capability_profile_path(project: Path) -> Path:
-    return project / CONTROL_DIRNAME / MEMORY_DIRNAME / CAPABILITY_PROFILE_FILENAME
+    return _managed_path(project, CONTROL_DIRNAME, MEMORY_DIRNAME, CAPABILITY_PROFILE_FILENAME)
 
 
 def _db_path(project: Path) -> Path:
-    return project / CONTROL_DIRNAME / MEMORY_DIRNAME / DB_FILENAME
+    return _managed_path(project, CONTROL_DIRNAME, MEMORY_DIRNAME, DB_FILENAME)
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
@@ -1198,7 +1203,7 @@ def capture_filesystem_fingerprint(project: Path) -> tuple[dict[str, Any] | None
     if reason or root_before is None:
         return None, reason
 
-    controlwork_root = project / _CONTROLWORK_DIRNAME
+    controlwork_root = _managed_path(project, _CONTROLWORK_DIRNAME)
     controlwork_root_before, reason = _capture_metadata_path(
         controlwork_root,
         "filesystem_controlwork_root",
@@ -1209,7 +1214,7 @@ def capture_filesystem_fingerprint(project: Path) -> tuple[dict[str, Any] | None
         return None, "source_filesystem_controlwork_root_not_directory"
 
     manifest_record, manifest, reason = _capture_optional_filesystem_json(
-        project / CONTROL_DIRNAME / MANIFEST_FILENAME,
+        _managed_path(project, CONTROL_DIRNAME, MANIFEST_FILENAME),
         "manifest",
         parser=json.loads,
     )
@@ -1218,7 +1223,7 @@ def capture_filesystem_fingerprint(project: Path) -> tuple[dict[str, Any] | None
     if manifest_record["exists"] and not _valid_manifest(manifest):
         return None, "filesystem_manifest_incompatible"
     link_record, link, reason = _capture_optional_filesystem_json(
-        project / _CONTROLWORK_DIRNAME / "link.json",
+        _managed_path(project, _CONTROLWORK_DIRNAME, "link.json"),
         "project_link",
         parser=json.loads,
     )
@@ -1239,7 +1244,7 @@ def capture_filesystem_fingerprint(project: Path) -> tuple[dict[str, Any] | None
         return None, reason
     content_files[f"{_CONTROLWORK_DIRNAME}/config.json"] = config_record
 
-    canonical_context_path = project / _CONTROLWORK_CONTEXT_FILENAME
+    canonical_context_path = _managed_path(project, _CONTROLWORK_CONTEXT_FILENAME)
     canonical_context, reason = _capture_metadata_path(
         canonical_context_path,
         "filesystem_project_context",
@@ -1250,14 +1255,14 @@ def capture_filesystem_fingerprint(project: Path) -> tuple[dict[str, Any] | None
         return None, "source_filesystem_project_context_not_regular"
 
     inventory_specs: list[tuple[str, Path, str, str]] = [
-        (f"{CONTROL_DIRNAME}/views", project / CONTROL_DIRNAME / "views", "filesystem_dev_views", "markdown_metadata"),
-        (f"{CONTROL_DIRNAME}/context-packets", project / CONTROL_DIRNAME / "context-packets", "filesystem_dev_context_packets", "dev_context_packets"),
-        (f"{_CONTROLWORK_DIRNAME}/context-packets", project / _CONTROLWORK_DIRNAME / "context-packets", "filesystem_project_context_packets", "project_context_packets"),
+        (f"{CONTROL_DIRNAME}/views", _managed_path(project, CONTROL_DIRNAME, "views"), "filesystem_dev_views", "markdown_metadata"),
+        (f"{CONTROL_DIRNAME}/context-packets", _managed_path(project, CONTROL_DIRNAME, "context-packets"), "filesystem_dev_context_packets", "dev_context_packets"),
+        (f"{_CONTROLWORK_DIRNAME}/context-packets", _managed_path(project, _CONTROLWORK_DIRNAME, "context-packets"), "filesystem_project_context_packets", "project_context_packets"),
     ]
     inventory_specs.extend(
         (
             f"{_CONTROLWORK_DIRNAME}/memory/{area}",
-            project / _CONTROLWORK_DIRNAME / "memory" / area,
+            _managed_path(project, _CONTROLWORK_DIRNAME, "memory", area),
             f"filesystem_project_area_{area}",
             "project_area",
         )
@@ -1406,7 +1411,7 @@ def _capture_recursive_project_memory(project: Path, label_prefix: str) -> tuple
     for area in _CONTROLWORK_MEMORY_AREAS:
         if area == "views":
             continue
-        root = project / _CONTROLWORK_DIRNAME / "memory" / area
+        root = _managed_path(project, _CONTROLWORK_DIRNAME, "memory", area)
         before, reason = _capture_metadata_path(root, f"project_plane_{label_prefix}_{area}")
         if reason or before is None:
             return None, _project_reason_from_source(reason, f"{label_prefix}_memory")
@@ -1470,7 +1475,7 @@ def _capture_project_plane_instance(
     *,
     embedded: bool,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
-    root = project / _CONTROLWORK_DIRNAME
+    root = _managed_path(project, _CONTROLWORK_DIRNAME)
     root_record, reason = _capture_metadata_path(root, f"project_plane_{label_prefix}_root")
     if reason or root_record is None:
         return None, None, f"project_plane_{label_prefix}_root_unreadable"
@@ -1485,7 +1490,7 @@ def _capture_project_plane_instance(
     if memory_root_record["exists"] and memory_root_record["type"] != "directory":
         return None, None, f"project_plane_{label_prefix}_memory_wrong_type"
 
-    context, reason = _capture_project_text_source(project / _CONTROLWORK_CONTEXT_FILENAME, f"{label_prefix}_context")
+    context, reason = _capture_project_text_source(_managed_path(project, _CONTROLWORK_CONTEXT_FILENAME), f"{label_prefix}_context")
     if reason or context is None:
         return None, None, reason
     config_record, config, reason = _capture_project_json_source(root / "config.json", f"{label_prefix}_config")
@@ -1592,7 +1597,7 @@ def _capture_project_plane_instance(
     )
     if reason or checkpoints is None:
         return None, None, _project_reason_from_source(reason, f"{label_prefix}_checkpoints")
-    wiki, reason = _capture_metadata_path(project / "wiki", f"project_plane_{label_prefix}_wiki")
+    wiki, reason = _capture_metadata_path(_managed_path(project, "wiki"), f"project_plane_{label_prefix}_wiki")
     if reason or wiki is None:
         return None, None, f"project_plane_{label_prefix}_wiki_unreadable"
     if wiki["exists"] and wiki["type"] != "directory":
@@ -1622,7 +1627,7 @@ def capture_project_plane_inputs(project: Path) -> tuple[dict[str, Any] | None, 
     if reason or embedded is None:
         return None, reason.replace("project_plane_embedded_", "project_plane_", 1)
     link_record, link, reason = _capture_project_json_source(
-        project / _CONTROLWORK_DIRNAME / "link.json",
+        _managed_path(project, _CONTROLWORK_DIRNAME, "link.json"),
         "link",
     )
     if reason or link_record is None or link is None:
@@ -2071,10 +2076,10 @@ def _latest_file(project: Path, files: list[Path]) -> dict[str, Any]:
 
 
 def _derived_artifacts(project: Path, metadata: dict[str, str], vectors: dict[str, Any], entity_count: int) -> dict[str, Any]:
-    views_root = project / CONTROL_DIRNAME / MEMORY_DIRNAME / "views"
-    dev_context_root = project / CONTROL_DIRNAME / "context-packets"
-    work_context_root = project / ".controlwork" / "context-packets"
-    work_views_root = project / ".controlwork" / "memory" / "views"
+    views_root = _managed_path(project, CONTROL_DIRNAME, MEMORY_DIRNAME, "views")
+    dev_context_root = _managed_path(project, CONTROL_DIRNAME, "context-packets")
+    work_context_root = _managed_path(project, ".controlwork", "context-packets")
+    work_views_root = _managed_path(project, ".controlwork", "memory", "views")
     view_files = _list_markdown_files(views_root)
     packet_files = _recognized_rag_packets(dev_context_root)
     return {
@@ -2119,8 +2124,8 @@ def _derived_artifacts(project: Path, metadata: dict[str, str], vectors: dict[st
 
 
 def _project_plane(project: Path) -> dict[str, Any]:
-    root = project / ".controlwork"
-    context_path = project / "CONTROLWORK.md"
+    root = _managed_path(project, ".controlwork")
+    context_path = _managed_path(project, "CONTROLWORK.md")
     config_path = root / "config.json"
     link_path = root / "link.json"
     config = _read_json_object(config_path)
@@ -2222,7 +2227,7 @@ def build_legacy_status_snapshot(
     }
     attention = _count_rows(conn, "entities", f"lifecycle IN ({placeholders})", attention_states)
     graph = _graph_status_payload(conn)
-    manifest_path = project / CONTROL_DIRNAME / MANIFEST_FILENAME
+    manifest_path = _managed_path(project, CONTROL_DIRNAME, MANIFEST_FILENAME)
     manifest = _read_json(manifest_path)
     recent_entities = _recent_entities(
         conn,
@@ -2260,7 +2265,7 @@ def build_legacy_status_snapshot(
     derived = _bootstrap_artifact_status(project, db_data, metadata)
     project_plane = _bootstrap_project_plane(project)
     dev_plane = {
-        "hasControlDir": (project / CONTROL_DIRNAME).exists(),
+        "hasControlDir": _managed_path(project, CONTROL_DIRNAME).exists(),
         "hasManifest": manifest_path.exists(),
         "hasDatabase": _db_path(project).exists(),
         "initialized": bool(manifest_path.exists() and _db_path(project).exists()),

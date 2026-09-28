@@ -25,9 +25,9 @@ from pathlib import Path
 
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from hook_utils import find_project_root
+    from hook_utils import find_project_root, managed_path
 except ImportError:
-    from templates.hooks.hook_utils import find_project_root
+    from templates.hooks.hook_utils import find_project_root, managed_path
 
 
 def _find_project_root():
@@ -82,7 +82,7 @@ def main():
     if fname in {"__init__.py", "__pycache__"}:
         sys.exit(0)
 
-    index_path = project_root / "dev" / "ARCHITECTURE_INDEX.md"
+    index_path = managed_path(project_root, "dev/ARCHITECTURE_INDEX.md")
     if not index_path.exists():
         sys.exit(0)
 

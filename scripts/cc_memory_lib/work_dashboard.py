@@ -16,7 +16,7 @@ def _features():
 
 def recent_checkpoints(project: Path, limit: int = 5) -> list[dict]:
     features = _features()
-    root = project / features.CHECKPOINT_ROOT
+    root = features._work_path(project, features.CHECKPOINT_ROOT)
     if not root.exists():
         return []
     items = []
@@ -78,9 +78,9 @@ def build_dashboard_payload(project: Path, limit: int = 20) -> dict:
     scan_payload = features.read_file_index(project)
     scan_summary = features.scan_review_summary(scan_payload, limit=limit, project=project) if scan_payload else {}
     graph = features.portable_graph(project)
-    context_root = project / features.CONTEXT_PACKET_ROOT
+    context_root = features._work_path(project, features.CONTEXT_PACKET_ROOT)
     context_packets = sorted(context_root.glob("*.md")) if context_root.exists() else []
-    views_index = project / features.MEMORY_ROOT / "views" / "index.md"
+    views_index = features._work_path(project, features.MEMORY_ROOT / "views" / "index.md")
     checkpoint_items = recent_checkpoints(project, limit=5)
     handoff_gaps = []
     if not views_index.exists():

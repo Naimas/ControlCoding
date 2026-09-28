@@ -15,6 +15,14 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 # Sprint 0 shared utilities
 try:
     from control_plane_utils import (
@@ -27,6 +35,23 @@ except ImportError:
         append_event, atomic_write, canonical_dedup_key, generate_id,
         utc_now_iso, SEVERITY_LEVELS,
     )
+
+PROJECT_ROOT = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+
+
+def _runtime_project_root() -> Path:
+    return Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+
+
+def _resolve_runtime_default(path: str) -> str:
+    root = _runtime_project_root()
+    defaults = {
+        "devlog/criteria/criteria.json", "devlog/criteria/criteria_archive.json",
+        ".controlcoding/event_log.jsonl", ".controlcoding/decision_log.jsonl",
+        "devlog/verification_report.json", "devlog/verification.md",
+    }
+    return str(managed_path(root, path)) if is_contained(root) and path in defaults else path
+
 
 DEFAULT_CRITERIA_PATH = "devlog/criteria/criteria.json"
 DEFAULT_ARCHIVE_PATH = "devlog/criteria/criteria_archive.json"
@@ -91,7 +116,7 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 def load_criteria(path: str) -> list[Criterion]:
-    p = Path(path)
+    p = Path(_resolve_runtime_default(path))
     if not p.exists():
         return []
     data = json.loads(p.read_text(encoding="utf-8"))
@@ -107,7 +132,7 @@ def load_criteria(path: str) -> list[Criterion]:
     return criteria
 
 def save_criteria(criteria: list[Criterion], path: str) -> None:
-    p = Path(path)
+    p = Path(_resolve_runtime_default(path))
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps([c.to_dict() for c in criteria], indent=2),
                  encoding="utf-8")
@@ -215,6 +240,7 @@ def check_budget(criteria: list[Criterion], max_attempts: int,
 def _log_event(event_type, agent, related_ids=None, details=None,
                event_log=DEFAULT_EVENT_LOG):
     """Append an event to the event log."""
+    event_log = _resolve_runtime_default(event_log)
     evt_id = _next_event_id(event_log)
     event = {
         "id": evt_id,
@@ -248,7 +274,7 @@ def _next_event_id(event_log):
 
 def _log_decision(decision_dict, decision_log=DEFAULT_DECISION_LOG):
     """Append a decision to the decision log."""
-    append_event(decision_log, decision_dict)
+    append_event(_resolve_runtime_default(decision_log), decision_dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1156,8 +1182,8 @@ def cmd_report(args) -> int:
         print("[VERIFY] No criteria found.")
         return 1
     from verification_report import generate_json_report, generate_markdown_report
-    output = args.output or "devlog/verification_report.json"
-    md_output = args.md_output or "devlog/verification.md"
+    output = args.output or _resolve_runtime_default("devlog/verification_report.json")
+    md_output = args.md_output or _resolve_runtime_default("devlog/verification.md")
     report = generate_json_report(criteria, design=args.design or "")
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(json.dumps(report, indent=2), encoding="utf-8")

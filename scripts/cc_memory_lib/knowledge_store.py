@@ -11,11 +11,13 @@ import os
 import sqlite3
 import stat
 import time
+from cc_layout import managed_path
 
 SCHEMA = 1
 SUPPORTED_SCHEMAS = (1, 2, 3)
 MAX_DATABASE_BYTES = 2 * 1024 * 1024 * 1024
 INDEXES = (
+    'CREATE INDEX IF NOT EXISTS cc_edges_target ON edges(target)',
     'CREATE INDEX IF NOT EXISTS cc_chunks_source ON chunks(source)',
     'CREATE INDEX IF NOT EXISTS cc_chunks_pending ON chunks(id) WHERE vector IS NULL',
 )
@@ -66,7 +68,8 @@ def ordinary(path, directory=False):
 def location(root, create=False):
     from cc_setup_service import _root
     root = _root(str(root))
-    for path in [root / '.controlcoding', root / '.controlcoding' / 'knowledge']:
+    for path in [managed_path(root, '.controlcoding'),
+                 managed_path(root, '.controlcoding', 'knowledge')]:
         if create:
             try:
                 path.mkdir()
@@ -80,13 +83,18 @@ def location(root, create=False):
     return path
 
 
+def database_path(root):
+    """Physical archive locator for this project's selected layout."""
+    return managed_path(root, '.controlcoding', 'knowledge', 'knowledge.db')
+
+
 @contextmanager
 def database(root, create=False):
     directory = location(root, create)
     if directory is None:
         yield None
         return
-    dbpath = directory / 'knowledge.db'
+    dbpath = database_path(root)
     if not create and not dbpath.exists():
         yield None
         return

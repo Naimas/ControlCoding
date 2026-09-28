@@ -13945,7 +13945,7 @@ class TestInitPreservation:
         assert json.dumps(cc.BASE_SETTINGS, sort_keys=True) == constants
         hooks = cc._central_hooks_dir() if central else project / "hooks"
         for name in cc.INIT_HOOKS:
-            assert (hooks / name).read_bytes() == (cc.HOOKS_DIR / name).read_bytes()
+            assert (hooks / name).read_bytes() == cc._init_hook_source(name).read_bytes()
         assert (project / "tools/fitness_check.py").read_bytes() == (cc.SCRIPT_DIR / "fitness_check.py").read_bytes()
         assert data["hooks"]
         assert json.loads(config.read_bytes())["hooks_location"] == ("central" if central else "local")
@@ -14124,8 +14124,8 @@ class TestInitPreservation:
             target = project / ".claude/settings.json"; target.parent.mkdir(); target.write_bytes(b'{}')
         else:
             source = tmp_path / "hook sources"; source.mkdir()
-            for name in cc.INIT_HOOKS: (source / name).write_bytes((cc.HOOKS_DIR / name).read_bytes())
-            monkeypatch.setattr(cc, "HOOKS_DIR", source); target = source / cc.INIT_HOOKS[0]
+            for name in cc.INIT_HOOKS: (source / name).write_bytes(cc._init_hook_source(name).read_bytes())
+            monkeypatch.setattr(cc, "HOOKS_DIR", source); target = source / cc.INIT_HOOKS[1]
         foreign = b'FOREIGN changed input\n'
         original = cc._init_recheck; count = 0
         # For retained settings, inject immediately before the final validation.

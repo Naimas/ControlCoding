@@ -28,9 +28,9 @@ from pathlib import Path
 
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from hook_utils import control_plane_path, find_project_root, normalize_protected_zones
+    from hook_utils import control_plane_path, find_project_root, is_contained, normalize_protected_zones
 except ImportError:
-    from templates.hooks.hook_utils import control_plane_path, find_project_root, normalize_protected_zones
+    from templates.hooks.hook_utils import control_plane_path, find_project_root, is_contained, normalize_protected_zones
 
 try:
     from feature_lock import check_module_perimeter
@@ -269,6 +269,8 @@ def _path_in_zone(target_path, zone, project_root: Path) -> bool:
 def _load_effective_deny_zones(project_root: Path) -> list[str]:
     """Return mandatory DENY zones merged with config DENY zones."""
     deny_zones = list(MANDATORY_DENY_ZONES)
+    if is_contained(project_root):
+        deny_zones.append("cc/hooks/")
     config_path = control_plane_path(project_root, "cc_config.json")
     if config_path.exists():
         try:

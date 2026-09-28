@@ -28,6 +28,14 @@ from base_agent import (
     ReportBuilder, ToolCall, ToolResult,
 )
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 # Import visual tools (graceful fallback if not available)
 try:
     from visual_check_utils import (
@@ -54,6 +62,17 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 ACTION_TOOLS = {"click", "type_text", "press_key", "hotkey", "scroll", "drag"}
+
+
+def _default_screenshot_dir(value: str | None, context: dict) -> str:
+    """Route only the implicit visual-agent output directory into cc/."""
+    if value is not None:
+        return value
+    project = Path(context.get("project_root") or os.environ.get(
+        "SESSION_PROJECT_ROOT", ".")).resolve()
+    if is_contained(project):
+        return str(managed_path(project, "screenshots"))
+    return "screenshots"
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +337,8 @@ class VisualAgent(BaseAgent):
         build_cmd = context.get("build_cmd", "")
         criteria = context.get("criteria", [])
         operating_mode = context.get("mode", self.mode)
-        screenshot_dir = context.get("screenshot_dir", "screenshots")
+        screenshot_dir = _default_screenshot_dir(
+            context.get("screenshot_dir"), context)
 
         self.state.exe_path = exe
         self.state.build_cmd = build_cmd
@@ -690,7 +710,7 @@ def main():
                         choices=["autonomous", "interactive",
                                  "criteria", "explore"])
     parser.add_argument("--timeout", type=int, default=600)
-    parser.add_argument("--screenshot-dir", default="screenshots")
+    parser.add_argument("--screenshot-dir", default=None)
 
     args = parser.parse_args()
 

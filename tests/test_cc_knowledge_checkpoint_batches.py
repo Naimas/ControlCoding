@@ -1,5 +1,7 @@
 """Durable batches bound retry loss without exposing incomplete evidence."""
 import pytest
+from pathlib import Path
+from cc_layout import layout_marker_path
 from test_cc_knowledge import project
 from cc_memory_lib import knowledge_service as service, knowledge_scan as scan
 from cc_memory_lib.knowledge_checkpoints import Writer
@@ -42,7 +44,7 @@ def test_acquisition_interruption_keeps_only_committed_progress(project, monkeyp
     count = 0
     def interrupted(self, path, observations, **kwargs):
         nonlocal count
-        if not kwargs.get('directory'):
+        if not kwargs.get('directory') and Path(path) != layout_marker_path(project):
             count += 1
             if count == 35:
                 raise KeyboardInterrupt()

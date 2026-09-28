@@ -1,5 +1,11 @@
 # Install ControlCoding On Your Project
 
+For a fresh installation with minimal filesystem impact, activate
+[contained storage](./contained-storage.md) before setup. This keeps managed
+configuration, memory, documents and helpers under the application's `cc/`
+directory, with explicit host/Git integration exceptions. Existing installations
+keep their legacy paths until a reviewed, backed-up migration.
+
 > **Get the updated code:** [Download current Core (ZIP)](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip).
 > The `v3.0.2` archives under GitHub Releases predate the September 2026 updates.
 > This is development source; see [download status and validation](../README.md#download-current-core).

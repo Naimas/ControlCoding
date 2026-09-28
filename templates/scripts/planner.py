@@ -20,6 +20,14 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 # Sprint 0 shared utilities
 try:
     from control_plane_utils import (
@@ -35,7 +43,25 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-PLAN_DIR = os.environ.get("PLANNER_PLAN_DIR", "devlog/plans")
+PROJECT_ROOT = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+
+
+def _runtime_project_root() -> Path:
+    return Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+
+
+def _resolve_runtime_default(path: str) -> str:
+    root = _runtime_project_root()
+    defaults = {
+        "devlog/plans", ".controlcoding/event_log.jsonl",
+        ".controlcoding/decision_log.jsonl", ".controlcoding/cc_config.json",
+        "devlog/criteria/criteria.json", "CONTROLCODING.md",
+    }
+    return str(managed_path(root, path)) if is_contained(root) and path in defaults else path
+
+
+PLAN_DIR = (os.environ["PLANNER_PLAN_DIR"] if "PLANNER_PLAN_DIR" in os.environ
+            else "devlog/plans")
 CONTROL_PLANE_DIR = ".controlcoding"
 LEGACY_CONTROL_PLANE_DIR = ".claude"
 PRIMARY_CONTEXT_FILENAME = "CONTROLCODING.md"
@@ -43,6 +69,8 @@ LEGACY_CONTEXT_FILENAME = "CLAUDE.md"
 DEFAULT_EVENT_LOG = f"{CONTROL_PLANE_DIR}/event_log.jsonl"
 DEFAULT_DECISION_LOG = f"{CONTROL_PLANE_DIR}/decision_log.jsonl"
 DEFAULT_CC_CONFIG = f"{CONTROL_PLANE_DIR}/cc_config.json"
+DEFAULT_CRITERIA_PATH = "devlog/criteria/criteria.json"
+DEFAULT_CONTEXT_DOC = PRIMARY_CONTEXT_FILENAME
 
 VALID_STATES = {
     "EMPTY", "EXPANDING", "DRAFT", "APPROVED",
@@ -273,21 +301,21 @@ _DOMAIN_KEYWORDS = {
 
 
 def _context_doc_path(claude_md_path: str) -> Path:
-    p = Path(claude_md_path)
+    p = Path(_resolve_runtime_default(claude_md_path))
     if p.exists():
         return p
-    if claude_md_path == PRIMARY_CONTEXT_FILENAME:
-        legacy = Path(LEGACY_CONTEXT_FILENAME)
+    if claude_md_path in {PRIMARY_CONTEXT_FILENAME, DEFAULT_CONTEXT_DOC}:
+        legacy = _runtime_project_root() / LEGACY_CONTEXT_FILENAME
         if legacy.exists():
             return legacy
     if claude_md_path == LEGACY_CONTEXT_FILENAME:
-        canonical = Path(PRIMARY_CONTEXT_FILENAME)
+        canonical = Path(_resolve_runtime_default(DEFAULT_CONTEXT_DOC))
         if canonical.exists():
             return canonical
     return p
 
 
-def detect_domain(claude_md_path=PRIMARY_CONTEXT_FILENAME):
+def detect_domain(claude_md_path=DEFAULT_CONTEXT_DOC):
     """Auto-detect project domain from the project context file Project Identity section.
 
     Scans the Project Identity section for keywords that map to known domains.
@@ -406,12 +434,12 @@ def _plan_path(version, state, plan_dir=PLAN_DIR, slug=""):
     Example: plan-v1-approved-trading-platform.json
     """
     if slug:
-        return str(Path(plan_dir) / f"plan-v{version}-{state}-{slug}.json")
-    return str(Path(plan_dir) / f"plan-v{version}-{state}.json")
+        return str(Path(_resolve_runtime_default(plan_dir)) / f"plan-v{version}-{state}-{slug}.json")
+    return str(Path(_resolve_runtime_default(plan_dir)) / f"plan-v{version}-{state}.json")
 
 
 def _current_plan_path(plan_dir=PLAN_DIR):
-    return str(Path(plan_dir) / "plan.current.json")
+    return str(Path(_resolve_runtime_default(plan_dir)) / "plan.current.json")
 
 
 def load_plan(plan_dir=PLAN_DIR):
@@ -434,7 +462,7 @@ def load_plan(plan_dir=PLAN_DIR):
 
 def save_plan(plan, plan_dir=PLAN_DIR):
     """Save plan to plan.current.json."""
-    p = Path(plan_dir)
+    p = Path(_resolve_runtime_default(plan_dir))
     p.mkdir(parents=True, exist_ok=True)
     path = _current_plan_path(plan_dir)
     atomic_write(path, plan)
@@ -932,7 +960,7 @@ def plan_add_feature(phase_id, feature, plan_dir=PLAN_DIR,
 # plan_export()
 # ---------------------------------------------------------------------------
 
-def plan_export(plan_dir=PLAN_DIR, criteria_path="devlog/criteria/criteria.json",
+def plan_export(plan_dir=PLAN_DIR, criteria_path=DEFAULT_CRITERIA_PATH,
                 event_log=DEFAULT_EVENT_LOG):
     """Export plan to Verification Engine criteria via import-plan.
 
@@ -971,6 +999,7 @@ def export_zone_mapping(plan_dir=PLAN_DIR, config_path=DEFAULT_CC_CONFIG):
     warn = arch.get("warn_zones", zones.get("shared", []))
 
     config = {}
+    config_path = _resolve_runtime_default(config_path)
     config_p = Path(config_path)
     if config_p.exists():
         config = json.loads(config_p.read_text(encoding="utf-8"))
@@ -1039,6 +1068,7 @@ def export_invariants(plan_dir=PLAN_DIR, output_path="tests/test_invariants.py")
 
 def _log_event(event_type, agent, related_ids=None, details=None,
                event_log=DEFAULT_EVENT_LOG):
+    event_log = _resolve_runtime_default(event_log)
     existing = []
     p = Path(event_log)
     if p.exists():
@@ -1082,5 +1112,5 @@ def _log_decision(decision_dict, decision_log=DEFAULT_DECISION_LOG):
     dec_id = generate_id("DEC", existing)
     decision_dict["id"] = dec_id
     decision_dict["timestamp"] = utc_now_iso()
-    append_event(decision_log, decision_dict)
+    append_event(_resolve_runtime_default(decision_log), decision_dict)
     return dec_id

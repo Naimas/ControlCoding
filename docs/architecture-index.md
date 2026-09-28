@@ -74,6 +74,8 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `cc_evidence.py` | Local verification/invariant receipts, coverage and current-evidence assessment. |
 | `cc_evidence_inputs.py` | Bounded input snapshots, confined file reads and runner/context identity. |
 | `cc_evidence_process.py` | Bounded command execution and metadata-only pipe capture. |
+| `cc_external.py` | Separate external-source knowledge/evidence facade, original provenance and stale evidence checks. |
+| `cc_external_boundary.py` | Ordinary disjoint paths and permanent process/network/write refusal for the trusted external service. |
 | `cc_docs.py` | Documentation maintenance commands. |
 | `cc_document_reader.py` | Hash-bound Markdown reader with bounded project-local images. |
 | `cc_documentation_observer.py` | Read-only Markdown inventory for the document map. |
@@ -158,6 +160,8 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `cc_memory_lib/knowledge_store.py` | Serialized local archive transactions. |
 | `cc_memory_lib/knowledge_vector_rank.py` | Bounded-batch exact vector ranking. |
 | `cc_memory_lib/knowledge_wiki.py` | Source-bound topic pages and unreviewed AI drafts. |
+| `cc_memory_lib/knowledge_retrieval.py` | Bounded graph/wiki retrieval, filters and recorded history. |
+| `cc_memory_lib/knowledge_wiki_tools.py` | Revision comparison, reviewed findings, backlinks and section recovery. |
 | `cc_memory_lib/knowledge_wiki_review.py` | Protected human sections and revision-bound review proposals. |
 | `cc_memory_lib/knowledge_work.py` | Reviewed work relations over observed canonical sources. |
 | `cc_memory_lib/knowledge_work_controls.py` | Shared feature-owner projections for work views. |
@@ -186,6 +190,8 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `cc_memory_lib/work_project_map.py` | Project map projection. |
 | `cc_memory_lib/work_query.py` | Work-plane query support. |
 | `cc_memory_lib/work_review_queue.py` | Work review queue. |
+| `cc_layout.py` | Validated, opt-in contained storage routing shared with installed hooks. |
+| `cc_layout_cli.py` | Storage initialization, explicit backed-up migration and guarded recovery. |
 
 ## Verification
 

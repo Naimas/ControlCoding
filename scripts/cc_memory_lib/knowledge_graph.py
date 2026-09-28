@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from .knowledge_store import database, get, KnowledgeError
-from .knowledge_sources import digest
+from .knowledge_sources import digest, physical_source_path
 from .knowledge_wiki import classify, TOPICS
 
 FIELDS = 'id,path,title,revision,kind,updated,substr(body,1,300) AS excerpt'
@@ -17,7 +17,9 @@ def source(root, identifier):
         row = db.execute('SELECT '+FIELDS+' FROM sources WHERE id=? AND deleted=0', (identifier,)).fetchone()
         if row is None:
             raise KnowledgeError('source_unavailable')
-        return dict(row)
+        result = dict(row)
+        result['physicalPath'] = physical_source_path(root, result['path'], result['kind'])
+        return result
 
 
 def read(root, value):
@@ -65,6 +67,8 @@ def read(root, value):
                 row = db.execute('SELECT '+FIELDS+' FROM sources WHERE deleted=0 AND id=?', (identifier,)).fetchone()
                 if row:
                     sources.append(dict(row))
+        for source_row in sources:
+            source_row['physicalPath'] = physical_source_path(root, source_row['path'], source_row['kind'])
         ids = {s['id'] for s in sources}
         edges, relevant = [], 0
         for row in db.execute('SELECT source,target,kind,revision FROM edges ORDER BY source,target,kind'):

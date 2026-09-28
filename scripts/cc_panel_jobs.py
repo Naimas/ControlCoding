@@ -9,10 +9,11 @@ import sys
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).absolute().parent))
 
+from cc_layout import managed_relative, logical_relative, is_contained
 from cc_panel_configuration import encoded, digest, require, text, relative, load_json, HOSTS
 from cc_setup_service import _root, _Snapshots, ReadPolicy
 
-KINDS = ('install', 'engagement', 'project', 'memory', 'doctor', 'verify_status', 'verify_run', 'invariants')
+KINDS = ('layout_status', 'layout_init', 'install', 'engagement', 'project', 'memory', 'doctor', 'verify_status', 'verify_run', 'invariants')
 CONTROLS = ('CONTROLCODING.md', 'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', '.clinerules',
             '.controlcoding/cc_config.json', '.controlcoding/gateway_config.json',
             '.controlcoding/cc_engagement.json', '.controlcoding/settings.json',
@@ -77,16 +78,17 @@ def handoff(value):
 def prepare(root_value, value):
     value = choices(value); root = _root(root_value)
     scripts = Path(__file__).absolute().parent
-    trusted = {scripts / n: 'scripts/'+n for n in ('cc.py', 'cc_setup.py', 'cc_panel_jobs.py', 'cc_evidence.py', 'cc_evidence_process.py')}
+    trusted = {scripts / n: 'scripts/'+n for n in ('cc.py', 'cc_setup.py', 'cc_layout.py', 'cc_layout_cli.py', 'cc_panel_jobs.py', 'cc_evidence.py', 'cc_evidence_process.py')}
     with _Snapshots(root, trusted, ReadPolicy()) as reader:
         reader.observe(root, {}, directory=True)
         for p in trusted: reader.observe(p, {})
         existing, contracts = [], {}
         for name in CONTROLS:
-            snap = reader.observe(root / name, {})
+            physical = managed_relative(root, name) if name.startswith(('.controlcoding/', 'controlcoding.')) or name == 'CONTROLCODING.md' else name
+            snap = reader.observe(root / physical, {})
             if snap:
                 require(name != '.controlcoding/panel-setup-transaction.json', 'recovery_required')
-                existing.append({'path': name, 'sha256': digest(snap[-1]), 'bytes': len(snap[-1])})
+                existing.append({'path': physical, 'sha256': digest(snap[-1]), 'bytes': len(snap[-1])})
                 if name in ('controlcoding.verification.json', 'controlcoding.invariants.json'):
                     contracts[name] = load_json(snap[-1])
         kind = value['kind']; blockers = []; suites = []
@@ -97,9 +99,14 @@ def prepare(root_value, value):
             import cc
             suites, issues = cc._select_verification_suites(contract, value['suites'], [], False)
             require(suites and not issues, 'invalid_suite')
-        if kind in ('project', 'engagement') and not any(p['path'] in ('CONTROLCODING.md', 'CLAUDE.md') for p in existing):
+        if kind in ('project', 'engagement') and not any(logical_relative(root, p['path']) in ('CONTROLCODING.md', 'CLAUDE.md') for p in existing):
             blockers.append('Install ControlCoding before this step.')
-        command = {'install': ['setup', '--answers-file', '<reviewed-handoff>', '--apply-answers'],
+        from cc_layout_cli import status, initialization_plan
+        layout = status(root)
+        if kind == 'layout_init':
+            storage_plan = initialization_plan(root)
+            blockers.extend(storage_plan['blockers'])
+        command = {'layout_status': ['layout', 'status'], 'layout_init': ['layout', 'init', '--apply'], 'install': ['setup', '--answers-file', '<reviewed-handoff>', '--apply-answers'],
                    'engagement': ['setup', '--engagement', '--answers-file', '<reviewed-handoff>', '--apply-answers'],
                    'project': ['setup-project', '--answers-file', '<reviewed-handoff>', '--apply-answers'],
                    'memory': ['memory', 'init', 'then', 'memory', 'scan', '--scope', 'governed'],
@@ -112,8 +119,12 @@ def prepare(root_value, value):
             'command': ['python', 'cc.py', *command, '--project-root', root_value],
             'handoff': handoff(value), 'existing': existing, 'suites': suites,
             'invariants': contracts.get('controlcoding.invariants.json') if kind in ('invariants', 'verify_run') else None,
-            'blockers': blockers, 'inputs': reader.fingerprints(),
+            'blockers': blockers, 'inputs': reader.fingerprints(), 'storage': layout,
             'effects': 'Canonical Core command with user-level access. Setup may replace context/configuration, initialize Git, install local hooks and create selected memory. Project setup creates design/planning documents. Checks may execute project-defined commands and write receipts. This is not a sandbox or a transactional installer; cancellation/failure may leave partial changes. Host delivery remains unverified.'}
+        if kind.startswith('layout_'):
+            plan['effects'] = ('Read-only storage inspection.' if kind == 'layout_status' else 'Activate contained storage by creating cc/layout.json in a fresh project. Existing CC installations and unrelated cc folders are preserved and require explicit migration. No hooks, host adapters, memory or providers are initialized by this step.')
+        else:
+            plan['effects'] += ' Managed storage: ' + layout['storage'] + '. External adapters: host instruction files, host settings, Git hooks, .gitignore and optional editor tasks.'
         plan['approval_id'] = digest(encoded(plan))
         return plan
 
@@ -131,6 +142,9 @@ def execute(root_value, value, approval_id, answer_path):
     import cc
     import cc_setup
     kind = value['kind']
+    if kind in ('layout_status', 'layout_init'):
+        from cc_layout_cli import initialize, status
+        print(json.dumps(initialize(root) if kind == 'layout_init' else status(root))); return 0
     if kind == 'install': return cc_setup.cmd_setup(root, p, True)
     if kind == 'engagement': return cc_setup.cmd_setup_engagement(root, p, True)
     if kind == 'project': return cc_setup.cmd_setup_project(root, p, True)

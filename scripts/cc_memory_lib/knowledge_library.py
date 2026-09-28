@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from .knowledge_store import database, get, KnowledgeError
-from .knowledge_sources import digest
+from .knowledge_sources import digest, physical_source_path
 from .knowledge_wiki import freshness
 
 PAGE_SIZE = 50
@@ -40,6 +40,9 @@ def read(root, value):
         total = db.execute('SELECT count(*) FROM ' + table + ' WHERE ' + where, (query,)).fetchone()[0]
         rows = [dict(row) for row in db.execute('SELECT ' + columns + ' FROM ' + table + ' WHERE ' + where
                                                + ' ORDER BY ' + ordering + ' LIMIT ? OFFSET ?', (query, PAGE_SIZE, value['offset']))]
+        if table == 'sources':
+            for row in rows:
+                row['physicalPath'] = physical_source_path(root, row['path'], row['kind'])
         if table == 'wiki':
             for row in rows:
                 dependencies = json.loads(row.pop('dependencies'))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from cc_layout import managed_path
 
 SURFACE_LOCK_RELATIVE_PATH = Path(".controlcoding") / "cc_surface_lock.json"
 SURFACE_LOCK_TIMEOUT_SECONDS = 5.0
@@ -60,7 +61,7 @@ def lockfile_guard(path: Path, timeout_seconds: float, poll_seconds: float) -> L
 
 
 def surface_lockfile_path(project: Path) -> Path:
-    lock_path = project / SURFACE_LOCK_RELATIVE_PATH
+    lock_path = managed_path(project, SURFACE_LOCK_RELATIVE_PATH.as_posix())
     return lock_path.with_name(f"{lock_path.name}.lock")
 
 

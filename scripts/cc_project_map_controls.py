@@ -1,4 +1,5 @@
 """Read-only canonical control projections; see docs/project-map-controls.md."""
+from cc_layout import managed_relative, is_contained
 import copy
 import importlib.util
 import json
@@ -54,9 +55,9 @@ def preview_controls(request, preview_id, snapshot, revision):
     contracts = [d for kind in prepared.values() for d in kind['contracts']]
     extra = sorted({p for item in prepared.values() for p in item['policy'].get('extraPaths', [])})
     names = sorted({p for item in prepared.values() for p in item['policy'].get('environmentNames', [])})
-    scope = {'schema_version': 1, 'adapter': ADAPTER, 'files': FIXED,
+    scope = {'schema_version': 1, 'adapter': ADAPTER, 'files': [managed_relative(root, p) for p in FIXED if not (is_contained(root) and p.startswith('.claude/'))],
              'contracts': contracts, 'extra_paths': extra, 'environment_names': names,
-             'receipt_folders': ['.controlcoding/verification_receipts', '.controlcoding/invariant_receipts'],
+             'receipt_folders': [managed_relative(root, p) for p in ('.controlcoding/verification_receipts', '.controlcoding/invariant_receipts')],
              'source_identity': 'Canonical evidence inventory may inspect raw files beyond the code map; confined Git metadata inspection may use a private temporary projection.',
              'limits': {'control_file_bytes': 1048576, 'control_total_bytes': 8388608, 'control_entries': 256,
                         'lock_files': 64, 'discovery_entries': 5000, 'helper_seconds': 15},
@@ -96,10 +97,15 @@ class Inputs:
     def tick(self):
         require(time.monotonic() - self.started <= 12, 'time_limit')
 
+    def physical(self, relative):
+        return managed_relative(self.root, relative) if relative.startswith(('.controlcoding/', '.claude/')) else relative
+
     def read(self, relative):
         self.tick()
+        if is_contained(self.root) and relative.startswith('.claude/'):
+            return None
         if relative not in self.raw:
-            snapshot = self.reader.observe(self.root / relative, {})
+            snapshot = self.reader.observe(self.root / self.physical(relative), {})
             self.raw[relative] = snapshot[-1] if snapshot is not None else None
         return self.raw[relative]
 
@@ -122,12 +128,12 @@ class Inputs:
 
     def fallback(self, name):
         canonical, legacy = '.controlcoding/' + name + '.json', '.claude/' + name + '.json'
-        chosen = canonical if self.read(canonical) is not None else legacy
+        chosen = canonical if is_contained(self.root) or self.read(canonical) is not None else legacy
         return self.data(chosen), chosen
 
     def names(self, relative, limit):
         self.tick()
-        path = self.root / relative if relative else self.root
+        path = self.root / self.physical(relative) if relative else self.root
         snapshot = self.reader.observe(path, {}, directory=True)
         if snapshot is None:
             self.listings[relative] = None
@@ -142,7 +148,9 @@ class Inputs:
         return names
 
     def locks(self):
-        pending, count, result = [('', 0)], 0, []
+        contained = is_contained(self.root)
+        start = managed_relative(self.root, '.controlcoding/module-locks') if contained else ''
+        pending, count, result = [(start, 0)], 0, []
         while pending:
             relative, depth = pending.pop()
             require(depth <= 24, 'scope_limit')
@@ -152,7 +160,7 @@ class Inputs:
                 if name == '.feature-lock.json':
                     require(len(result) < 64, 'scope_limit')
                     result.append((child, self.data(child)))
-                elif not _excluded(child):
+                elif contained or not _excluded(child):
                     try:
                         _relative(child)
                         path = self.root / child
@@ -188,7 +196,7 @@ class Projection:
         data = self.inputs.read(path) if raw is None else raw
         sid = 'controls-source:' + digest(encoded([path, owner, fragment]))[:40]
         if not any(s['id'] == sid for s in self.bundle['sources']):
-            self.bundle['sources'].append({'id': sid, 'owner': owner, 'locator': {'path': path, 'fragment': fragment},
+            self.bundle['sources'].append({'id': sid, 'owner': owner, 'locator': {'path': self.inputs.physical(path), 'fragment': fragment},
                 'identity': 'sha256:' + digest(data) if data is not None else None,
                 'adapter': 'cc-project-map-controls-v1', 'resolution': 'resolved' if data is not None else 'unresolved',
                 'reason': reason, 'synthetic': False})

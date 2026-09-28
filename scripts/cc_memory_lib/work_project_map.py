@@ -62,11 +62,11 @@ SESSION_LINK_RELATION_MAP = {
 
 
 def _read_config(project: Path) -> dict:
-    return work_features.read_json(project / ".controlwork" / "config.json")
+    return work_features.read_json(work_features._work_path(project, ".controlwork/config.json"))
 
 
 def _controlwork_metadata(project: Path) -> dict:
-    path = project / "CONTROLWORK.md"
+    path = work_features._work_path(project, "CONTROLWORK.md")
     text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
     title = project.name or "ControlWork Project"
     purpose = "Local ControlWork project memory."
@@ -90,7 +90,7 @@ def _controlwork_metadata(project: Path) -> dict:
 
 def _project_base_document(project: Path, config: dict, metadata: dict) -> dict:
     relative_path = work_features.configured_base_document_path(project, config)
-    path = project / relative_path
+    path = work_features.project_base_path(project, relative_path)
     text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
     title = _read_file_title(path, metadata.get("title", "Project Base Document")) if path.exists() else metadata.get("title", "Project Base Document")
     return {
@@ -100,6 +100,7 @@ def _project_base_document(project: Path, config: dict, metadata: dict) -> dict:
         "area": "context",
         "lifecycle": "active" if path.exists() else "needs_review",
         "path": relative_path,
+        "physicalPath": path.relative_to(project).as_posix(),
         "summary": _markdown_summary(text, fallback=metadata.get("description", "")),
         "sourceKind": "project_document",
         "sourcePath": relative_path,
@@ -329,7 +330,7 @@ def _folder_key(path: str) -> str:
 
 def _scan_inventory(project: Path, base_path: str, canonical_context: str, distribution: str) -> dict:
     payload = work_features.read_file_index(project)
-    analysis = work_features.read_json(project / ".controlwork" / "ingestion" / "scan-analysis.json")
+    analysis = work_features.read_json(work_features._work_path(project, ".controlwork/ingestion/scan-analysis.json"))
     records = [
         item for item in payload.get("files", [])
         if isinstance(item, dict) and _is_project_scan_record(item, base_path, canonical_context)
@@ -946,7 +947,12 @@ def _read_file_title(path: Path, fallback: str) -> str:
 
 
 def _modified_at(project: Path, relative_path: str) -> str:
-    candidate = project / str(relative_path or "").replace("\\", "/")
+    relative = str(relative_path or "").replace("\\", "/")
+    candidate = (work_features.project_base_path(project, relative)
+                 if relative == work_features.PROJECT_BASE_DOCUMENT_FILENAME
+                 else work_features._work_path(project, relative)
+                 if relative == "CONTROLWORK.md" or relative.startswith(".controlwork/")
+                 else project / relative)
     try:
         if candidate.exists() and candidate.is_file():
             return datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
@@ -958,10 +964,10 @@ def _modified_at(project: Path, relative_path: str) -> str:
 def _generated_view_records(project: Path) -> list[dict]:
     records: list[dict] = []
     candidates = [
-        ("source-ledger", project / ".controlwork" / "memory" / "views" / "source-ledger.md"),
-        ("handoff-packet", project / ".controlwork" / "memory" / "views" / "handoff-packet.md"),
-        ("active-decisions", project / ".controlwork" / "memory" / "views" / "active-decisions.md"),
-        ("open-questions", project / ".controlwork" / "memory" / "views" / "open-questions.md"),
+        ("source-ledger", work_features._work_path(project, ".controlwork/memory/views/source-ledger.md")),
+        ("handoff-packet", work_features._work_path(project, ".controlwork/memory/views/handoff-packet.md")),
+        ("active-decisions", work_features._work_path(project, ".controlwork/memory/views/active-decisions.md")),
+        ("open-questions", work_features._work_path(project, ".controlwork/memory/views/open-questions.md")),
     ]
     for view_id, path in candidates:
         records.append({
@@ -975,7 +981,7 @@ def _generated_view_records(project: Path) -> list[dict]:
 
 
 def _checkpoint_records(project: Path) -> list[dict]:
-    root = project / work_features.CHECKPOINT_ROOT
+    root = work_features._work_path(project, work_features.CHECKPOINT_ROOT)
     if not root.exists():
         return []
     records = []
@@ -989,7 +995,7 @@ def _checkpoint_records(project: Path) -> list[dict]:
 
 
 def _context_packet_records(project: Path) -> list[dict]:
-    root = project / work_features.CONTEXT_PACKET_ROOT
+    root = work_features._work_path(project, work_features.CONTEXT_PACKET_ROOT)
     if not root.exists():
         return []
     records = []
@@ -1043,7 +1049,7 @@ def _session_record(project: Path, session: dict) -> dict:
         "documentsChanged": documents_changed,
         "followups": list(session.get("followups", [])) if isinstance(session.get("followups"), list) else [],
         "packetsOrCheckpointsProduced": packets,
-        "path": work_features.rel(project, project / work_features.SESSION_ROOT / f"{work_features.slug(session_id)}.json"),
+        "path": work_features.rel(project, work_features._work_path(project, work_features.SESSION_ROOT / f"{work_features.slug(session_id)}.json")),
         "projectScope": "controlwork_state",
         "infrastructureScope": "controlwork_runtime",
         "infrastructureLayer": "controlwork_runtime",
@@ -1222,7 +1228,7 @@ def build_project_map_payload(
         project_understanding = work_features.build_project_understanding(
             project,
             work_features.read_file_index(project),
-            analysis=work_features.read_json(project / ".controlwork" / "ingestion" / "scan-analysis.json"),
+            analysis=work_features.read_json(work_features._work_path(project, ".controlwork/ingestion/scan-analysis.json")),
             distribution=distribution,
         )
     organization_workflow = _organization_workflow(project_profile, scan_inventory)
@@ -1399,7 +1405,8 @@ def build_project_map_payload(
             "description": metadata["description"],
             "baseDocumentPath": base_document["path"],
             "baseDocumentId": base_document["id"],
-            "baseDocumentExists": bool((project / base_document["path"]).exists()),
+            "baseDocumentExists": bool(work_features.project_base_path(project, base_document["path"]).exists()),
+            "baseDocumentPhysicalPath": base_document.get("physicalPath", base_document["path"]),
             "canonicalContextPath": canonical_context,
             "internalContextPath": canonical_context,
             "memoryRootPath": memory_root,

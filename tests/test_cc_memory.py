@@ -2368,7 +2368,7 @@ def test_p3c0_memory_connection_is_the_only_production_transaction_owner():
     # Adoption opens the distinct knowledge archive in SQLite URI read-only
     # mode, pins one snapshot, then explicitly releases it without a commit.
     adoption = (package_root / "knowledge_adoption.py").read_text(encoding="utf-8")
-    assert "root / '.controlcoding' / 'knowledge' / 'knowledge.db'" in adoption
+    assert "managed_path(root, '.controlcoding', 'knowledge', 'knowledge.db')" in adoption
     assert "archive.as_uri() + '?mode=ro', uri=True" in adoption
     assert not any(key[0] == "knowledge_adoption.py" and key[2] == "COMMIT" for key in sites)
 
@@ -2376,7 +2376,7 @@ def test_p3c0_memory_connection_is_the_only_production_transaction_owner():
     # only a disposable candidate before copying through that writer lease.
     knowledge = (package_root / "knowledge_store.py").read_text(encoding="utf-8")
     backup = (package_root / "knowledge_backup.py").read_text(encoding="utf-8")
-    assert "directory / 'knowledge.db'" in knowledge
+    assert "dbpath = database_path(root)" in knowledge
     assert "with database(root, create=True) as target:" in backup
     assert "candidate = sqlite3.connect('')" in backup
     assert "with target:" in backup

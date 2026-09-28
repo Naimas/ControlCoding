@@ -4,6 +4,13 @@
 > For the conceptual framework, see [Methodology](methodology.md).
 > For hook details, see [Hooks Reference](hooks-reference.md).
 
+For the optional contained layout, start with
+[contained storage](../contained-storage.md). `cc layout status` inspects storage;
+`cc layout init` previews activation and requires `--apply` to create `cc/`.
+Existing installations use explicit `layout preview`, `layout migrate` and
+`layout recover` operations with a verified external backup. Every command uses
+the real application directory as `--project-root`.
+
 ---
 
 ## 0. Authorized Interfaces Only

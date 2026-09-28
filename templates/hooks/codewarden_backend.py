@@ -28,6 +28,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from hook_utils import control_plane_path, find_project_root, managed_path
+
 CONTROL_PLANE_DIR = ".controlcoding"
 LEGACY_CONTROL_PLANE_DIR = ".claude"
 
@@ -43,9 +45,9 @@ def _get_timeout(default: int = 120) -> int:
 def get_project_root() -> Path:
     """Find project root (parent of hooks/ directory, or git root)."""
     script_dir = Path(__file__).resolve().parent
-    # If script is in hooks/, project root is parent
-    if script_dir.name == "hooks":
-        return script_dir.parent
+    detected = find_project_root(script_dir)
+    if detected != script_dir:
+        return detected
     # Otherwise try git root
     try:
         result = subprocess.run(
@@ -63,17 +65,7 @@ def get_project_root() -> Path:
 
 def control_plane_file(project_root: Path, filename: str) -> Path:
     """Return canonical control-plane file path with legacy fallback."""
-    canonical = project_root / CONTROL_PLANE_DIR / filename
-    legacy = project_root / LEGACY_CONTROL_PLANE_DIR / filename
-    if canonical.exists():
-        return canonical
-    if legacy.exists():
-        return legacy
-    if canonical.parent.exists():
-        return canonical
-    if legacy.parent.exists():
-        return legacy
-    return canonical
+    return control_plane_path(project_root, filename)
 
 
 def read_claude_md(project_root: Path, max_lines: int = 300) -> str:
@@ -698,7 +690,7 @@ def _normalize_relpath(path_value) -> str:
 def _load_fitness_module(project_root: Path):
     """Best-effort load of project-local fitness_check.py."""
     for candidate in (
-        project_root / "tools" / "fitness_check.py",
+        managed_path(project_root, "tools", "fitness_check.py"),
         project_root / "scripts" / "fitness_check.py",
     ):
         if not candidate.exists():

@@ -25,7 +25,7 @@ def _short(text: Any, limit: int = 700) -> str:
 
 
 def _project_plane_present(project: Path) -> bool:
-    return (project / "CONTROLWORK.md").exists() or (project / ".controlwork" / "memory").exists()
+    return work_features._work_path(project, "CONTROLWORK.md").exists() or work_features._work_path(project, ".controlwork/memory").exists()
 
 
 def _project_selection(project: Path, scope: str, query: str, limit: int, include_legacy: bool) -> dict[str, Any]:

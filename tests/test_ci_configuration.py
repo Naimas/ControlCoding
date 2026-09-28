@@ -35,6 +35,8 @@ def test_default_selection_covers_remediation_surfaces(source):
         "tests/test_ci_configuration.py", "tests/test_cc_evidence.py", "tests/test_cc_evidence_process.py", "tests/test_session.py", "tests/test_cc_memory.py",
         "tests/test_cc_cli.py", "tests/test_gitignore.py", "tests/test_check_boundaries.py",
         "tests/test_cc_public_examples.py",
+        "tests/test_cc_layout.py", "tests/test_cc_contained_core.py",
+        "tests/test_cc_contained_memory.py", "tests/test_cc_contained_migration.py",
         "tests/test_check_dangerous_commands.py", "tests/test_check_repo_boundaries.py",
         "tests/test_check_file_organization.py", "tests/test_cc_organize.py",
     } <= targets

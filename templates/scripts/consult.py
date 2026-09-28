@@ -48,6 +48,14 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 SYSTEM_PROMPT = """\
 You are an external debugging consultant. You have NO access to the project \
 codebase and NO history of previous debugging attempts.
@@ -91,7 +99,9 @@ def _project_root() -> Path:
 def _control_plane_read_path(filename: str) -> Path:
     """Return canonical control-plane path with legacy fallback."""
     project_root = _project_root()
-    canonical = project_root / ".controlcoding" / filename
+    canonical = managed_path(project_root, ".controlcoding", filename)
+    if is_contained(project_root):
+        return canonical
     legacy = project_root / ".claude" / filename
     if canonical.exists():
         return canonical

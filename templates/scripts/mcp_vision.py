@@ -9,10 +9,19 @@ Dependencies: fastmcp (consistent with other CC MCP servers)
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
 from fastmcp import FastMCP
+
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
 
 # Local imports (same directory)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -20,6 +29,18 @@ import verification_agent as va
 from verification_report import generate_json_report, generate_markdown_report
 
 mcp = FastMCP("vision")
+
+DEFAULT_REPORT_OUTPUT_DIR = "devlog/"
+
+
+def _default_report_output_dir(value: str | None) -> str:
+    """Route only the implicit report directory into contained storage."""
+    if value is not None:
+        return value
+    project = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+    if is_contained(project):
+        return str(managed_path(project, "devlog"))
+    return DEFAULT_REPORT_OUTPUT_DIR
 
 
 @mcp.tool()
@@ -182,7 +203,7 @@ def vision_check_regression(
 @mcp.tool()
 def vision_report(
     criteria_path: str = va.DEFAULT_CRITERIA_PATH,
-    output_dir: str = "devlog/",
+    output_dir: str | None = None,
     design: str = "",
 ) -> str:
     """Generate verification report (JSON + markdown).
@@ -196,7 +217,7 @@ def vision_report(
     if not criteria:
         return "No criteria found."
     report = generate_json_report(criteria, design=design)
-    od = Path(output_dir)
+    od = Path(_default_report_output_dir(output_dir))
     od.mkdir(parents=True, exist_ok=True)
     json_path = od / "verification_report.json"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

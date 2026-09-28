@@ -13,6 +13,13 @@ ControlCoding release packaging.
 
 ## Source Of Truth Map
 
+Storage can be contained under the adopter's `cc/` namespace. The validated
+`cc/layout.json` marker selects this layout; the application and Git root remain
+unchanged. Core, Dev/Work memory, knowledge and installed helpers use the same
+resolver. Read-only observers never activate or migrate storage. See
+[contained storage](contained-storage.md) for initialization, integration
+exceptions, explicit migration, backup and recovery.
+
 ControlCoding uses explicit source-of-truth layers. Generated files, views,
 packets, graph exports, and host adapters are projections unless a detailed
 contract says otherwise.

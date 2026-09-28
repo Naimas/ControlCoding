@@ -871,7 +871,7 @@ def test_cli_strict_flag_and_adopter_imports(tmp_path):
     assert result.returncode == 1
     assert json.loads(result.stdout)["contractValid"] is True
     adopter = tmp_path / "adopter"; adopter.mkdir()
-    for name in ("cc_evidence", "cc_evidence_inputs", "cc_evidence_process"):
+    for name in ("cc_evidence", "cc_evidence_inputs", "cc_evidence_process", "cc_layout"):
         shutil.copyfile(ROOT / "scripts" / (name + ".py"), adopter / (name + ".py"))
     result = subprocess.run([sys.executable, "-B", "-c", "import cc_evidence,cc_evidence_inputs,cc_evidence_process"], cwd=adopter, capture_output=True)
     assert result.returncode == 0, result.stderr

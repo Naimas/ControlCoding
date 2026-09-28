@@ -58,6 +58,8 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
+from cc_layout import LayoutError, is_contained, managed_path, managed_relative, source_path, storage_root
+
 import cc_evidence
 import cc_evidence_inputs
 
@@ -215,6 +217,7 @@ HELPER_DIR = TEMPLATES_DIR / "helper-session"
 
 # Files that cc init copies to hooks/
 INIT_HOOKS = [
+    "cc_layout.py",
     "check_boundaries.py",
     "check_dangerous_commands.py",
     "check_bash_writes.py",
@@ -346,6 +349,7 @@ PACK_FILES = {
             SCRIPTS_DIR / "consult.py",
             SCRIPTS_DIR / "visual_check.py",
             SCRIPTS_DIR / "visual_test.py",
+            SCRIPTS_DIR / "visual_check_utils.py",
         ],
     },
     "multi-agent": {
@@ -569,11 +573,21 @@ def copy_file(src: Path, dest: Path):
 
 
 def _control_plane_dir(project: Path) -> Path:
-    return project / CONTROL_PLANE_DIRNAME
+    return managed_path(project, CONTROL_PLANE_DIRNAME)
 
 
 def _legacy_control_plane_dir(project: Path) -> Path:
-    return project / LEGACY_CONTROL_PLANE_DIRNAME
+    return managed_path(project, LEGACY_CONTROL_PLANE_DIRNAME)
+
+
+def _managed_path(project: Path, logical: str | Path, *parts: str | Path) -> Path:
+    """Resolve an explicitly CC-owned logical artifact path.
+
+    Application source paths, Git paths and host adapter targets deliberately do
+    not use this helper.  The contained layout marker is therefore the sole
+    opt-in switch for ControlCoding-owned storage.
+    """
+    return managed_path(project, logical, *parts)
 
 
 def _control_plane_path(project: Path, *parts: str) -> Path:
@@ -692,8 +706,19 @@ def _build_gitignore_block(
     central_hooks: bool = False,
     documentation_mode: str = "managed",
     cc_artifact_mode: str = "local_only",
+    project_root: Path | None = None,
 ) -> str:
     """Build the managed .gitignore block for the current CC policy."""
+    if project_root is not None and is_contained(project_root):
+        # Contained adopters keep every CC-owned artifact below this fixed
+        # namespace.  Never ignore generic application hooks/tools/dev paths.
+        return "\n".join([
+            GITIGNORE_MARKER_START,
+            "# Contained ControlCoding local artifacts (do not commit)",
+            "/cc/",
+            GITIGNORE_MARKER_END,
+            "",
+        ])
     block_lines = []
     skip = False
     for line in GITIGNORE_BLOCK.splitlines():
@@ -736,6 +761,7 @@ def _ensure_gitignore(project: Path, central_hooks: bool = False) -> bool:
         central_hooks=central_hooks,
         documentation_mode=documentation_mode,
         cc_artifact_mode=cc_artifact_mode,
+        project_root=project,
     )
 
     if gitignore.exists():
@@ -1671,15 +1697,15 @@ _CORE_CAPABILITY_REGISTRY = [
 
 
 def _canonical_context_path(project: Path) -> Path:
-    return project / CANONICAL_CONTEXT_FILENAME
+    return _managed_path(project, CANONICAL_CONTEXT_FILENAME)
 
 
 def _controlwork_context_path(project: Path) -> Path:
-    return project / CONTROLWORK_CONTEXT_FILENAME
+    return _managed_path(project, CONTROLWORK_CONTEXT_FILENAME)
 
 
 def _legacy_context_path(project: Path) -> Path:
-    return project / LEGACY_CONTEXT_FILENAME
+    return _managed_path(project, LEGACY_CONTEXT_FILENAME)
 
 
 def _resolve_explicit_context_source(project: Path, source: str) -> Path | None:
@@ -1690,7 +1716,7 @@ def _resolve_explicit_context_source(project: Path, source: str) -> Path | None:
         return None
     candidate = Path(source_label)
     if not candidate.is_absolute():
-        candidate = project / candidate
+        candidate = source_path(project, candidate.as_posix())
     try:
         resolved_project = project.resolve()
         resolved_candidate = candidate.resolve()
@@ -2223,7 +2249,7 @@ def _truth_check_payload(project: Path, include_docs: bool = False) -> dict:
 
 
 def _verification_contract_path(project: Path) -> Path:
-    return project / VERIFICATION_CONTRACT_FILENAME
+    return _managed_path(project, VERIFICATION_CONTRACT_FILENAME)
 
 
 def _legacy_verification_contract_path(project: Path) -> Path:
@@ -2246,12 +2272,17 @@ def _verification_command_prefix(project: Path) -> str:
 
 def _default_verification_contract(project: Path) -> dict:
     cc_cmd = _verification_command_prefix(project)
+    receipts_relative = managed_relative(
+        project,
+        f"{CONTROL_PLANE_DIRNAME}/{VERIFICATION_RECEIPTS_DIRNAME}",
+    )
+
     def pytest_command(targets: str, suite_id: str, temp_name: str) -> str:
         # Per-suite diagnostics must outlive the runner's temporary-directory cleanup.
         # These files are overwritten on rerun; the JSON receipt remains separate.
         return (
             f"python -m pytest {targets} -q "
-            f"--junitxml {{project}}/.controlcoding/verification_receipts/{suite_id}.xml "
+            f"--junitxml {{project}}/{receipts_relative}/{suite_id}.xml "
             "-o junit_logging=all -o junit_log_passing_tests=false"
         )
 
@@ -2343,6 +2374,13 @@ def _default_verification_contract(project: Path) -> dict:
          "Run installation workflow and Core/runtime prerequisite regressions."),
         ("optional-hooks-regression", ("test_new_hooks.py",),
          "Run optional hook and Bash observation safety regressions."),
+        ("contained-storage-regression", ("test_cc_layout.py", "test_cc_contained_core.py",
+                                          "test_cc_contained_memory.py", "test_cc_contained_migration.py"),
+         "Verify contained storage, legacy compatibility, real hook dispatch, memory and backed-up migration preservation."),
+        ("external-storage-regression", ("test_cc_external.py",),
+         "Verify read-only external sources, process refusal, provenance and evidence invalidation."),
+        ("graph-wiki-regression", ("test_cc_graph_wiki.py", "test_cc_knowledge_ranking.py", "test_cc_knowledge_wiki_review.py"),
+         "Verify graph retrieval, original citations, reviewed wiki findings and guarded revision recovery."),
     ):
         targets = " ".join(f"tests/{name}" for name in candidates
                            if (project / "tests" / name).is_file())
@@ -2645,7 +2683,7 @@ def cmd_verify_run(project: Path, suite_ids: list[str] | None = None,
     return _evidence_run(project, "verification", suite_ids or [], kinds or [], all_suites, json_output)
 
 def _invariant_manifest_path(project: Path) -> Path:
-    return project / INVARIANT_MANIFEST_FILENAME
+    return _managed_path(project, INVARIANT_MANIFEST_FILENAME)
 
 
 def _invariant_receipts_dir(project: Path) -> Path:
@@ -2707,7 +2745,7 @@ def _resolve_invariant_elicitation_output(project: Path,
                                           domain_key: str,
                                           output_path: Path | None) -> tuple[Path, str, list[str]]:
     if output_path is None:
-        candidate = project / "docs" / "invariants" / f"{domain_key}-elicitation.md"
+        candidate = _managed_path(project, "docs", "invariants", f"{domain_key}-elicitation.md")
     else:
         candidate = output_path
         if not candidate.is_absolute():
@@ -4088,7 +4126,7 @@ def _write_promotion_adr(project: Path, manifest: dict, reason: str = "") -> Pat
     target = str(manifest.get("targetPath", "")).strip()
     slug = _promotion_slug(f"promote-{Path(target).stem or Path(source).stem}")
     date = datetime.date.today().isoformat()
-    directory = project / "docs" / "adr"
+    directory = _managed_path(project, "docs", "adr")
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"ADR-{date}-{slug}.md"
     if path.exists():
@@ -4952,7 +4990,7 @@ def _consult_packet_path(project: Path, packet_id: str) -> Path:
     external_legacy = _legacy_external_consultation_dir(project) / EXTERNAL_CONSULT_REQUEST_DIRNAME / filename
     if external_legacy.exists():
         return external_legacy
-    legacy = project / LEGACY_CONTROL_PLANE_DIRNAME / CONSULT_PACKET_DIRNAME / filename
+    legacy = _legacy_control_plane_path(project, CONSULT_PACKET_DIRNAME, filename)
     if legacy.exists():
         return legacy
     return canonical
@@ -5028,7 +5066,7 @@ def _load_consult_packets(project: Path) -> list[dict]:
     rows = _load_consult_json_dir(external_legacy)
     if rows:
         return rows
-    return _load_consult_json_dir(project / LEGACY_CONTROL_PLANE_DIRNAME / CONSULT_PACKET_DIRNAME)
+    return _load_consult_json_dir(_legacy_control_plane_path(project, CONSULT_PACKET_DIRNAME))
 
 
 def _load_consult_results(project: Path) -> list[dict]:
@@ -5039,7 +5077,7 @@ def _load_consult_results(project: Path) -> list[dict]:
     rows = _load_consult_json_dir(external_legacy)
     if rows:
         return rows
-    return _load_consult_json_dir(project / LEGACY_CONTROL_PLANE_DIRNAME / CONSULT_RESULT_DIRNAME)
+    return _load_consult_json_dir(_legacy_control_plane_path(project, CONSULT_RESULT_DIRNAME))
 
 
 def _consult_result_path(project: Path, result_id: str) -> Path:
@@ -5050,7 +5088,7 @@ def _consult_result_path(project: Path, result_id: str) -> Path:
     external_legacy = _legacy_external_consultation_dir(project) / EXTERNAL_CONSULT_IMPORT_DIRNAME / filename
     if external_legacy.exists():
         return external_legacy
-    legacy = project / LEGACY_CONTROL_PLANE_DIRNAME / CONSULT_RESULT_DIRNAME / filename
+    legacy = _legacy_control_plane_path(project, CONSULT_RESULT_DIRNAME, filename)
     if legacy.exists():
         return legacy
     return canonical
@@ -7172,7 +7210,7 @@ def _sh_quote(parts: list[str]) -> str:
 def _build_host_launcher_assets(project: Path, user_host: str) -> dict[str, str]:
     profile = _host_surface_profile(user_host)
     editor_profile = _host_editor_profile(user_host)
-    launcher_dir = project / HOST_LAUNCHERS_RELATIVE_DIR
+    launcher_dir = _control_plane_path(project, "launchers")
     python_exe = sys.executable
     cc_script = str((SCRIPT_DIR / "cc.py").resolve())
     project_root = str(project.resolve())
@@ -7310,16 +7348,19 @@ def _write_host_launcher_assets(project: Path, user_host: str) -> list[str]:
     assets = _build_host_launcher_assets(project, user_host)
     written: list[str] = []
     for relative_path, content in assets.items():
-        target = project / relative_path
+        target = _managed_path(project, relative_path) if relative_path.startswith(f"{CONTROL_PLANE_DIRNAME}/") else project / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        written.append(relative_path.replace("\\", "/"))
+        written.append(_project_relative_label(project, target))
     return sorted(written)
 
 
-def _build_vscode_shell_task(label: str, launcher_name: str, detail: str) -> dict:
-    launcher_win = f"${{workspaceFolder}}\\{CONTROL_PLANE_DIRNAME}\\launchers\\{launcher_name}.cmd"
-    launcher_sh = f"${{workspaceFolder}}/{CONTROL_PLANE_DIRNAME}/launchers/{launcher_name}.sh"
+def _build_vscode_shell_task(label: str, launcher_name: str, detail: str,
+                             launcher_relative: str | None = None) -> dict:
+    launcher_relative = launcher_relative or f"{CONTROL_PLANE_DIRNAME}/launchers"
+    launcher_windows_relative = launcher_relative.replace("/", "\\")
+    launcher_win = f"${{workspaceFolder}}\\{launcher_windows_relative}\\{launcher_name}.cmd"
+    launcher_sh = f"${{workspaceFolder}}/{launcher_relative}/{launcher_name}.sh"
     return {
         "label": label,
         "type": "shell",
@@ -7345,10 +7386,14 @@ def _build_vscode_shell_task(label: str, launcher_name: str, detail: str) -> dic
     }
 
 
-def _build_vscode_tasks_manifest(user_host: str) -> dict:
+def _build_vscode_tasks_manifest(user_host: str, project: Path | None = None) -> dict:
     profile = _host_surface_profile(user_host)
     editor_profile = _host_editor_profile(user_host)
     host_label = profile["label"]
+    launcher_relative = (
+        managed_relative(project, f"{CONTROL_PLANE_DIRNAME}/launchers")
+        if project is not None else f"{CONTROL_PLANE_DIRNAME}/launchers"
+    )
     tasks = []
     if profile["launcher_mode"] == "run":
         tasks.append(
@@ -7356,6 +7401,7 @@ def _build_vscode_tasks_manifest(user_host: str) -> dict:
                 f"ControlCoding: Launch {host_label} as Primary",
                 "launch_primary_host",
                 f"Launch {host_label} through ControlCoding surface management.",
+                launcher_relative,
             )
         )
     else:
@@ -7364,6 +7410,7 @@ def _build_vscode_tasks_manifest(user_host: str) -> dict:
                 f"ControlCoding: Claim {host_label} as Primary",
                 "claim_primary_host",
                 f"Mark {host_label} as the primary ControlCoding surface for this project.",
+                launcher_relative,
             )
         )
 
@@ -7372,16 +7419,19 @@ def _build_vscode_tasks_manifest(user_host: str) -> dict:
             f"ControlCoding: Observe {host_label}",
             "observe_host",
             f"Attach {host_label} as observer-only for this project.",
+            launcher_relative,
         ),
         _build_vscode_shell_task(
             "ControlCoding: Surface Status",
             "surface_status",
             "Show the current Primary/Observer authority state for this project.",
+            launcher_relative,
         ),
         _build_vscode_shell_task(
             f"ControlCoding: Release {host_label}",
             "release_primary_host",
             f"Release the current {host_label} surface lock for this project.",
+            launcher_relative,
         ),
     ])
 
@@ -7417,6 +7467,7 @@ def _build_host_editor_task_step(
     launcher_mode: str,
     editor_tasks_installed: bool,
     workspace_tasks_present: bool,
+    project: Path | None = None,
 ) -> str:
     surface_profile = _host_surface_profile(user_host)
     editor_profile = _host_editor_profile(user_host)
@@ -7425,7 +7476,10 @@ def _build_host_editor_task_step(
         if launcher_mode == "run"
         else f"ControlCoding: Claim {surface_profile['label']} as Primary"
     )
-    template_path = _host_task_template_relpath(user_host)
+    template_path = (
+        managed_relative(project, _host_task_template_relpath(user_host))
+        if project is not None else _host_task_template_relpath(user_host)
+    )
 
     if editor_tasks_installed:
         return f"{editor_profile['run_hint']} Choose `{primary_task_label}` from `.vscode/tasks.json`."
@@ -7445,24 +7499,33 @@ def _build_host_next_steps(
     launcher_mode: str,
     editor_tasks_installed: bool,
     workspace_tasks_present: bool,
+    project: Path | None = None,
 ) -> list[str]:
     profile = _host_surface_profile(user_host)
     label = profile["label"]
-    primary_launcher = (
+    primary_launcher_logical = (
         f"{CONTROL_PLANE_DIRNAME}/launchers/launch_primary_host.cmd"
         if launcher_mode == "run"
         else f"{CONTROL_PLANE_DIRNAME}/launchers/claim_primary_host.cmd"
     )
+    primary_launcher = (managed_relative(project, primary_launcher_logical)
+                        if project is not None else primary_launcher_logical)
+    starter_path = (managed_relative(project, PUBLIC_CHAT_STARTER_RELATIVE_PATH.as_posix())
+                    if project is not None else PUBLIC_CHAT_STARTER_RELATIVE_PATH.as_posix())
+    status_launcher_logical = f"{CONTROL_PLANE_DIRNAME}/launchers/surface_status.cmd"
+    status_launcher = (managed_relative(project, status_launcher_logical)
+                       if project is not None else status_launcher_logical)
     steps = [
-        f"Start from chat with `{PUBLIC_CHAT_STARTER_RELATIVE_PATH.as_posix()}` if you want the public no-command assistant flow.",
+        f"Start from chat with `{starter_path}` if you want the public no-command assistant flow.",
         f"Use `{primary_launcher}` as the primary entrypoint when you start working from {label}.",
         _build_host_editor_task_step(
             user_host,
             launcher_mode,
             editor_tasks_installed,
             workspace_tasks_present,
+            project,
         ),
-        f"Use `{CONTROL_PLANE_DIRNAME}/launchers/surface_status.cmd` to inspect the current Primary/Observer state.",
+        f"Use `{status_launcher}` to inspect the current Primary/Observer state.",
     ]
     return steps
 
@@ -7473,6 +7536,7 @@ def _build_host_instruction_lines(
     editor_tasks_installed: bool,
     workspace_tasks_present: bool,
     host_instructions: dict | None,
+    project: Path | None = None,
 ) -> list[str]:
     normalized = _normalize_host_instructions(host_instructions)
     mode = normalized["mode"]
@@ -7504,6 +7568,7 @@ def _build_host_instruction_lines(
             launcher_mode,
             editor_tasks_installed,
             workspace_tasks_present,
+            project,
         )
     )
 
@@ -7526,6 +7591,7 @@ def _build_host_instructions_document(
     editor_tasks_installed: bool,
     workspace_tasks_present: bool,
     host_instructions: dict | None,
+    project: Path | None = None,
 ) -> str:
     normalized = _normalize_host_instructions(host_instructions)
     lines = _build_host_instruction_lines(
@@ -7534,6 +7600,7 @@ def _build_host_instructions_document(
         editor_tasks_installed,
         workspace_tasks_present,
         normalized,
+        project,
     )
     doc_lines = [
         "# ControlCoding Host Instructions",
@@ -7552,10 +7619,12 @@ def _build_host_instructions_document(
     return "\n".join(doc_lines) + "\n"
 
 
-def _build_public_chat_entry_document(user_host: str) -> str:
+def _build_public_chat_entry_document(user_host: str, project: Path | None = None) -> str:
     label = _host_surface_profile(user_host)["label"]
-    install_contract = PUBLIC_INSTALL_CONTRACT_RELATIVE_PATH.as_posix()
-    project_setup_contract = PUBLIC_PROJECT_SETUP_CONTRACT_RELATIVE_PATH.as_posix()
+    install_contract = (managed_relative(project, PUBLIC_INSTALL_CONTRACT_RELATIVE_PATH.as_posix())
+                        if project is not None else PUBLIC_INSTALL_CONTRACT_RELATIVE_PATH.as_posix())
+    project_setup_contract = (managed_relative(project, PUBLIC_PROJECT_SETUP_CONTRACT_RELATIVE_PATH.as_posix())
+                              if project is not None else PUBLIC_PROJECT_SETUP_CONTRACT_RELATIVE_PATH.as_posix())
     return (
         "# Start Here With Chat\n\n"
         "This is the public entrypoint for a normal user.\n\n"
@@ -7650,8 +7719,10 @@ def _build_host_integration_assets(project: Path, user_host: str, host_instructi
                                    *, workspace_tasks_present: bool | None = None) -> dict[str, str]:
     assets = _build_host_launcher_assets(project, user_host)
     editor_profile = _host_editor_profile(user_host)
-    task_template_path = _host_task_template_relpath(user_host)
-    manifest = json.dumps(_build_vscode_tasks_manifest(user_host), indent=2, ensure_ascii=False) + "\n"
+    task_template_logical = _host_task_template_relpath(user_host)
+    task_template_path = managed_relative(project, task_template_logical)
+    launcher_relative = managed_relative(project, str(HOST_LAUNCHERS_RELATIVE_DIR).replace("\\", "/"))
+    manifest = json.dumps(_build_vscode_tasks_manifest(user_host, project), indent=2, ensure_ascii=False) + "\n"
     assets[task_template_path] = manifest
     vscode_tasks = project / VSCODE_TASKS_RELATIVE_PATH
     if workspace_tasks_present is None:
@@ -7672,14 +7743,14 @@ def _build_host_integration_assets(project: Path, user_host: str, host_instructi
         "surfaceId": profile["surface_id"],
         "launcherMode": profile["launcher_mode"],
         "primaryEntryPoint": {
-            "windows": str((HOST_LAUNCHERS_RELATIVE_DIR / f"{primary_entry}.cmd")).replace("\\", "/"),
-            "powershell": str((HOST_LAUNCHERS_RELATIVE_DIR / f"{primary_entry}.ps1")).replace("\\", "/"),
-            "shell": str((HOST_LAUNCHERS_RELATIVE_DIR / f"{primary_entry}.sh")).replace("\\", "/"),
+            "windows": f"{launcher_relative}/{primary_entry}.cmd",
+            "powershell": f"{launcher_relative}/{primary_entry}.ps1",
+            "shell": f"{launcher_relative}/{primary_entry}.sh",
         },
         "supportEntryPoints": [
-            str((HOST_LAUNCHERS_RELATIVE_DIR / "surface_status.cmd")).replace("\\", "/"),
-            str((HOST_LAUNCHERS_RELATIVE_DIR / "observe_host.cmd")).replace("\\", "/"),
-            str((HOST_LAUNCHERS_RELATIVE_DIR / "release_primary_host.cmd")).replace("\\", "/"),
+            f"{launcher_relative}/surface_status.cmd",
+            f"{launcher_relative}/observe_host.cmd",
+            f"{launcher_relative}/release_primary_host.cmd",
         ],
         "editorTasks": {
             "presetId": editor_profile["preset_id"],
@@ -7692,7 +7763,7 @@ def _build_host_integration_assets(project: Path, user_host: str, host_instructi
             "runHint": editor_profile["run_hint"],
         },
         "instructionMode": normalized_instructions["mode"],
-        "instructionFilePath": str(HOST_INSTRUCTIONS_RELATIVE_PATH).replace("\\", "/"),
+        "instructionFilePath": managed_relative(project, str(HOST_INSTRUCTIONS_RELATIVE_PATH).replace("\\", "/")),
         "customInstructions": normalized_instructions["customNotes"],
         "effectiveInstructions": _build_host_instruction_lines(
             user_host,
@@ -7700,12 +7771,14 @@ def _build_host_integration_assets(project: Path, user_host: str, host_instructi
             editor_tasks_installed,
             workspace_tasks_present,
             normalized_instructions,
+            project,
         ),
         "nextSteps": _build_host_next_steps(
             user_host,
             profile["launcher_mode"],
             editor_tasks_installed,
             workspace_tasks_present,
+            project,
         ),
         "generatedFiles": [],
     }
@@ -7715,18 +7788,19 @@ def _build_host_integration_assets(project: Path, user_host: str, host_instructi
         editor_tasks_installed,
         workspace_tasks_present,
         normalized_instructions,
+        project,
     )
-    assets[str(PUBLIC_CHAT_STARTER_RELATIVE_PATH).replace("\\", "/")] = _build_public_chat_entry_document(user_host)
+    assets[str(PUBLIC_CHAT_STARTER_RELATIVE_PATH).replace("\\", "/")] = _build_public_chat_entry_document(user_host, project)
     assets[str(PUBLIC_INSTALL_CONTRACT_RELATIVE_PATH).replace("\\", "/")] = _build_public_install_contract_document(user_host)
     assets[str(PUBLIC_PROJECT_SETUP_CONTRACT_RELATIVE_PATH).replace("\\", "/")] = _build_public_project_setup_contract_document(user_host)
     manifest_payload["publicAssistant"] = {
-        "starterPath": str(PUBLIC_CHAT_STARTER_RELATIVE_PATH).replace("\\", "/"),
-        "installContractPath": str(PUBLIC_INSTALL_CONTRACT_RELATIVE_PATH).replace("\\", "/"),
-        "projectSetupContractPath": str(PUBLIC_PROJECT_SETUP_CONTRACT_RELATIVE_PATH).replace("\\", "/"),
+        "starterPath": managed_relative(project, str(PUBLIC_CHAT_STARTER_RELATIVE_PATH).replace("\\", "/")),
+        "installContractPath": managed_relative(project, str(PUBLIC_INSTALL_CONTRACT_RELATIVE_PATH).replace("\\", "/")),
+        "projectSetupContractPath": managed_relative(project, str(PUBLIC_PROJECT_SETUP_CONTRACT_RELATIVE_PATH).replace("\\", "/")),
     }
     manifest_payload["generatedFiles"] = sorted([
-        *assets.keys(),
-        str(HOST_INTEGRATION_MANIFEST_RELATIVE_PATH).replace("\\", "/"),
+        *[managed_relative(project, path) if path.startswith(f"{CONTROL_PLANE_DIRNAME}/") else path for path in assets],
+        managed_relative(project, str(HOST_INTEGRATION_MANIFEST_RELATIVE_PATH).replace("\\", "/")),
     ])
     assets[str(HOST_INTEGRATION_MANIFEST_RELATIVE_PATH).replace("\\", "/")] = (
         json.dumps(manifest_payload, indent=2, ensure_ascii=False) + "\n"
@@ -7738,10 +7812,10 @@ def _write_host_integration_assets(project: Path, user_host: str, host_instructi
     assets = _build_host_integration_assets(project, user_host, host_instructions)
     written: list[str] = []
     for relative_path, content in assets.items():
-        target = project / relative_path
+        target = _managed_path(project, relative_path) if relative_path.startswith(f"{CONTROL_PLANE_DIRNAME}/") else project / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        written.append(relative_path.replace("\\", "/"))
+        written.append(_project_relative_label(project, target))
     return sorted(written)
 
 
@@ -8080,6 +8154,11 @@ def _resolve_hook_commands(settings: dict, hooks_dir: Path) -> dict:
     return settings
 
 
+def _init_hook_source(name: str) -> Path:
+    """Return the product-checkout source for one installed hook payload."""
+    return SCRIPT_DIR / name if name == "cc_layout.py" else HOOKS_DIR / name
+
+
 def _build_repo_precommit_hook_script(hooks_dir: Path, fitness_script: Path | None) -> str:
     hooks_abs = hooks_dir.resolve().as_posix()
     fitness_abs = fitness_script.resolve().as_posix() if fitness_script is not None else ""
@@ -8321,14 +8400,16 @@ def _plan_init(project: Path, central_hooks: bool = False, *,
         ),
     }
     for name, text in documents.items():
-        output(project / name, text.encode("utf-8"), retain=True, reason="existing document retained, contents not validated")
-    directory(project / "devlog")
-    hooks_dest = Path(os.path.abspath(_central_hooks_dir())) if central_hooks else project / "hooks"
+        output(_managed_path(project, name), text.encode("utf-8"), retain=True, reason="existing document retained, contents not validated")
+    directory(_managed_path(project, "devlog"))
+    hooks_dest = Path(os.path.abspath(_central_hooks_dir())) if central_hooks else _managed_path(project, "hooks")
     directory(hooks_dest)
     for name in INIT_HOOKS:
-        output(hooks_dest / name, source(HOOKS_DIR / name))
-    directory(project / "tools")
-    fitness_dest = project / "tools" / "fitness_check.py"
+        output(hooks_dest / name, source(_init_hook_source(name)))
+    directory(_managed_path(project, "tools"))
+    output(_managed_path(project, "tools", "cc_layout.py"), source(SCRIPT_DIR / "cc_layout.py"))
+    output(_managed_path(project, "tools", "control_plane_utils.py"), source(SCRIPTS_DIR / "control_plane_utils.py"))
+    fitness_dest = _managed_path(project, "tools", "fitness_check.py")
     output(fitness_dest, source(SCRIPT_DIR / "fitness_check.py"))
 
     git_dir = project / ".git"
@@ -8359,7 +8440,8 @@ def _plan_init(project: Path, central_hooks: bool = False, *,
     ignore = project / ".gitignore"
     block = _build_gitignore_block(central_hooks=central_hooks,
                                   documentation_mode=config.get("documentation_mode", "managed"),
-                                  cc_artifact_mode=config.get("cc_artifact_mode", "local_only"))
+                                  cc_artifact_mode=config.get("cc_artifact_mode", "local_only"),
+                                  project_root=project)
     ignore_snapshot = observe(ignore, observations)
     if ignore_snapshot is not None:
         lines = ignore_snapshot[-1].decode("utf-8").splitlines()
@@ -8528,7 +8610,8 @@ def cmd_install(project: Path, pack: str, *, preview_only: bool = False):
         fail(f"Pack install stopped with partial changes possible: {exc}")
         return 1
     if "dashboard" in packs:
-        print("\n  Run dashboard with: python tools/cc_dashboard.py --project-root .")
+        dashboard = _managed_path(project, "tools", "cc_dashboard.py").relative_to(project).as_posix()
+        print(f"\n  Run dashboard with: python {dashboard} --project-root .")
     print(f"{green('Done!')} Installed: {', '.join(packs)}")
     return 0
 
@@ -10526,15 +10609,15 @@ def cmd_doctor(project: Path,
         issues += 1
 
     # 2. STATUS.md
-    if (project / "STATUS.md").exists():
-        _ok("STATUS.md exists")
+    if _managed_path(project, "STATUS.md").exists():
+        _ok(f"{managed_relative(project, 'STATUS.md')} exists")
     else:
         _warn("STATUS.md not found (recommended for session continuity)")
         issues += 1
 
     # 3. devlog/
-    if (project / "devlog").is_dir():
-        _ok("devlog/ directory exists")
+    if _managed_path(project, "devlog").is_dir():
+        _ok(f"{managed_relative(project, 'devlog')}/ directory exists")
     else:
         _warn("devlog/ not found (recommended for session history)")
         issues += 1
@@ -10557,7 +10640,7 @@ def cmd_doctor(project: Path,
             _info("Fix: run 'cc init --central-hooks --project-root .'")
             issues += 1
     else:
-        hooks_dir = project / "hooks"
+        hooks_dir = _managed_path(project, "hooks")
         if hooks_dir.is_dir():
             hook_files = list(hooks_dir.glob("*.py"))
             if len(hook_files) >= 2:
@@ -10611,7 +10694,7 @@ def cmd_doctor(project: Path,
         issues += 1
 
     # 6. Tools directory (optional)
-    tools_dir = project / "tools"
+    tools_dir = _managed_path(project, "tools")
     if tools_dir.is_dir():
         tool_files = list(tools_dir.glob("*.py"))
         _ok(f"tools/ directory has {len(tool_files)} scripts")
@@ -10620,7 +10703,7 @@ def cmd_doctor(project: Path,
 
     # 7. Fitness check tool
     fitness_path = _first_existing_path(
-        project / "tools" / "fitness_check.py",
+        _managed_path(project, "tools", "fitness_check.py"),
         project / "scripts" / "fitness_check.py",
     )
     if fitness_path is not None:
@@ -11566,7 +11649,7 @@ def cmd_review(project: Path, to_stdout: bool = False):
 
     # 5. Historical context (Section C)
     section_c = ""
-    last_review = project / "docs" / "last_review_summary.md"
+    last_review = _managed_path(project, "docs", "last_review_summary.md")
     if last_review.exists():
         summary = last_review.read_text(encoding="utf-8").strip()
         section_c = (
@@ -11603,7 +11686,7 @@ def cmd_review(project: Path, to_stdout: bool = False):
     if to_stdout:
         print(prompt)
     else:
-        docs_dir = project / "docs"
+        docs_dir = _managed_path(project, "docs")
         docs_dir.mkdir(exist_ok=True)
         output_path = docs_dir / "review_prompt.md"
         output_path.write_text(prompt, encoding="utf-8")
@@ -11855,7 +11938,7 @@ def _append_dev_taxonomy_move(
         "to": str(dest_rel).replace("\\", "/"),
         "reason": reason,
         "src": item,
-        "dest": project / dest_rel,
+        "dest": storage_root(project) / dest_rel,
     })
 
 
@@ -11864,7 +11947,8 @@ def _scan_dev_taxonomy_files(project: Path) -> list:
     results = []
     doc_extensions = {".md", ".json", ".txt", ".yaml", ".yml"}
 
-    for item in sorted(project.iterdir()):
+    storage = storage_root(project)
+    for item in sorted(storage.iterdir()):
         if not item.is_file() or item.suffix.lower() not in doc_extensions:
             continue
         suggested = _classify_dev_taxonomy_doc(item, root_file=True)
@@ -11877,7 +11961,7 @@ def _scan_dev_taxonomy_files(project: Path) -> list:
                 f"belongs in dev/{suggested}/",
             )
 
-    dev = project / "dev"
+    dev = storage / "dev"
     if not dev.is_dir():
         return results
 
@@ -11923,7 +12007,7 @@ def _ensure_dev_taxonomy_dirs(
             dirs.append(category_dir / child)
 
     for rel_dir in dirs:
-        path = project / rel_dir
+        path = storage_root(project) / rel_dir
         rel_str = str(rel_dir).replace("\\", "/")
         if path.is_dir():
             continue
@@ -11948,7 +12032,7 @@ def _scan_devlog_files(project: Path) -> list:
       - current_subdir: current subdirectory within devlog/ (or "root")
       - suggested_subdir: where the file should go per naming conventions (or None)
     """
-    devlog = project / "devlog"
+    devlog = storage_root(project) / "devlog"
     if not devlog.is_dir():
         return []
 
@@ -11999,7 +12083,8 @@ def _scan_project_docs(project: Path) -> list:
     }
     doc_extensions = {".md", ".json", ".txt", ".yaml", ".yml"}
 
-    for item in sorted(project.iterdir()):
+    scan_root = storage_root(project)
+    for item in sorted(scan_root.iterdir()):
         if item.is_dir() and item.name in skip_dirs:
             continue
         if item.is_dir():
@@ -12035,7 +12120,7 @@ def _classify_root_doc(item: Path, project: Path, results: list):
 
 def _generate_index(project: Path) -> str:
     """Generate devlog/index.md content from current devlog/ contents."""
-    devlog = project / "devlog"
+    devlog = storage_root(project) / "devlog"
     lines = [
         "# Devlog Index",
         "",
@@ -12105,7 +12190,7 @@ def cmd_organize(project: Path, dry_run: bool = False, json_output: bool = False
     if emit_human:
         print(f"\nOrganizing files in: {project}\n")
 
-    devlog = project / "devlog"
+    devlog = storage_root(project) / "devlog"
     report = {
         "dirs_created": [],
         "moves_proposed": [],
@@ -12316,8 +12401,14 @@ def cmd_init_module(project: Path, module_name: str, module_dir: str = None):
         mod_dir = project / "modules" / module_name
     mod_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if .feature-lock.json already exists
-    lock_path = mod_dir / ".feature-lock.json"
+    # Module source remains at its application path.  The lock is CC state,
+    # therefore contained adopters store it under the control plane and retain
+    # the source-relative module identity in its ``owns`` patterns.
+    lock_path = (
+        _managed_path(project, ".controlcoding", "module-locks", rel_dir, ".feature-lock.json")
+        if is_contained(project)
+        else mod_dir / ".feature-lock.json"
+    )
     if lock_path.exists():
         print(f"Error: {lock_path} already exists. Will not overwrite.")
         return 1
@@ -12330,6 +12421,7 @@ def cmd_init_module(project: Path, module_name: str, module_dir: str = None):
         "shared_write": [],
         "may_read": [],
     }
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path.write_text(json.dumps(lock_data, indent=2) + "\n", encoding="utf-8")
 
     print(f"Created module '{module_name}':")
@@ -15650,7 +15742,7 @@ def _expected_host_context(project: Path, host: str, source: str = "") -> tuple[
         return _render_expected_host_context(
             project,
             normalized_host,
-            project / CANONICAL_CONTEXT_FILENAME,
+            _canonical_context_path(project),
             "",
             CANONICAL_CONTEXT_FILENAME,
         )
@@ -15681,7 +15773,7 @@ def _adapter_plan_payload(project: Path,
         source_path, source_text, source_bytes, source_snapshot, source_error = _read_adapter_context_source(project, source=source)
         source_identity = _adapter_source_identity(project, source_path) if source_path is not None else (str(source or "").strip() or CANONICAL_CONTEXT_FILENAME)
     else:
-        source_path = project / CANONICAL_CONTEXT_FILENAME
+        source_path = _canonical_context_path(project)
         source_text = ""
         source_bytes = b""
         source_snapshot = None
@@ -21873,6 +21965,11 @@ def main():
         help="Exit 1 if any files are missing (for CI/pre-commit use)",
     )
 
+    # Kept in a small independent module so layout migration has no runtime
+    # dependency on the rest of the command dispatcher.
+    from cc_layout_cli import add_parser as add_layout_parser
+    add_layout_parser(sub)
+
     args, extra_args = parser.parse_known_args()
 
     if not args.command:
@@ -21881,6 +21978,10 @@ def main():
 
     if extra_args and not (args.command == "surface" and getattr(args, "surface_command", "") == "run"):
         parser.error(f"unrecognized arguments: {' '.join(extra_args)}")
+
+    if args.command == "layout":
+        from cc_layout_cli import command as layout_command
+        return layout_command(args)
 
     project = (Path(os.path.abspath(args.project_root)) if args.command in {"install", "init"}
                else args.project_root.resolve())

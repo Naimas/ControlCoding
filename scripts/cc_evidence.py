@@ -9,6 +9,7 @@ import re
 import stat
 import uuid
 
+from cc_layout import managed_relative
 import cc_evidence_inputs as inputs
 from cc_evidence_process import run_command
 
@@ -28,8 +29,9 @@ def utc_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _folder(kind):
-    return ".controlcoding/" + TYPES[kind][2] + "_receipts"
+def _folder(kind, project=None):
+    logical = ".controlcoding/" + TYPES[kind][2] + "_receipts"
+    return managed_relative(project, logical) if project is not None else logical
 
 
 def _assessment(state, *reasons, current=False):
@@ -132,7 +134,7 @@ def validate_receipt(value, expected_type, *, entries=None, contracts=None):
             datetime.datetime.strptime(value[key], "%Y-%m-%dT%H:%M:%S.%fZ")
         if value["executionState"] not in {"running", "completed", "interrupted", "error"} or value["status"] not in STATES:
             raise ValueError
-        if value["project"] != "." or value["tempDir"] != ".controlcoding/" + TYPES[expected_type][2] + "_tmp/" + value["id"]:
+        if value["project"] != "." or value["tempDir"] not in {prefix + ".controlcoding/" + TYPES[expected_type][2] + "_tmp/" + value["id"] for prefix in ("", "cc/")}:
             raise ValueError
         plan = value["plan"]
         if not isinstance(plan, list) or not 0 < len(plan) <= 1000 or not _ids([r["id"] for r in plan]):
@@ -227,6 +229,7 @@ def validate_receipt(value, expected_type, *, entries=None, contracts=None):
             raise ValueError
         for descriptor in value["contracts"]:
             allowed = set(inputs.MANDATORY[:2]) | {".controlcoding/verification.json", ".claude/verification.json"}
+            allowed |= {"cc/" + name for name in allowed if not name.startswith(".claude/")}
             if descriptor["path"] not in allowed or (descriptor["sha256"] is not None and not HEX.fullmatch(descriptor["sha256"])):
                 raise ValueError
         if value["executionState"] == "running":
@@ -280,8 +283,8 @@ def execute(project, kind, entries, selected, required, requested, policy, contr
     key = TYPES[kind][1]
     created = utc_now()
     receipt_id = TYPES[kind][0] + "_" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_" + uuid.uuid4().hex
-    temp = ".controlcoding/" + TYPES[kind][2] + "_tmp/" + receipt_id
-    relative = _folder(kind) + "/" + receipt_id + ".json"
+    temp = managed_relative(project, ".controlcoding/" + TYPES[kind][2] + "_tmp/" + receipt_id)
+    relative = _folder(kind, project) + "/" + receipt_id + ".json"
     plan = make_plan(entries, required)
     receipt = {"schemaVersion": 2, "receiptType": kind, "id": receipt_id,
                "createdAt": created, "finishedAt": None, "executionState": "running", "status": "running",
@@ -295,7 +298,7 @@ def execute(project, kind, entries, selected, required, requested, policy, contr
     try:
         with inputs.SafeRoot(project) as root:
             # Check the output parent before any child can emit E3 JUnit reports.
-            with root.directory(_folder(kind), create=True):
+            with root.directory(_folder(kind, project), create=True):
                 pass
             with root.directory(temp, create=True, exclusive=True) as directory:
                 temp_identity = os.stat(directory) if os.name == "nt" else os.fstat(directory)
@@ -372,7 +375,7 @@ def summarize_attempts(project, kind, *, policy, contracts, entries, required, e
         with inputs.SafeRoot(project) as root:
             budget = inputs.Budget(total=32 * 1024 * 1024, per_file=2 * 1024 * 1024, entries=128)
             try:
-                listing = root.listing(_folder(kind), budget)
+                listing = root.listing(_folder(kind, project), budget)
             except FileNotFoundError:
                 return {"assessment": unknown, "latestReceipts": [], "latest": None}
             candidates = [(name, info) for name, info in listing if name.endswith(".json")]
@@ -383,13 +386,13 @@ def summarize_attempts(project, kind, *, policy, contracts, entries, required, e
                     raise inputs.EvidenceError("unsafe_receipt")
                 # Read failures invalidate the WHOLE history. Only fully read
                 # bytes may be classified/ordered as malformed or legacy JSON.
-                raw = root.read(_folder(kind) + "/" + name, budget)[0]
+                raw = root.read(_folder(kind, project) + "/" + name, budget)[0]
                 try:
                     value = json.loads(raw, object_pairs_hook=inputs._unique_object)
                     reasons = validate_receipt(value, kind, entries=entries, contracts=contracts)
                 except (ValueError, RecursionError, inputs.EvidenceError):
                     value, reasons = {}, ["receipt_invalid"]
-                summary = {"path": _folder(kind) + "/" + name,
+                summary = {"path": _folder(kind, project) + "/" + name,
                            "status": "unknown", "id": "", "createdAt": "", TYPES[kind][1]: [],
                            "_observedAt": info.st_mtime_ns}
                 state = "legacy" if reasons == ["legacy_receipt"] else "invalid"

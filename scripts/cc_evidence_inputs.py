@@ -22,6 +22,7 @@ import tempfile
 import time
 import uuid
 
+from cc_layout import is_contained, managed_relative, MARKER
 from cc_evidence_process import run_command
 
 POLICY_VERSION = 1
@@ -550,6 +551,7 @@ def input_policy(*contracts):
 
 def _walk(root, budget, *, engine=False):
     result = set()
+    contained = not engine and is_contained(root.path)
     pending = [""]
     while pending:
         directory = pending.pop()
@@ -557,7 +559,7 @@ def _walk(root, budget, *, engine=False):
             raise EvidenceError("depth_limit")
         for name, info in root.listing(directory, budget):
             path = directory + "/" + name if directory else name
-            if excluded(path):
+            if excluded(path) or (contained and path == "cc"):
                 continue
             if getattr(info, "st_file_attributes", 0) & 0x400 or stat.S_ISLNK(info.st_mode):
                 raise EvidenceError("unsafe_file_type")
@@ -586,6 +588,7 @@ def capture_inputs(project, policy, *, budget=None):
               "contentDigest": None, "fileCount": 0, "revision": None, "dirty": None}
     try:
         with SafeRoot(project) as root:
+            contained = is_contained(project)
             top = dict(root.listing("", budget))
             indexed, headed = {}, {}
             if ".git" in top:
@@ -631,14 +634,15 @@ def capture_inputs(project, policy, *, budget=None):
                             headed[os.fsdecode(name)] = [mode, oid]
                     untracked = {os.fsdecode(p) for p in _records(git(["ls-files", "--others", "--exclude-standard", "-z"]))}
                 paths = {p for p in set(indexed) | set(headed) if not excluded(p, tracked=True)}
-                paths.update(p for p in untracked if not excluded(p))
+                paths.update(p for p in untracked if not excluded(p) and not (contained and p.startswith("cc/")))
                 result.update(scopeKind="git", revision={"head": head, "objectFormat": fmt,
                               "indexDigest": digest(indexed)})
             else:
                 paths = _walk(root, budget)
                 untracked = set()
                 result.update(scopeKind="archive", revision={"notApplicable": True})
-            paths.update(MANDATORY)
+            paths.update(managed_relative(project, p) for p in MANDATORY if not (contained and p.startswith(".claude/")))
+            paths.add(MARKER)
             paths.update(policy["extraPaths"])
             if len(paths) > MAX_ENTRIES:
                 raise EvidenceError("entry_limit")
@@ -672,7 +676,7 @@ def capture_inputs(project, policy, *, budget=None):
             result.update(complete=True, contentDigest=hasher.hexdigest(), fileCount=len(paths),
                           dirty={"worktreeVsIndex": raw_dirty if indexed or result["scopeKind"] == "git" else None,
                                  "indexVsHead": indexed != headed if result["scopeKind"] == "git" else None,
-                                 "untrackedCount": len([p for p in untracked if not excluded(p)]), "deletedCount": deleted})
+                                 "untrackedCount": len([p for p in untracked if not excluded(p) and not (contained and p.startswith("cc/"))]), "deletedCount": deleted})
     except EvidenceError as exc:
         result["reasons"] = [exc.code]
     except (OSError, ValueError, TypeError, UnicodeError):
@@ -682,6 +686,7 @@ def capture_inputs(project, policy, *, budget=None):
 
 def read_contract(project, kind):
     names = ("controlcoding.verification.json", ".controlcoding/verification.json", ".claude/verification.json") if kind == "verification" else ("controlcoding.invariants.json",)
+    names = tuple(managed_relative(project, n) for n in names if not (is_contained(project) and n.startswith(".claude/")))
     with SafeRoot(project) as root:
         budget = Budget(per_file=2 * 1024 * 1024, total=4 * 1024 * 1024)
         for name in names:

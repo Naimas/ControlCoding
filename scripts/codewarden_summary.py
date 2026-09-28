@@ -18,6 +18,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from cc_layout import managed_path
+
 CANONICAL_STORE_FILENAME = ".controlcoding/codewarden_violations.jsonl"
 LEGACY_STORE_FILENAME = ".claude/codewarden_violations.jsonl"
 ESCALATE_WARN_TO_DENY = 3
@@ -29,8 +31,8 @@ def _format_label(value: str) -> str:
 
 
 def control_plane_store_path(project_root: Path) -> Path:
-    canonical = project_root / CANONICAL_STORE_FILENAME
-    legacy = project_root / LEGACY_STORE_FILENAME
+    canonical = managed_path(project_root, CANONICAL_STORE_FILENAME)
+    legacy = managed_path(project_root, LEGACY_STORE_FILENAME)
     if canonical.exists():
         return canonical
     if legacy.exists():

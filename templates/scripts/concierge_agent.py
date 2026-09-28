@@ -29,6 +29,14 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 from base_agent import (
     AgentStateBase, BaseAgent, BackendAdapter, ToolExecutor,
     ReportBuilder, ToolCall, ToolResult,
@@ -59,27 +67,33 @@ LEGACY_CONTEXT_FILENAME = "CLAUDE.md"
 
 
 def _control_plane_dir(project_root: Path) -> Path:
-    canonical = project_root / CONTROL_PLANE_DIR
+    canonical = managed_path(project_root, CONTROL_PLANE_DIR)
+    if is_contained(project_root):
+        return canonical
     if canonical.exists():
         return canonical
-    legacy = project_root / LEGACY_CONTROL_PLANE_DIR
+    legacy = managed_path(project_root, LEGACY_CONTROL_PLANE_DIR)
     if legacy.exists():
         return legacy
     return canonical
 
 
 def _control_plane_read_path(project_root: Path, *parts: str) -> Path:
-    canonical = project_root / CONTROL_PLANE_DIR / Path(*parts)
+    canonical = managed_path(project_root, CONTROL_PLANE_DIR, *parts)
+    if is_contained(project_root):
+        return canonical
     if canonical.exists():
         return canonical
-    legacy = project_root / LEGACY_CONTROL_PLANE_DIR / Path(*parts)
+    legacy = managed_path(project_root, LEGACY_CONTROL_PLANE_DIR, *parts)
     if legacy.exists():
         return legacy
     return canonical
 
 
 def _context_doc_path(project_root: Path) -> Path:
-    canonical = project_root / PRIMARY_CONTEXT_FILENAME
+    canonical = managed_path(project_root, PRIMARY_CONTEXT_FILENAME)
+    if is_contained(project_root):
+        return canonical
     if canonical.exists():
         return canonical
     legacy = project_root / LEGACY_CONTEXT_FILENAME
@@ -488,8 +502,7 @@ class ConciergeAgent(BaseAgent):
         """Load plan.current.json into state."""
         if not self._project_root:
             return
-        plan_path = (self._project_root / "devlog" / "plans"
-                     / "plan.current.json")
+        plan_path = managed_path(self._project_root, "devlog", "plans", "plan.current.json")
         if not plan_path.exists():
             return
         try:
@@ -502,8 +515,7 @@ class ConciergeAgent(BaseAgent):
         """Load criteria.json into state."""
         if not self._project_root:
             return
-        criteria_path = (self._project_root / "devlog" / "criteria"
-                         / "criteria.json")
+        criteria_path = managed_path(self._project_root, "devlog", "criteria", "criteria.json")
         if not criteria_path.exists():
             return
         try:

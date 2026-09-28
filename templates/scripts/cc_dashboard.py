@@ -14,20 +14,31 @@ Requirements:
 
 import argparse
 import json
+import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 import gradio as gr
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 # --- Data Loading ---
 
 
 def _control_plane_log_path(project_root: Path, filename: str) -> Path:
-    canonical = project_root / ".controlcoding" / filename
+    canonical = managed_path(project_root, ".controlcoding", filename)
+    if is_contained(project_root):
+        return canonical
     if canonical.exists():
         return canonical
-    legacy = project_root / ".claude" / filename
+    legacy = managed_path(project_root, ".claude", filename)
     if legacy.exists():
         return legacy
     return canonical
@@ -123,9 +134,9 @@ def render_bridge(bridge_dir: Path, filter_agent: str = "") -> str:
 
 
 def render_session(project_root: Path) -> tuple:
-    status = load_md(project_root / "STATUS.md")
+    status = load_md(managed_path(project_root, "STATUS.md"))
 
-    devlog_dir = project_root / "devlog"
+    devlog_dir = managed_path(project_root, "devlog")
     devlogs = ""
     if devlog_dir.exists():
         files = sorted(devlog_dir.glob("*.md"))[-5:]
@@ -136,7 +147,7 @@ def render_session(project_root: Path) -> tuple:
     else:
         devlogs = "*No devlog directory.*"
 
-    history = load_md(project_root / "STATUS_HISTORY.md")
+    history = load_md(managed_path(project_root, "STATUS_HISTORY.md"))
 
     return status, devlogs, history
 
@@ -355,7 +366,7 @@ def main():
     project_root = Path(args.project_root).resolve()
     bridge_dir = Path(args.bridge_dir)
     if not bridge_dir.is_absolute():
-        bridge_dir = project_root / bridge_dir
+        bridge_dir = managed_path(project_root, ".bridge") if args.bridge_dir == ".bridge" else project_root / bridge_dir
 
     print(f"[Dashboard] Project root: {project_root}")
     print(f"[Dashboard] Bridge dir: {bridge_dir}")

@@ -6,7 +6,34 @@ This module is copied to adopter projects by cc init alongside the hooks.
 """
 
 import os
+import sys
 from pathlib import Path
+
+try:
+    from cc_layout import LayoutError, is_contained, managed_path, managed_relative
+except ImportError:
+    # Source-checkout template execution (tests/manual inspection). Installed
+    # hooks receive cc_layout.py beside this file through cc init.
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    try:
+        from cc_layout import LayoutError, is_contained, managed_path, managed_relative
+    except ImportError:
+        # Compatibility for a manually copied legacy hook subset.  Full CC
+        # installations always distribute cc_layout.py beside hooks; this
+        # fallback intentionally cannot opt into containment.
+        class LayoutError(ValueError):
+            pass
+
+        def is_contained(_project):
+            return False
+
+        def managed_path(project, logical, *parts):
+            return Path(project).joinpath(logical, *parts)
+
+        def managed_relative(_project, logical):
+            return str(logical).replace("\\", "/")
 
 
 CONTROL_PLANE_DIRS = (".controlcoding", ".claude")
@@ -68,10 +95,16 @@ def find_project_root(start=None, *, env_var: str = ""):
     here = origin.parent if origin.is_file() else origin
 
     for candidate in [here, *here.parents[:5]]:
+        # Installed hooks live in <project>/cc/hooks.  Do this before looking
+        # for control-plane state: treating ``cc`` itself as a project would
+        # make managed_path() point at cc/.controlcoding and lose the marker.
+        if candidate.name == "cc":
+            if is_contained(candidate.parent):
+                return candidate.parent
         if (candidate / ".git").is_dir():
             return candidate
         for dirname in CONTROL_PLANE_DIRS:
-            control_dir = candidate / dirname
+            control_dir = managed_path(candidate, dirname)
             if (control_dir / "settings.json").exists() or (control_dir / "cc_config.json").exists():
                 return candidate
 
@@ -82,7 +115,7 @@ def control_plane_existing_path(project_root, relative_name: str):
     """Return the existing control-plane file, preferring canonical over legacy."""
     project_root = Path(project_root)
     for dirname in CONTROL_PLANE_DIRS:
-        candidate = project_root / dirname / relative_name
+        candidate = managed_path(project_root, dirname, relative_name)
         if candidate.exists():
             return candidate
     return None
@@ -96,8 +129,8 @@ def control_plane_write_path(project_root, relative_name: str):
     control-plane directory.
     """
     project_root = Path(project_root)
-    canonical_dir = project_root / CONTROL_PLANE_DIRS[0]
-    legacy_dir = project_root / CONTROL_PLANE_DIRS[1]
+    canonical_dir = managed_path(project_root, CONTROL_PLANE_DIRS[0])
+    legacy_dir = managed_path(project_root, CONTROL_PLANE_DIRS[1])
     if canonical_dir.exists() or not legacy_dir.exists():
         return canonical_dir / relative_name
     return legacy_dir / relative_name

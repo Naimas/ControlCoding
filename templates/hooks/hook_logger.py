@@ -17,6 +17,22 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        import sys
+        sys.path.insert(0, str(_scripts_dir))
+    try:
+        from cc_layout import is_contained, managed_path
+    except ImportError:
+        def is_contained(_project_root):
+            return False
+
+        def managed_path(project_root, logical, *parts):
+            return Path(project_root).joinpath(logical, *parts)
+
 LOG_FILENAME = "cc_hook_log.jsonl"
 
 
@@ -36,7 +52,9 @@ def log_event(
         target: file path or command that triggered the hook
         reason: reason for the block/warning (optional for ALLOW)
     """
-    log_path = Path(project_root) / LOG_FILENAME
+    root = Path(project_root)
+    log_path = (managed_path(root, ".controlcoding", LOG_FILENAME)
+                if is_contained(root) else root / LOG_FILENAME)
 
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),

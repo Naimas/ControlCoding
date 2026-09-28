@@ -7,6 +7,7 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
+from cc_layout import managed_path
 from typing import Any, Protocol
 
 from .scoring import DEFAULT_RETRIEVAL_SCORING
@@ -241,7 +242,7 @@ def _runtime_command_args(value: Any) -> list[str]:
 
 
 def _semantic_config_path(project: Path) -> Path:
-    return project / CONTROL_DIRNAME / MEMORY_DIRNAME / SEMANTIC_ADAPTER_CONFIG_FILENAME
+    return managed_path(project, CONTROL_DIRNAME, MEMORY_DIRNAME, SEMANTIC_ADAPTER_CONFIG_FILENAME)
 
 
 def _semantic_config(project: Path) -> dict[str, Any]:

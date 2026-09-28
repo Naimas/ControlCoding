@@ -120,8 +120,9 @@ def test_semantic_recall_graph_and_model_invalidation(project):
     assert result['mode'].startswith('neural')
     assert result['citations'][0]['path'] == 'docs/design.md'
     assert result['edges'][0]['kind'] == 'explicit_markdown_reference'
-    # A link remains visible as an edge, but does not make its unrelated text evidence.
-    assert 'README.md' not in {c['path'] for c in result['citations']}
+    # Original graph neighbors are candidates, with the traversal made explicit.
+    assert 'README.md' in {c['path'] for c in result['citations']}
+    assert any(item['signal'] == 'graph' for item in result['retrieval']['selected'])
     adapter.pin = lambda: 'test@different-model'
     result = service.query(project, 'passphrase', True, adapter)
     assert 'not_current' in result['warning']

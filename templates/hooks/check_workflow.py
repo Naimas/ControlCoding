@@ -39,9 +39,9 @@ from pathlib import Path
 
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from hook_utils import control_plane_path, find_project_root as _find_control_plane_root
+    from hook_utils import control_plane_path, find_project_root as _find_control_plane_root, managed_path
 except ImportError:
-    from templates.hooks.hook_utils import control_plane_path, find_project_root as _find_control_plane_root
+    from templates.hooks.hook_utils import control_plane_path, find_project_root as _find_control_plane_root, managed_path
 
 # A screenshot counts as "recent" if modified within this many minutes
 SCREENSHOT_RECENCY_MINUTES = 30
@@ -240,7 +240,7 @@ def check_visual_recently(project_root: Path) -> bool:
     SCREENSHOT_RECENCY_MINUTES. Old screenshots from previous sessions
     do not satisfy this check.
     """
-    screenshots_dir = project_root / "screenshots"
+    screenshots_dir = managed_path(project_root, "screenshots")
     if not screenshots_dir.exists():
         return False
     cutoff = time.time() - SCREENSHOT_RECENCY_MINUTES * 60
@@ -255,7 +255,7 @@ def check_visual_recently(project_root: Path) -> bool:
 
 def check_checkpoint_recent(project_root: Path) -> bool:
     """Check if devlog entries exist (evidence of checkpointing)."""
-    devlog_dir = project_root / "devlog"
+    devlog_dir = managed_path(project_root, "devlog")
     if not devlog_dir.exists():
         return False
     try:

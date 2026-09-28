@@ -8,6 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any
+from cc_layout import managed_relative
 
 from .ledger import _insert_event
 from .migrations import inspect_schema
@@ -493,7 +494,7 @@ def _session_packet_payload(
                 warnings.append(f"Session {session_id} has status {session.get('status')}.")
             if session.get("status") in {"superseded", "archived"}:
                 warnings.append(f"Session {session_id} is historical: {session.get('status')}.")
-        view_status = _session_view_status(conn)
+        view_status = _session_view_status(conn, project)
         if view_status.get("stale"):
             warnings.append("Session views are stale or missing. Run `cc memory session views`.")
         return {
@@ -646,7 +647,7 @@ def _session_view_contents(
     return contents
 
 
-def _session_view_status(conn: sqlite3.Connection) -> dict[str, Any]:
+def _session_view_status(conn: sqlite3.Connection, project: Path | None = None) -> dict[str, Any]:
     row = conn.execute(
         "SELECT MAX(updated_at) AS latest_updated_at, COUNT(*) AS count FROM session_records"
     ).fetchone()
@@ -673,7 +674,9 @@ def _session_view_status(conn: sqlite3.Connection) -> dict[str, Any]:
         "latestSessionUpdatedAt": latest_updated_at,
         "oldestGeneratedAt": oldest_generated_at,
         "stale": stale,
-        "paths": [f"{CONTROL_DIRNAME}/{VIEWS_DIRNAME}/{filename}" for filename in SESSION_VIEW_FILENAMES],
+        "paths": [managed_relative(project, f"{CONTROL_DIRNAME}/{VIEWS_DIRNAME}/{filename}")
+                  if project is not None else f"{CONTROL_DIRNAME}/{VIEWS_DIRNAME}/{filename}"
+                  for filename in SESSION_VIEW_FILENAMES],
     }
 
 
@@ -720,7 +723,7 @@ def session_status_payload(project: Path) -> dict[str, Any]:
             "activeCount": sum(1 for session in sessions if session.get("status") == "active"),
             "latestSession": sessions[0] if sessions else {},
             "openFollowups": open_followups,
-            "views": _session_view_status(conn),
+            "views": _session_view_status(conn, project),
         }
 
 
@@ -1162,7 +1165,7 @@ def cmd_memory_session_views(project: Path, json_output: bool = False) -> int:
             "sessionCount": source_counts["sessions"],
             "activeCount": source_counts["active"],
             "openFollowupCount": source_counts["openFollowups"],
-            "views": _session_view_status(conn),
+            "views": _session_view_status(conn, project),
         }
     if json_output:
         print(json.dumps(payload, indent=2))

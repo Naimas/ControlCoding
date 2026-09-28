@@ -1,5 +1,6 @@
 """Read-only bounded Project Map observations; see docs/project-map-sources.md."""
 
+from cc_layout import is_contained
 import ast
 from dataclasses import dataclass, fields
 from datetime import datetime
@@ -392,7 +393,7 @@ def observe_project_map(request, *, policy=None, expected_preview=None):
                     except MapSourceError:
                         proposal.finding("unsafe_name_omitted", "scope")
                         continue
-                    if _excluded(relative):
+                    if _excluded(relative) or (relative == "cc" and is_contained(root)):
                         proposal.finding("excluded_path", "scope")
                         continue
                     info = inventory.inspect(path)

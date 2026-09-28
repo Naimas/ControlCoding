@@ -15,17 +15,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from hook_utils import control_plane_path, find_project_root
+except ImportError:
+    from templates.hooks.hook_utils import control_plane_path, find_project_root
+
 CANONICAL_CONTROL_DIR = ".controlcoding"
 LEGACY_CONTROL_DIR = ".claude"
 OPS_LOG_FILENAME = "ops_log.jsonl"
 
 
 def control_plane_log_path(project_root: Path) -> Path:
-    canonical_dir = project_root / CANONICAL_CONTROL_DIR
-    legacy_dir = project_root / LEGACY_CONTROL_DIR
-    if canonical_dir.exists() or not legacy_dir.exists():
-        return canonical_dir / OPS_LOG_FILENAME
-    return legacy_dir / OPS_LOG_FILENAME
+    return control_plane_path(project_root, OPS_LOG_FILENAME)
 
 
 def append_log_entry(project_root: Path, entry: dict) -> None:
@@ -71,7 +72,7 @@ def main():
     }
 
     # Write to .controlcoding/ops_log.jsonl (legacy .claude fallback)
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = find_project_root(__file__)
 
     try:
         append_log_entry(project_root, entry)

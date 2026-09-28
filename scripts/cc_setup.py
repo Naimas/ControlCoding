@@ -21,6 +21,8 @@ from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
+from cc_layout import is_contained, managed_path, source_path
+
 from cc_memory_lib.runtime import core_runtime_error, memory_runtime_error
 
 # Import shared utilities and constants from cc.py
@@ -150,9 +152,15 @@ def _plan_pack_files(project: Path, pack_maps: list[dict]):
             relative = Path(dest_dir)
             if relative.is_absolute() or ".." in relative.parts:
                 raise OSError(f"unsafe pack destination: {dest_dir}")
-            for source in sources:
+            selected_sources = list(sources)
+            # Runtime helper scripts import the same pure resolver as hooks.
+            # Put a byte-identical local copy beside every installed tools pack.
+            if relative.as_posix().rstrip("/") == "tools":
+                selected_sources.append(SCRIPT_DIR / "cc_layout.py")
+                selected_sources.append(SCRIPTS_DIR / "control_plane_utils.py")
+            for source in selected_sources:
                 data = _pack_read_source(source)
-                target = project / relative / source.name
+                target = managed_path(project, relative, source.name)
                 if target in files:
                     if files[target]["data"] != data:
                         raise OSError(f"conflicting selected pack sources for {target}")
@@ -211,8 +219,8 @@ def _apply_pack_files(files: dict, *, ok_callback):
 
 
 def _plan_pack_settings(project: Path, packs: list[str], mcp_configs: dict):
-    target = project / CONTROL_PLANE_DIRNAME / "settings.json"
-    legacy = project / LEGACY_CONTROL_PLANE_DIRNAME / "settings.json"
+    target = _control_plane_path(project, "settings.json")
+    legacy = managed_path(project, LEGACY_CONTROL_PLANE_DIRNAME, "settings.json")
     _pack_check_parents(target)
     target_entry = _pack_safe_kind(target)
     read_path = target if target_entry is not None else legacy
@@ -233,7 +241,18 @@ def _plan_pack_settings(project: Path, packs: list[str], mcp_configs: dict):
             if not isinstance(servers, dict):
                 raise OSError(f"mcpServers must be a JSON object: {read_path}")
             for name, config in mcp_configs[pack].items():
-                servers.setdefault(name, deepcopy(config))
+                installed_config = deepcopy(config)
+                if is_contained(project):
+                    installed_config['args'] = [
+                        managed_path(project, arg).relative_to(Path(os.path.abspath(project))).as_posix()
+                        if isinstance(arg, str) and arg.startswith('tools/') else arg
+                        for arg in installed_config.get('args', [])
+                    ]
+                    if installed_config.get('env', {}).get('BRIDGE_DIR') == '.bridge':
+                        installed_config['env']['BRIDGE_DIR'] = 'cc/.bridge'
+                    if name in servers and servers[name] == config and config != installed_config:
+                        raise OSError(f'settings conflict at {target}: reconcile legacy MCP paths for {name}')
+                servers.setdefault(name, installed_config)
     if target_entry is not None and merged != settings:
         raise OSError(
             f"settings conflict at {target}: required MCP entries are missing; "
@@ -262,7 +281,11 @@ def _plan_pack_helper(project: Path, helper_dir: Path):
         for name in filenames:
             source = root / name
             files[source.relative_to(helper_dir)] = {"source": source, "data": _pack_read_source(source)}
-    destination = project.parent / (project.name + "-helper")
+    destination = (
+        managed_path(project, "helper-session")
+        if is_contained(project)
+        else project.parent / f"{project.name}-helper"
+    )
     _pack_check_parents(destination)
     existing = _pack_safe_kind(destination)
     if existing is not None:
@@ -276,7 +299,7 @@ def _plan_pack_install(project: Path, packs: list[str], pack_files: dict,
                        mcp_configs: dict, helper_dir: Path):
     files = _plan_pack_files(project, [pack_files.get(pack, {}) for pack in packs])
     settings = _plan_pack_settings(project, packs, mcp_configs)
-    bridge = project / ".bridge" if "multi-agent" in packs else None
+    bridge = managed_path(project, ".bridge") if "multi-agent" in packs else None
     if bridge is not None:
         _pack_check_parents(bridge)
         _pack_safe_kind(bridge, expected="dir")
@@ -942,6 +965,10 @@ def _scan_dirs(project: Path) -> list[str]:
         ".git", ".controlcoding", ".claude", ".vscode", ".idea", "node_modules", "__pycache__",
         ".pytest_cache", "venv", ".venv", "env", ".env", "dist", "build",
     }
+    if is_contained(project):
+        # The fixed CC namespace is runtime/control data, never application
+        # source material for setup boundary discovery.
+        skip.add("cc")
     source_roots = {"src", "app", "lib"}
     dirs: list[str] = []
     for entry in sorted(project.iterdir()):
@@ -2038,16 +2065,16 @@ def _kickoff_paths(project: Path, documentation_mode: str) -> dict:
     """Return the canonical kickoff document paths for the selected doc mode."""
     if documentation_mode == "managed":
         return {
-            "design": project / "dev" / "design" / "01_DSN_ProjectFoundation_InProgress.md",
-            "plan": project / "dev" / "plans" / "01_DEV_InitialImplementationPlan_Plan.md",
-            "design_index": project / "dev" / "design" / "INDEX.md",
-            "plans_index": project / "dev" / "plans" / "INDEX.md",
+            "design": managed_path(project, "dev/design/01_DSN_ProjectFoundation_InProgress.md"),
+            "plan": managed_path(project, "dev/plans/01_DEV_InitialImplementationPlan_Plan.md"),
+            "design_index": managed_path(project, "dev/design/INDEX.md"),
+            "plans_index": managed_path(project, "dev/plans/INDEX.md"),
             "design_label": "01_DSN_ProjectFoundation_InProgress.md",
             "plan_label": "01_DEV_InitialImplementationPlan_Plan.md",
         }
     return {
-        "design": project / "DESIGN.md",
-        "plan": project / "IMPLEMENTATION_PLAN.md",
+        "design": managed_path(project, "DESIGN.md"),
+        "plan": managed_path(project, "IMPLEMENTATION_PLAN.md"),
         "design_index": None,
         "plans_index": None,
         "design_label": "DESIGN.md",
@@ -2057,7 +2084,7 @@ def _kickoff_paths(project: Path, documentation_mode: str) -> dict:
 
 def _project_definition_paths(project: Path, documentation_mode: str) -> dict:
     if documentation_mode == "managed":
-        root = project / "dev" / "project-definition"
+        root = managed_path(project, "dev/project-definition")
         return {
             "index": root / "INDEX.md",
             "source_assessment": root / "01_DEF_SourceAssessment_InProgress.md",
@@ -2082,7 +2109,7 @@ def _project_definition_paths(project: Path, documentation_mode: str) -> dict:
             "manual_index_label": "manual-consultation/INDEX.md",
             "agent_index_label": "agent-specs/INDEX.md",
         }
-    root = project / "project-definition"
+    root = managed_path(project, "project-definition")
     return {
         "index": root / "INDEX.md",
         "source_assessment": root / "01_DEF_SourceAssessment.md",
@@ -2113,12 +2140,12 @@ def _criteria_paths(project: Path, documentation_mode: str) -> dict:
     """Return the canonical acceptance-criteria document paths."""
     if documentation_mode == "managed":
         return {
-            "criteria": project / "dev" / "criteria" / "01_ACC_FirstSliceAcceptance_Checklist.md",
-            "criteria_index": project / "dev" / "criteria" / "INDEX.md",
+            "criteria": managed_path(project, "dev/criteria/01_ACC_FirstSliceAcceptance_Checklist.md"),
+            "criteria_index": managed_path(project, "dev/criteria/INDEX.md"),
             "criteria_label": "01_ACC_FirstSliceAcceptance_Checklist.md",
         }
     return {
-        "criteria": project / "ACCEPTANCE_CRITERIA.md",
+        "criteria": managed_path(project, "ACCEPTANCE_CRITERIA.md"),
         "criteria_index": None,
         "criteria_label": "ACCEPTANCE_CRITERIA.md",
     }
@@ -2989,7 +3016,7 @@ def _project_relative_label(project: Path, path: Path) -> str:
 
 def _design_package_paths(project: Path, documentation_mode: str) -> dict:
     if documentation_mode == "managed":
-        root = project / "dev" / "design"
+        root = managed_path(project, "dev/design")
         return {
             "index": root / "INDEX.md",
             "overview": root / "02_DSN_SystemOverview_InProgress.md",
@@ -3002,7 +3029,7 @@ def _design_package_paths(project: Path, documentation_mode: str) -> dict:
             "mechanics_label": "04_DSN_CoreMechanics_InProgress.md",
             "subsystems_index_label": "subsystems/INDEX.md",
         }
-    root = project / "design"
+    root = managed_path(project, "design")
     return {
         "index": root / "INDEX.md",
         "overview": root / "00_DSN_SystemOverview.md",
@@ -3019,7 +3046,7 @@ def _design_package_paths(project: Path, documentation_mode: str) -> dict:
 
 def _implementation_package_paths(project: Path, documentation_mode: str) -> dict:
     if documentation_mode == "managed":
-        root = project / "dev" / "implementation"
+        root = managed_path(project, "dev/implementation")
         return {
             "index": root / "INDEX.md",
             "master": root / "00_IMP_MasterImplementationPlan_InProgress.md",
@@ -3031,7 +3058,7 @@ def _implementation_package_paths(project: Path, documentation_mode: str) -> dic
             "protection_label": "01_IMP_ProgressiveProtectionPlan_InProgress.md",
             "features_index_label": "features/INDEX.md",
         }
-    root = project / "implementation"
+    root = managed_path(project, "implementation")
     return {
         "index": root / "INDEX.md",
         "master": root / "00_IMP_MasterImplementationPlan.md",
@@ -3047,7 +3074,7 @@ def _implementation_package_paths(project: Path, documentation_mode: str) -> dic
 
 def _acceptance_package_paths(project: Path, documentation_mode: str) -> dict:
     if documentation_mode == "managed":
-        root = project / "dev" / "criteria"
+        root = managed_path(project, "dev/criteria")
         return {
             "index": root / "INDEX.md",
             "traceability": root / "02_ACC_RequirementsTraceability.md",
@@ -3058,7 +3085,7 @@ def _acceptance_package_paths(project: Path, documentation_mode: str) -> dict:
             "verification_label": "03_ACC_VerificationMatrix.md",
             "coverage_label": "04_ACC_CoverageLedger.md",
         }
-    root = project / "acceptance"
+    root = managed_path(project, "acceptance")
     return {
         "index": root / "INDEX.md",
         "traceability": root / "requirements_matrix.md",
@@ -3072,11 +3099,10 @@ def _acceptance_package_paths(project: Path, documentation_mode: str) -> dict:
 
 
 def _contracts_paths(project: Path, documentation_mode: str) -> dict:
-    root = project / ("dev" if documentation_mode == "managed" else "") / "contracts"
     if documentation_mode == "managed":
-        root = project / "dev" / "contracts"
+        root = managed_path(project, "dev/contracts")
     else:
-        root = project / "contracts"
+        root = managed_path(project, "contracts")
     return {
         "index": root / "INDEX.md",
         "requirements": root / "requirements.json",
@@ -3095,10 +3121,10 @@ def _contracts_paths(project: Path, documentation_mode: str) -> dict:
 
 def _subsystem_doc_records(project: Path, answers: dict, documentation_mode: str) -> list[dict]:
     if documentation_mode == "managed":
-        root = project / "dev" / "design" / "subsystems"
+        root = managed_path(project, "dev/design/subsystems")
         suffix = "_InProgress"
     else:
-        root = project / "design" / "subsystems"
+        root = managed_path(project, "design/subsystems")
         suffix = ""
 
     zone_labels = {
@@ -5692,7 +5718,7 @@ def _build_fitness_config_payload(project: Path,
 
 def _scaffold_fitness_config(project: Path, answers: dict, force_refresh: bool = False) -> tuple[bool, str]:
     """Create or upgrade a starter fitness.json when the current one is weak."""
-    config_path = project / "fitness.json"
+    config_path = managed_path(project, "fitness.json")
     existing = _load_json_object(config_path)
     if config_path.exists() and not force_refresh and not _minimal_or_missing_fitness_config(existing):
         return False, "fitness.json"
@@ -5866,8 +5892,8 @@ def _scaffold_kickoff_docs(project: Path, answers: dict) -> list[str]:
         (project_definition["consultation_plan"], consultation_plan_content),
         (paths["design"], design_content),
         (paths["plan"], plan_content),
-        (project / "ROADMAP.md", roadmap_content),
-        (project / "BUGS.md", bugs_content),
+        (managed_path(project, "ROADMAP.md"), roadmap_content),
+        (managed_path(project, "BUGS.md"), bugs_content),
         (criteria_paths["criteria"], acceptance_content),
         (design_package["overview"], system_overview_content),
         (design_package["architecture"], architecture_content),
@@ -6122,8 +6148,8 @@ def _scaffold_kickoff_docs(project: Path, answers: dict) -> list[str]:
     handoff_rows: list[tuple[str, str]] = []
     if planning.get("tier") == "core" or planning.get("manual_consultation_allowed"):
         if answers.get("documentation_mode", "managed") == "managed":
-            handoff_path = project / "dev" / "handoffs" / "01_HOF_PlanningConsultationPacket_Template.md"
-            handoff_index_path = project / "dev" / "handoffs" / "INDEX.md"
+            handoff_path = managed_path(project, "dev/handoffs/01_HOF_PlanningConsultationPacket_Template.md")
+            handoff_index_path = managed_path(project, "dev/handoffs/INDEX.md")
             packet_label = "01_HOF_PlanningConsultationPacket_Template.md"
             wrote, label = _write_kickoff_file(
                 project,
@@ -6145,7 +6171,7 @@ def _scaffold_kickoff_docs(project: Path, answers: dict) -> list[str]:
         else:
             wrote, label = _write_kickoff_file(
                 project,
-                project / "PLANNING_CONSULTATION_PACKET.md",
+                managed_path(project, "PLANNING_CONSULTATION_PACKET.md"),
                 _render_manual_consultation_packet(
                     answers,
                     paths["design_label"],
@@ -6162,8 +6188,8 @@ def _scaffold_kickoff_docs(project: Path, answers: dict) -> list[str]:
 
     if planning.get("planning_mode") == "orchestrated_specialists":
         if answers.get("documentation_mode", "managed") == "managed":
-            specialist_path = project / "dev" / "handoffs" / "02_HOF_SpecialistPlanningRefinementPacket_Template.md"
-            handoff_index_path = project / "dev" / "handoffs" / "INDEX.md"
+            specialist_path = managed_path(project, "dev/handoffs/02_HOF_SpecialistPlanningRefinementPacket_Template.md")
+            handoff_index_path = managed_path(project, "dev/handoffs/INDEX.md")
             specialist_label = "02_HOF_SpecialistPlanningRefinementPacket_Template.md"
             wrote, label = _write_kickoff_file(
                 project,
@@ -6185,7 +6211,7 @@ def _scaffold_kickoff_docs(project: Path, answers: dict) -> list[str]:
         else:
             wrote, label = _write_kickoff_file(
                 project,
-                project / "SPECIALIST_PLANNING_REFINEMENT_PACKET.md",
+                managed_path(project, "SPECIALIST_PLANNING_REFINEMENT_PACKET.md"),
                 _render_specialist_refinement_packet(
                     answers,
                     paths["design_label"],
@@ -6201,7 +6227,7 @@ def _scaffold_kickoff_docs(project: Path, answers: dict) -> list[str]:
                 info(f"Keeping existing {label}")
 
     if handoff_rows and answers.get("documentation_mode", "managed") == "managed":
-        handoff_index_path = project / "dev" / "handoffs" / "INDEX.md"
+        handoff_index_path = managed_path(project, "dev/handoffs/INDEX.md")
         wrote, label = _write_kickoff_file(
             project,
             handoff_index_path,
@@ -6345,7 +6371,7 @@ def _generate_context_source(project: Path, answers: dict) -> bool:
     content = _render_context_content(answers, CANONICAL_CONTEXT_FILENAME)
     if content is None:
         return False
-    context_source = project / CANONICAL_CONTEXT_FILENAME
+    context_source = managed_path(project, CANONICAL_CONTEXT_FILENAME)
     context_source.write_text(content, encoding="utf-8")
     return True
 
@@ -6942,7 +6968,7 @@ def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bo
         )
 
     # Check if already initialized
-    if ((project / CANONICAL_CONTEXT_FILENAME).exists() or (project / LEGACY_CONTEXT_FILENAME).exists()) and _control_plane_read_path(project, "settings.json").exists():
+    if (managed_path(project, CANONICAL_CONTEXT_FILENAME).exists() or managed_path(project, LEGACY_CONTEXT_FILENAME).exists()) and _control_plane_read_path(project, "settings.json").exists():
         if not _ask_yn_or_default("ControlCoding already initialized. Re-run setup?", default=apply_answers, apply_answers=apply_answers):
             return 0
 
@@ -7264,7 +7290,7 @@ def cmd_setup(project: Path, answers_file: Path | None = None, apply_answers: bo
     # Generate the non-adapter canonical context source in its preexisting order.
     existing_context_files = [
         path.name
-        for path in (project / CANONICAL_CONTEXT_FILENAME, project / LEGACY_CONTEXT_FILENAME)
+        for path in (managed_path(project, CANONICAL_CONTEXT_FILENAME), managed_path(project, LEGACY_CONTEXT_FILENAME))
         if path.exists()
     ]
     if existing_context_files:
@@ -7448,7 +7474,7 @@ def cmd_setup_project(project: Path, answers_file: Path | None = None, apply_ans
     print(f"{'='*50}")
     print(f"\n  Project directory: {project}\n")
 
-    if not ((project / CANONICAL_CONTEXT_FILENAME).exists() or (project / LEGACY_CONTEXT_FILENAME).exists()):
+    if not (managed_path(project, CANONICAL_CONTEXT_FILENAME).exists() or managed_path(project, LEGACY_CONTEXT_FILENAME).exists()):
         warn("ControlCoding is not installed in this project yet. Run `cc setup --project-root .` first.")
         return 1
 

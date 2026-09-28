@@ -5,7 +5,7 @@ from .knowledge_store import database, get, put, KnowledgeError, now
 from .knowledge_sources import digest
 
 KEY = 'work_relations_v1'
-KINDS = ('part_of', 'depends_on', 'blocks', 'decides', 'evidences', 'conflicts')
+KINDS = ('part_of', 'depends_on', 'blocks', 'decides', 'evidences', 'conflicts', 'supersedes')
 ROLES = ('objective', 'phase', 'activity', 'blocker', 'decision', 'evidence', 'document')
 
 
@@ -16,7 +16,8 @@ def require(value, code='invalid_work_relation'):
 
 def snapshot(db):
     return digest(json.dumps([get(db, 'generation', 0), get(db, 'needs_reconcile', True),
-                             get(db, KEY, [])], sort_keys=True))
+                             get(db, KEY, []), get(db, 'wiki_tools:findings:v1', []),
+                             get(db, 'wiki_review:epoch:v1', 0)], sort_keys=True))
 
 
 def read_db(db, root):

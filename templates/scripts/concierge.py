@@ -43,6 +43,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -85,33 +93,46 @@ CRITICAL VERIFICATION RULES:
 
 
 def _control_plane_dir(project_root: Path) -> Path:
-    canonical = project_root / CONTROL_PLANE_DIR
+    canonical = managed_path(project_root, CONTROL_PLANE_DIR)
+    if is_contained(project_root):
+        return canonical
     if canonical.exists():
         return canonical
-    legacy = project_root / LEGACY_CONTROL_PLANE_DIR
+    legacy = managed_path(project_root, LEGACY_CONTROL_PLANE_DIR)
     if legacy.exists():
         return legacy
     return canonical
 
 
 def _control_plane_read_path(project_root: Path, *parts: str) -> Path:
-    canonical = project_root / CONTROL_PLANE_DIR / Path(*parts)
+    canonical = managed_path(project_root, CONTROL_PLANE_DIR, *parts)
+    if is_contained(project_root):
+        return canonical
     if canonical.exists():
         return canonical
-    legacy = project_root / LEGACY_CONTROL_PLANE_DIR / Path(*parts)
+    legacy = managed_path(project_root, LEGACY_CONTROL_PLANE_DIR, *parts)
     if legacy.exists():
         return legacy
     return canonical
 
 
 def _context_doc_path(project_root: Path) -> Path:
-    canonical = project_root / PRIMARY_CONTEXT_FILENAME
+    canonical = managed_path(project_root, PRIMARY_CONTEXT_FILENAME)
+    if is_contained(project_root):
+        return canonical
     if canonical.exists():
         return canonical
     legacy = project_root / LEGACY_CONTEXT_FILENAME
     if legacy.exists():
         return legacy
     return canonical
+
+
+def _default_visual_output_dir(project_root: Path) -> str:
+    """Return the implicit visual-artifact directory for this project."""
+    if is_contained(project_root):
+        return str(managed_path(project_root, "screenshots"))
+    return "screenshots"
 
 
 def _context_doc_label(project_root: Path) -> str:
@@ -277,7 +298,7 @@ class ProjectContext:
 
     def read_plan(self) -> dict | None:
         """Read current plan."""
-        p = self.root / "devlog" / "plans" / "plan.current.json"
+        p = managed_path(self.root, "devlog", "plans", "plan.current.json")
         if not p.exists():
             return None
         try:
@@ -287,7 +308,7 @@ class ProjectContext:
 
     def read_criteria(self) -> list[dict]:
         """Read verification criteria."""
-        p = self.root / "devlog" / "criteria" / "criteria.json"
+        p = managed_path(self.root, "devlog", "criteria", "criteria.json")
         if not p.exists():
             return []
         try:
@@ -344,7 +365,7 @@ class ProjectContext:
                 specs.append(f"--- {name} ---\n{text}")
         # Also check devlog/
         for name in ("spec.md", "design.md"):
-            p = self.root / "devlog" / name
+            p = managed_path(self.root, "devlog", name)
             if p.exists():
                 text = p.read_text(encoding="utf-8")
                 if len(text) > 5000:
@@ -563,7 +584,7 @@ class AgentCaller:
 
     def __init__(self, project_root: Path):
         self.root = project_root
-        self.tools_dir = project_root / "tools"
+        self.tools_dir = managed_path(project_root, "tools")
 
     def _find_python(self) -> str:
         """Find Python executable."""
@@ -835,7 +856,7 @@ class AgentCaller:
             return f"[ERROR] Coder failed: {e}"
 
     def call_visual_test(self, exe_path: str, actions: str,
-                         output_dir: str = "screenshots",
+                         output_dir: str | None = None,
                          build_cmd: str = "",
                          actions_file: str = "") -> str:
         """Run visual_test.py for interactive functional testing.
@@ -843,6 +864,7 @@ class AgentCaller:
         Uses visual_test.py (not visual_check.py) for full input
         simulation with keyboard/mouse, multi-screenshot capture.
         """
+        output_dir = output_dir if output_dir is not None else _default_visual_output_dir(self.root)
         cmd = [
             self._find_python(),
             str(self.tools_dir / "visual_test.py"),
@@ -987,7 +1009,7 @@ def parse_review_json(raw: str) -> dict:
 def log_event(project_root: Path, event_type: str, details: dict):
     """Log an event to the control plane."""
     try:
-        sys.path.insert(0, str(project_root / "tools"))
+        sys.path.insert(0, str(managed_path(project_root, "tools")))
         from control_plane_utils import append_event, generate_id, utc_now_iso
 
         event_log = str(_control_plane_dir(project_root) / "event_log.jsonl")
@@ -1082,7 +1104,7 @@ class Concierge:
                    "budget_policy": {"max_calls": 0,
                                      "exhaustion_behavior": "degrade"}}
         try:
-            tools_dir = self.root / "tools"
+            tools_dir = managed_path(self.root, "tools")
             if str(tools_dir) not in sys.path:
                 sys.path.insert(0, str(tools_dir))
             from control_plane_utils import load_engagement
@@ -1399,7 +1421,7 @@ class Concierge:
         Idempotent - safe to call multiple times for the same phase.
         """
         try:
-            criteria_path = self.root / "devlog" / "criteria" / "criteria.json"
+            criteria_path = managed_path(self.root, "devlog", "criteria", "criteria.json")
             if not criteria_path.exists():
                 return
 
@@ -1986,7 +2008,7 @@ class Concierge:
         enriched = "\n\n".join(enriched_parts)
 
         # Save as design doc (NEVER summarize - full content)
-        design_dir = self.root / "devlog" / "design"
+        design_dir = managed_path(self.root, "devlog", "design")
         design_dir.mkdir(parents=True, exist_ok=True)
         design_path = design_dir / "design-workshop-output.md"
         design_path.write_text(
@@ -2044,7 +2066,7 @@ class Concierge:
                 existing += f"\n\nGap clarifications:\n{answers}"
 
         # Save enriched spec
-        design_dir = self.root / "devlog" / "design"
+        design_dir = managed_path(self.root, "devlog", "design")
         design_dir.mkdir(parents=True, exist_ok=True)
         (design_dir / "design-workshop-output.md").write_text(
             f"# Design Workshop Output (Expanded)\n\n{existing}\n",
@@ -2087,11 +2109,11 @@ class Concierge:
             if not self.ctx.has_criteria():
                 self.log("Exporting plan to criteria...")
                 try:
-                    sys.path.insert(0, str(self.root / "tools"))
+                    sys.path.insert(0, str(managed_path(self.root, "tools")))
                     from verification_agent import import_plan
                     import_plan(
-                        str(self.root / "devlog" / "plans" / "plan.current.json"),
-                        criteria_path=str(self.root / "devlog" / "criteria" / "criteria.json"),
+                        str(managed_path(self.root, "devlog", "plans", "plan.current.json")),
+                        criteria_path=str(managed_path(self.root, "devlog", "criteria", "criteria.json")),
                         event_log=str(_control_plane_dir(self.root) / "event_log.jsonl"),
                     )
                 except Exception as e:
@@ -2266,7 +2288,7 @@ class Concierge:
 
         build_cmd = self.ctx.get_build_cmd()
         exe_path = self.ctx.get_exe_path()
-        output_dir = str(self.root / "screenshots")
+        output_dir = _default_visual_output_dir(self.root)
 
         # Build first
         self.log(f"Building: {build_cmd}")
@@ -2282,7 +2304,7 @@ class Concierge:
 
         # Check for phase-specific actions file
         actions_file = str(
-            self.root / "devlog" / f"test_actions_phase_{phase + 1}.json"
+            managed_path(self.root, "devlog", f"test_actions_phase_{phase + 1}.json")
         )
         if not Path(actions_file).exists():
             actions_file = ""
@@ -2305,7 +2327,7 @@ class Concierge:
         else:
             # Fallback to visual_check.py
             screenshot_path = str(
-                self.root / "screenshots" / f"phase_{phase + 1}.png"
+                managed_path(self.root, "screenshots", f"phase_{phase + 1}.png")
             )
             result = self.agents.call_visual_check(
                 exe_path, screenshot_path, build_cmd
@@ -2319,7 +2341,7 @@ class Concierge:
     def handle_reviewing(self):
         """Reviewer produces structured JSON output (PASS/FAIL per criterion)."""
         phase = self.state.current_phase
-        screenshot_dir = self.root / "screenshots"
+        screenshot_dir = managed_path(self.root, "screenshots")
 
         # Find screenshots for this phase
         screenshots = sorted(screenshot_dir.glob(f"phase_{phase + 1}*.png"))
@@ -2424,7 +2446,7 @@ class Concierge:
             if Path(exe_path).exists() and self._is_active("consultant"):
                 self.log("No screenshots - capturing one for review...")
                 screenshot_path = str(
-                    self.root / "screenshots" / f"phase_{phase + 1}_auto.png"
+                    managed_path(self.root, "screenshots", f"phase_{phase + 1}_auto.png")
                 )
                 self.agents.call_visual_check(
                     exe_path, screenshot_path,
@@ -2510,8 +2532,7 @@ class Concierge:
             self.log(f"Debug attempt {self.state.debug_attempts}...")
 
             screenshot = (
-                self.root / "screenshots"
-                / f"phase_{self.state.current_phase + 1}.png"
+                managed_path(self.root, "screenshots", f"phase_{self.state.current_phase + 1}.png")
             )
             img = str(screenshot) if screenshot.exists() else ""
 
@@ -2556,7 +2577,7 @@ class Concierge:
             return
 
         # Final screenshot + structured review
-        screenshot = self.root / "screenshots" / "final.png"
+        screenshot = managed_path(self.root, "screenshots", "final.png")
         exe_path = self.ctx.get_exe_path()
         self.agents.call_visual_check(exe_path, str(screenshot))
 

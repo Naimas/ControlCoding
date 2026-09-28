@@ -77,6 +77,11 @@ then configure the source scope and optional AI roles. See the
 The complete desktop source and tests are supplied in a separate archive.
 Core remains usable independently, and its source ZIP does not include the UI.
 
+For newer development changes, use the [desktop/source branch](https://github.com/Naimas/ControlCoding/tree/desktop/source)
+and the exact Core commit named in its README. It includes
+[graph-guided retrieval and reviewed wiki workflows](docs/graph-wiki.md);
+these source changes do not update the downloadable desktop preview.
+
 The local development UI brings project structure, code-unit inspection and
 delivery evidence into one workspace. This screenshot shows the actual panel
 observing the ControlCoding source tree, with file details selected in the grid.
@@ -500,6 +505,16 @@ write. See the hooks reference for malformed-input and repository-gate limits.
 ## Quick Start
 
 Primary install guide: [Install ControlCoding On Your Project](docs/install-controlcoding-on-your-project.md)
+
+For minimal project footprint, use [contained storage](docs/contained-storage.md)
+to keep CC-owned configuration, documents, helpers and memory in `cc/`. Existing
+installations retain their layout until an explicit, backed-up migration. Host
+adapters and Git integration remain declared exceptions.
+
+An experimental [external read-only mode](docs/external-mode.md) is retained in
+the development source but is currently deferred and hidden from the ordinary
+desktop welcome screen. It is not enabled by project adoption or included in
+the previously published desktop preview.
 
 If you just downloaded ControlCoding and want to apply it to **your own project**, the normal path is:
 

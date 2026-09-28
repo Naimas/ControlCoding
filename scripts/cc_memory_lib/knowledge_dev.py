@@ -3,13 +3,13 @@ import json
 from pathlib import Path
 from .knowledge_sources import digest
 from .knowledge_store import KnowledgeError
-from .store import _readonly_memory_connection
+from .store import _db_path, _readonly_memory_connection
 
 
 def capture_dev(root):
     from .knowledge_work_controls import capture as capture_controls
     control_sources, control_edges = capture_controls(root)
-    path = Path(root) / '.controlcoding/memory/memory.db'
+    path = _db_path(Path(root))
     if not path.exists() and not path.is_symlink():
         return control_sources, control_edges
     with _readonly_memory_connection(Path(root)) as db:

@@ -27,9 +27,13 @@ import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+try:
+    from hook_utils import control_plane_path
+except ImportError:
+    from templates.hooks.hook_utils import control_plane_path
+
 # Store location relative to project root
-STORE_FILENAME = ".controlcoding/codewarden_violations.jsonl"
-LEGACY_STORE_FILENAME = ".claude/codewarden_violations.jsonl"
+STORE_FILENAME = "codewarden_violations.jsonl"
 
 # How far back to look for violation history
 HISTORY_DAYS = 30
@@ -59,17 +63,7 @@ CW_ARCHITECTURE_TAGS = {
 
 def _store_path(project_root: Path) -> Path:
     """Return the full path to the violation store."""
-    canonical = project_root / STORE_FILENAME
-    legacy = project_root / LEGACY_STORE_FILENAME
-    if canonical.exists():
-        return canonical
-    if legacy.exists():
-        return legacy
-    if canonical.parent.exists():
-        return canonical
-    if legacy.parent.exists():
-        return legacy
-    return canonical
+    return control_plane_path(project_root, STORE_FILENAME)
 
 
 def record_violation(

@@ -11,6 +11,13 @@ derived, and how the layers should interact.
 
 No image or external link is required to understand this schema.
 
+The locations below use the legacy layout's logical names. With a validated
+`cc/layout.json`, managed Dev and Work storage is physically below `cc/` while
+project identity and application source paths stay unchanged. Knowledge records
+retain source IDs where an unambiguous move is reconciled and expose physical
+locators separately. See [contained storage](contained-storage.md) for the
+ownership contract and explicit migration procedure.
+
 ## Evidence Anchors
 
 This schema is grounded in shipped repository files and public contracts:

@@ -8,6 +8,7 @@ No web support - AI uses Playwright directly. Inline --actions + --actions-file.
 
 import argparse
 import json
+import os
 import sys
 import time
 import warnings
@@ -19,6 +20,14 @@ from visual_check_utils import (
     write_json_report, kill_process, run_build,
     launch_process, focus_window, check_platform_warnings,
 )
+
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
 
 try:
     import pyautogui
@@ -38,6 +47,16 @@ KNOWN_ACTIONS = {
     "mouse_move", "mouse_move_relative", "left_click_drag",
     "scroll", "focus", "compare", "output_test", "http_test", "file_test",
 }
+
+
+def _default_output_dir(value: str | None) -> str:
+    """Route only an omitted built-in screenshot directory into cc/."""
+    if value is not None:
+        return value
+    project = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+    if is_contained(project):
+        return str(managed_path(project, DEFAULT_OUTPUT_DIR))
+    return DEFAULT_OUTPUT_DIR
 
 def _r(action, param, msg, ok=True, **kw):
     d = {"action": action, "param": param, "result": msg, "success": ok}
@@ -258,12 +277,13 @@ def main():
     aa = pa.add_argument
     aa("--exe", required=True); aa("--build-cmd", default=None)
     aa("--actions", default=None); aa("--actions-file", default=None)
-    aa("--output-dir", default=DEFAULT_OUTPUT_DIR)
+    aa("--output-dir", default=None)
     aa("--delay", type=float, default=3.0); aa("--kill-existing", default=None)
     aa("--window-title", default=None); aa("--json", action="store_true")
     aa("--auto-screenshot-after-action", action="store_true")
     aa("--timeout", type=float, default=DEFAULT_TIMEOUT)
     args = pa.parse_args()
+    args.output_dir = _default_output_dir(args.output_dir)
 
     if not _HAS_PYAUTOGUI:
         print("[L2+] ERROR: pyautogui not installed. Run: pip install pyautogui")

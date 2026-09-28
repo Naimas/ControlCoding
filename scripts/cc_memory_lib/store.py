@@ -47,6 +47,7 @@ from .schema import (
     REQUIRED_LOGS,
     VIEWS_DIRNAME,
 )
+from cc_layout import LayoutError, managed_path, logical_relative
 
 SQLITE_CONNECT_TIMEOUT_SECONDS = 30.0
 SQLITE_BUSY_TIMEOUT_MS = 30000
@@ -224,7 +225,7 @@ def _today_yyyymmdd() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d")
 
 def _control_dir(project: Path) -> Path:
-    return project / CONTROL_DIRNAME
+    return managed_path(project, CONTROL_DIRNAME)
 
 def _memory_dir(project: Path) -> Path:
     return _control_dir(project) / MEMORY_DIRNAME
@@ -2083,7 +2084,7 @@ def _connect(project: Path) -> sqlite3.Connection:
         raise
 
 
-def _connect_readonly_db(db_path: Path) -> sqlite3.Connection:
+def _connect_readonly_db(db_path: Path, project_root: Path | None = None) -> sqlite3.Connection:
     """Return a filesystem-inert SQLite snapshot of the canonical memory DB.
 
     SQLite read-only connections may still create WAL or shared-memory files.
@@ -2094,15 +2095,24 @@ def _connect_readonly_db(db_path: Path) -> sqlite3.Connection:
     from .freshness_projection import writer_lock_path
 
     database = Path(os.path.abspath(db_path))
-    if (
-        database.name != DB_FILENAME
-        or database.parent.name != MEMORY_DIRNAME
-        or database.parent.parent.name != CONTROL_DIRNAME
-    ):
+    if project_root is not None:
+        expected = Path(os.path.abspath(_db_path(Path(project_root))))
+        valid_path = database == expected
+        project = Path(os.path.abspath(project_root))
+    else:
+        # Compatibility for internal callers which provide the canonical path.
+        # The parent directory check is deliberately insufficient in contained
+        # mode, so project-facing code must pass its project root.
+        valid_path = (
+            database.name == DB_FILENAME
+            and database.parent.name == MEMORY_DIRNAME
+            and database.parent.parent.name == CONTROL_DIRNAME
+        )
+        project = database.parent.parent.parent
+    if not valid_path:
         raise sqlite3.OperationalError(
             f"read-only memory database path is not canonical: {database}"
         )
-    project = database.parent.parent.parent
     sidecars = (
         Path(f"{database}-wal"),
         Path(f"{database}-shm"),
@@ -2209,7 +2219,7 @@ def _connect_readonly_db(db_path: Path) -> sqlite3.Connection:
 
 @contextmanager
 def _readonly_memory_connection(project: Path):
-    conn = _connect_readonly_db(_db_path(project))
+    conn = _connect_readonly_db(_db_path(project), project)
     primary_error: BaseException | None = None
     try:
         yield conn
@@ -2730,7 +2740,8 @@ def _relative_path(project: Path, path_value: str | Path) -> str:
     path = Path(path_value)
     if path.is_absolute():
         try:
-            return path.resolve().relative_to(project.resolve()).as_posix()
+            relative = path.resolve().relative_to(project.resolve()).as_posix()
+            return logical_relative(project, relative)
         except ValueError:
             return path.as_posix()
     return path.as_posix()

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
+from cc_layout import is_contained, managed_path, managed_relative
 
 from .extractors import docx_text_extract, pdf_text_extract, xlsx_text_extract
 from .work_review_queue import ReviewQueueError, mutate_file_index, mutate_scan_record, refresh_scan_index, run_scan_review
@@ -44,6 +45,19 @@ OCR_ADAPTER_CONFIG_PATH = Path(".controlwork") / "ocr-adapters.json"
 GRAPH_SUGGESTIONS_PATH = Path(".controlwork") / "graph-suggestions.json"
 WIKI_ROOT = Path("wiki")
 PROJECT_UNDERSTANDING_PATH = INGESTION_ROOT / "project-understanding.json"
+
+
+def _work_path(project: Path, relative: str | Path) -> Path:
+    """Resolve an explicit Work-owned logical path for embedded or standalone use."""
+    return managed_path(project, Path(relative).as_posix())
+
+
+def project_base_path(project: Path, relative: str | Path) -> Path:
+    """Resolve the default generated Work document without claiming user docs."""
+    label = Path(relative).as_posix()
+    if label == PROJECT_BASE_DOCUMENT_FILENAME and is_contained(project):
+        return managed_path(project, label)
+    return project / label
 SCAN_SCHEMA_VERSION = "controlwork-file-index/v1"
 SCAN_ANALYSIS_SCHEMA_VERSION = "controlwork-scan-analysis/v1"
 PROJECT_UNDERSTANDING_SCHEMA_VERSION = "controlwork-project-understanding/v1"
@@ -353,10 +367,10 @@ def is_controlwork_readable_path(project: Path, target: Path) -> bool:
         relative = resolved.relative_to(root)
     except ValueError:
         return False
-    if relative in CONTROLWORK_READABLE_FILES:
+    if relative in {project_base_path(root, item).relative_to(root) for item in CONTROLWORK_READABLE_FILES}:
         return True
     for allowed_root in CONTROLWORK_READABLE_ROOTS:
-        base = (root / allowed_root).resolve()
+        base = _work_path(root, allowed_root).resolve()
         if resolved == base or is_inside(base, resolved):
             return True
     return False
@@ -367,7 +381,16 @@ def controlwork_read_entry_payload(project: Path, entry_path: str) -> dict:
     root = project.resolve()
     raw_path = str(entry_path or "").strip()
     target_path = Path(raw_path).expanduser()
-    target = target_path.resolve() if target_path.is_absolute() else (root / target_path).resolve()
+    if target_path.is_absolute():
+        target = target_path.resolve()
+    else:
+        label = target_path.as_posix()
+        if label in ("CONTROLWORK.md", "PROJECT.md"):
+            target = project_base_path(root, label).resolve() if label == "PROJECT.md" else _work_path(root, label).resolve()
+        elif label.split("/", 1)[0] in {str(item).split("/", 1)[0] for item in CONTROLWORK_READABLE_ROOTS}:
+            target = _work_path(root, target_path).resolve()
+        else:
+            target = (root / target_path).resolve()
     if (
         not raw_path
         or not is_controlwork_readable_path(root, target)
@@ -424,13 +447,13 @@ def _default_registry(now: str | None = None) -> dict:
 def ensure_feature_layout(project: Path) -> list[str]:
     written: list[str] = []
     for folder in (CHECKPOINT_ROOT, PROPOSAL_ROOT, CONTEXT_PACKET_ROOT, SESSION_ROOT, INGESTION_ROOT, EXTRACTS_ROOT):
-        target = project / folder
+        target = _work_path(project, folder)
         target.mkdir(parents=True, exist_ok=True)
         keep = target / ".gitkeep"
         if not keep.exists():
             keep.write_text("", encoding="utf-8")
             written.append(rel(project, keep))
-    categories = project / CATEGORY_PATH
+    categories = _work_path(project, CATEGORY_PATH)
     if not categories.exists():
         write_json(categories, _default_registry())
         written.append(rel(project, categories))
@@ -440,7 +463,7 @@ def ensure_feature_layout(project: Path) -> list[str]:
 
 
 def ensure_category_registry(project: Path) -> dict:
-    path = project / CATEGORY_PATH
+    path = _work_path(project, CATEGORY_PATH)
     registry = read_json(path)
     if not registry.get("categories"):
         registry = _default_registry()
@@ -468,7 +491,7 @@ def ensure_category_registry(project: Path) -> dict:
 
 
 def read_category_registry(project: Path) -> dict:
-    registry = read_json(project / CATEGORY_PATH)
+    registry = read_json(_work_path(project, CATEGORY_PATH))
     if registry.get("categories"):
         return registry
     return _default_registry()
@@ -489,7 +512,7 @@ def validate_category(project: Path, category: str) -> str:
 def feature_status_payload(project: Path) -> dict:
     """Expose category facts through the shared read-only uncertainty adapter."""
     from .freshness_projection import category_feature_status_payload
-    return category_feature_status_payload(project / CATEGORY_PATH, project / CONTEXT_PACKET_ROOT, project / WIKI_ROOT, CAPTURE_AREAS)
+    return category_feature_status_payload(_work_path(project, CATEGORY_PATH), _work_path(project, CONTEXT_PACKET_ROOT), _work_path(project, WIKI_ROOT), CAPTURE_AREAS)
 
 
 def metadata_value(lines: list[str], key: str) -> str:
@@ -534,7 +557,7 @@ def iter_entries(project: Path, area: str = "") -> list[dict]:
     entries: list[dict] = []
     areas = [area] if area else CAPTURE_AREAS
     for current_area in areas:
-        area_path = project / MEMORY_ROOT / current_area
+        area_path = _work_path(project, MEMORY_ROOT / current_area)
         if not area_path.exists():
             continue
         for path in sorted(area_path.glob("*.md")):
@@ -605,7 +628,7 @@ def build_views(project: Path, read_only: bool = False) -> dict[str, str]:
 
 
 def write_views(project: Path) -> list[str]:
-    views_dir = project / MEMORY_ROOT / "views"
+    views_dir = _work_path(project, MEMORY_ROOT / "views")
     views_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for filename, content in build_views(project).items():
@@ -639,13 +662,13 @@ def upsert_category(project: Path, name: str, area: str, description: str, statu
             item.update({"name": name, "area": area, "description": description, "status": status, "updatedAt": now})
             if status == "approved":
                 item["approvedAt"] = now
-            write_json(project / CATEGORY_PATH, registry)
+            write_json(_work_path(project, CATEGORY_PATH), registry)
             return item
     item = {"slug": target, "name": name, "area": area, "description": description, "status": status, "builtin": False, "createdAt": now}
     if status == "approved":
         item["approvedAt"] = now
     registry.setdefault("categories", []).append(item)
-    write_json(project / CATEGORY_PATH, registry)
+    write_json(_work_path(project, CATEGORY_PATH), registry)
     return item
 
 
@@ -676,7 +699,7 @@ def cmd_category_approve(args) -> int:
         if item.get("slug") == target:
             item["status"] = "approved"
             item["approvedAt"] = utc_iso()
-            write_json(project / CATEGORY_PATH, registry)
+            write_json(_work_path(project, CATEGORY_PATH), registry)
             print(json.dumps({"ok": True, "category": item}, indent=2))
             return 0
     print(json.dumps({"ok": False, "error": f"unknown category: {args.category}"}, indent=2))
@@ -692,11 +715,11 @@ def checkpoint_fingerprint(project: Path) -> str:
     """Fingerprint durable work state, excluding generated checkpoint/view files."""
     digest = hashlib.sha256()
     candidates: list[Path] = []
-    for path in (project / "CONTROLWORK.md", project / CATEGORY_PATH):
+    for path in (_work_path(project, "CONTROLWORK.md"), _work_path(project, CATEGORY_PATH)):
         if path.exists() and path.is_file():
             candidates.append(path)
     for area in CAPTURE_AREAS:
-        root = project / MEMORY_ROOT / area
+        root = _work_path(project, MEMORY_ROOT / area)
         if root.exists():
             candidates.extend(path for path in root.rglob("*.md") if path.is_file())
     for path in sorted(candidates, key=lambda item: rel(project, item)):
@@ -712,7 +735,7 @@ def checkpoint_fingerprint(project: Path) -> str:
 
 def checkpoint_due(project: Path, reason: str = "auto") -> dict:
     fingerprint = checkpoint_fingerprint(project)
-    state = read_json(project / CHECKPOINT_STATE_PATH)
+    state = read_json(_work_path(project, CHECKPOINT_STATE_PATH))
     latest = latest_checkpoint(project)
     forced = reason in ALWAYS_CHECKPOINT_REASONS
     changed = state.get("fingerprint") != fingerprint
@@ -799,8 +822,8 @@ def create_checkpoint(
         "reason": reason,
         "updatedAt": utc_iso(),
     }
-    write_json(project / CHECKPOINT_STATE_PATH, state)
-    written.append(rel(project, project / CHECKPOINT_STATE_PATH))
+    write_json(_work_path(project, CHECKPOINT_STATE_PATH), state)
+    written.append(rel(project, _work_path(project, CHECKPOINT_STATE_PATH)))
     return {
         "ok": True,
         "created": True,
@@ -846,7 +869,7 @@ def cmd_handoff(args) -> int:
     )
     written = list(checkpoint.get("written", []))
     written.extend(write_views(project))
-    handoff = project / MEMORY_ROOT / "views" / "handoff-packet.md"
+    handoff = _work_path(project, MEMORY_ROOT / "views" / "handoff-packet.md")
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(handoff.read_text(encoding="utf-8"), encoding="utf-8")
@@ -943,11 +966,11 @@ def latest_checkpoint(project: Path) -> Path | None:
     """Return the latest checkpoint only from a stable regular-file inventory."""
     from .freshness_projection import latest_stable_markdown_file
 
-    return latest_stable_markdown_file(project / CHECKPOINT_ROOT, "project_checkpoint")
+    return latest_stable_markdown_file(_work_path(project, CHECKPOINT_ROOT), "project_checkpoint")
 
 
 def new_checkpoint_path(project: Path) -> Path:
-    root = project / CHECKPOINT_ROOT
+    root = _work_path(project, CHECKPOINT_ROOT)
     stamp = utc_stamp()
     path = root / f"{stamp}-checkpoint.md"
     index = 2
@@ -992,8 +1015,8 @@ def build_context_pack(
     topic = topic.strip()
     limit = max(1, min(int(limit or 10), 30))
     selected = select_context_entries(project, scope, topic, limit, include_legacy=include_legacy)
-    context_excerpt = text_excerpt(project / "CONTROLWORK.md")
-    handoff_path = project / MEMORY_ROOT / "views" / "handoff-packet.md"
+    context_excerpt = text_excerpt(_work_path(project, "CONTROLWORK.md"))
+    handoff_path = _work_path(project, MEMORY_ROOT / "views" / "handoff-packet.md")
     checkpoint_path = latest_checkpoint(project)
     title_topic = topic or scope
     lines = [
@@ -1055,7 +1078,7 @@ def write_context_pack(project: Path, content: str, scope: str, topic: str, outp
     if output:
         target = resolve_output_path(project, output)
     else:
-        target = project / CONTEXT_PACKET_ROOT / f"{utc_stamp()}-{slug(scope)}-{slug(topic or 'context')}.md"
+        target = _work_path(project, CONTEXT_PACKET_ROOT / f"{utc_stamp()}-{slug(scope)}-{slug(topic or 'context')}.md")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     return target
@@ -1091,7 +1114,18 @@ def cmd_context_pack(args) -> int:
     return 0
 
 
-def frontmatter(title: str, kind: str, sources: list[str]) -> str:
+def frontmatter(title: str, kind: str, sources: list[str], project: Path | None = None) -> str:
+    if project is not None:
+        routed = []
+        for item in sources:
+            if item == "CONTROLWORK.md" or item.startswith(".controlwork/"):
+                display = managed_relative(project, item.rstrip("/"))
+                if item.endswith("/"):
+                    display += "/"
+                routed.append(display)
+            else:
+                routed.append(item)
+        sources = routed
     refs = "\n".join([f"  - {item}" for item in sources]) or "  - CONTROLWORK.md"
     return "\n".join([
         "---",
@@ -1115,14 +1149,14 @@ def obsidian_pages(project: Path, read_only: bool = False) -> dict[str, str]:
     views = build_views(project, read_only=read_only)
     entries = iter_entries(project)
     pages: dict[str, str] = {}
-    home = frontmatter("Home", "home", ["CONTROLWORK.md"]) + "# Home\n\n## Core\n\n"
+    home = frontmatter("Home", "home", ["CONTROLWORK.md"], project) + "# Home\n\n## Core\n\n"
     for page in ("Project Status", "Active Decisions", "Open Questions", "Source Ledger", "Handoff Packet", "Category Registry"):
         home += f"- [[{page}]]\n"
     home += "\n## Areas\n\n"
     for area in CAPTURE_AREAS:
         home += f"- [[Areas/{area}|{area}]]\n"
     pages["Home.md"] = home
-    status = frontmatter("Project Status", "status", ["CONTROLWORK.md"]) + "# Project Status\n\n## Memory Counts\n\n"
+    status = frontmatter("Project Status", "status", ["CONTROLWORK.md"], project) + "# Project Status\n\n## Memory Counts\n\n"
     for area in AREAS:
         count = len([entry for entry in entries if entry["area"] == area])
         status += f"- **{area}**: {count}\n"
@@ -1135,17 +1169,17 @@ def obsidian_pages(project: Path, read_only: bool = False) -> dict[str, str]:
         "Category Registry.md": ("Category Registry", "category-registry.md"),
     }
     for wiki_name, (title, view_name) in mapping.items():
-        pages[wiki_name] = frontmatter(title, "view", [f".controlwork/memory/views/{view_name}"]) + views[view_name]
+        pages[wiki_name] = frontmatter(title, "view", [f".controlwork/memory/views/{view_name}"], project) + views[view_name]
     for area in CAPTURE_AREAS:
         area_entries = [entry for entry in entries if entry["area"] == area]
-        content = frontmatter(area, "area", [f".controlwork/memory/{area}/"]) + f"# {area}\n\n"
+        content = frontmatter(area, "area", [f".controlwork/memory/{area}/"], project) + f"# {area}\n\n"
         content += "\n".join(markdown_entry_list(area_entries, "No entries.")) + "\n"
         pages[f"Areas/{area}.md"] = content
     return pages
 
 
 def write_obsidian_settings(project: Path) -> str:
-    settings = project / ".obsidian" / "app.json"
+    settings = _work_path(project, ".obsidian/app.json")
     payload = {"userIgnoreFilters": [".git/", ".controlcoding/", "__pycache__/", "*.pyc"]}
     write_json(settings, payload)
     return rel(project, settings)
@@ -1156,7 +1190,7 @@ def write_obsidian_wiki(project: Path) -> list[str]:
     write_views(project)
     written = []
     for rel_path, content in obsidian_pages(project).items():
-        path = project / WIKI_ROOT / rel_path
+        path = _work_path(project, WIKI_ROOT / rel_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content.rstrip() + "\n", encoding="utf-8")
         written.append(rel(project, path))
@@ -1166,7 +1200,7 @@ def write_obsidian_wiki(project: Path) -> list[str]:
 def obsidian_drift(project: Path, read_only: bool = False) -> list[dict]:
     drift = []
     for rel_path, content in obsidian_pages(project, read_only=read_only).items():
-        path = project / WIKI_ROOT / rel_path
+        path = _work_path(project, WIKI_ROOT / rel_path)
         expected = content.rstrip() + "\n"
         if not path.exists():
             drift.append({"path": rel(project, path), "state": "missing"})
@@ -1209,7 +1243,7 @@ def cmd_wiki_import_edits(args) -> int:
     if args.review:
         for item in drift:
             path = project / item["path"]
-            proposal = project / PROPOSAL_ROOT / f"{utc_stamp()}-wiki-edit-{slug(item['path'])}.md"
+            proposal = _work_path(project, PROPOSAL_ROOT / f"{utc_stamp()}-wiki-edit-{slug(item['path'])}.md")
             body = path.read_text(encoding="utf-8") if path.exists() else ""
             proposal.parent.mkdir(parents=True, exist_ok=True)
             proposal.write_text("\n".join([
@@ -1249,7 +1283,7 @@ def session_id_for(topic: str) -> str:
 
 
 def session_file(project: Path, session_id: str) -> Path:
-    return project / SESSION_ROOT / f"{slug(session_id)}.json"
+    return _work_path(project, SESSION_ROOT / f"{slug(session_id)}.json")
 
 
 def normalize_list(values: list[str] | None) -> list[str]:
@@ -1279,7 +1313,7 @@ def write_session(project: Path, payload: dict) -> Path:
 
 
 def iter_sessions(project: Path) -> list[dict]:
-    root = project / SESSION_ROOT
+    root = _work_path(project, SESSION_ROOT)
     if not root.exists():
         return []
     sessions: list[dict] = []
@@ -1470,7 +1504,7 @@ def graph_tokens(value: str) -> list[str]:
 
 
 def suggestion_state_path(project: Path) -> Path:
-    return project / GRAPH_SUGGESTIONS_PATH
+    return _work_path(project, GRAPH_SUGGESTIONS_PATH)
 
 
 def read_suggestion_state(project: Path) -> dict:
@@ -1641,7 +1675,7 @@ def entry_node_type(entry: dict) -> str:
 
 def portable_graph_entries(project: Path) -> list[dict]:
     entries = []
-    context_path = project / "CONTROLWORK.md"
+    context_path = _work_path(project, "CONTROLWORK.md")
     if context_path.exists():
         text = context_path.read_text(encoding="utf-8", errors="replace")
         entries.append({
@@ -1686,7 +1720,7 @@ def safe_project_relative_path(value: str, fallback: str = PROJECT_BASE_DOCUMENT
 
 
 def configured_base_document_path(project: Path, config: dict | None = None) -> str:
-    raw_config = config if isinstance(config, dict) else read_json(project / ".controlwork" / "config.json")
+    raw_config = config if isinstance(config, dict) else read_json(_work_path(project, ".controlwork/config.json"))
     for key in ("baseDocument", "projectDocument", "projectBaseDocument"):
         value = raw_config.get(key) if isinstance(raw_config, dict) else ""
         if isinstance(value, str) and value.strip():
@@ -1764,10 +1798,10 @@ def ensure_project_base_document(
     purpose: str = "",
     understanding: dict | None = None,
 ) -> dict:
-    config_path = project / ".controlwork" / "config.json"
+    config_path = _work_path(project, ".controlwork/config.json")
     config = read_json(config_path)
     relative_path = configured_base_document_path(project, config)
-    target = project / relative_path
+    target = project_base_path(project, relative_path)
     created = False
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -2476,7 +2510,7 @@ def cmd_query(args) -> int:
 
 
 def file_index_path(project: Path) -> Path:
-    return project / FILE_INDEX_PATH
+    return _work_path(project, FILE_INDEX_PATH)
 
 
 def read_file_index(project: Path) -> dict:
@@ -2491,7 +2525,7 @@ def refresh_file_index(project: Path) -> dict:
 
 
 def project_understanding_path(project: Path) -> Path:
-    return project / PROJECT_UNDERSTANDING_PATH
+    return _work_path(project, PROJECT_UNDERSTANDING_PATH)
 
 
 def read_project_understanding(project: Path) -> dict:
@@ -2776,9 +2810,8 @@ def scan_modified_at(stat_result) -> str:
     )
 
 
-def should_ignore_scan_dir(name: str, relative: str) -> bool:
-    del relative
-    return name in SCAN_IGNORED_DIRS
+def should_ignore_scan_dir(name: str, relative: str, contained: bool = False) -> bool:
+    return name in SCAN_IGNORED_DIRS or (contained and relative.replace("\\", "/") == "cc")
 
 
 def should_ignore_scan_file(name: str, relative: str) -> bool:
@@ -2792,12 +2825,13 @@ def should_ignore_scan_file(name: str, relative: str) -> bool:
 def collect_scan_files(project: Path) -> tuple[list[Path], dict]:
     files: list[Path] = []
     counters = {"ignoredDirs": 0, "ignoredFiles": 0}
+    contained = is_contained(project)
     for dirpath, dirnames, filenames in os.walk(project):
         current = Path(dirpath)
         kept_dirs = []
         for dirname in dirnames:
             child = current / dirname
-            if child.is_symlink() or should_ignore_scan_dir(dirname, rel(project, child)):
+            if child.is_symlink() or should_ignore_scan_dir(dirname, rel(project, child), contained):
                 counters["ignoredDirs"] += 1
                 continue
             kept_dirs.append(dirname)
@@ -3286,7 +3320,7 @@ def scan_review_summary(payload: dict, limit: int = 20, project: Path | None = N
 
 
 def scan_analysis_path(project: Path) -> Path:
-    return project / SCAN_ANALYSIS_PATH
+    return _work_path(project, SCAN_ANALYSIS_PATH)
 
 
 def scan_record_summary(item: dict) -> dict:
@@ -3569,7 +3603,7 @@ def scan_review_proposal_markdown(summary: dict) -> str:
 
 def write_scan_review_proposal(project: Path, summary: dict, output: Path | None) -> Path:
     if output is None:
-        target = project / PROPOSAL_ROOT / f"{utc_stamp()}-scan-review.md"
+        target = _work_path(project, PROPOSAL_ROOT / f"{utc_stamp()}-scan-review.md")
     else:
         target = resolve_output_path(project, output)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -3584,7 +3618,7 @@ def cmd_scan_review(args) -> int:
 
 
 def unique_memory_entry_path(project: Path, area: str, title: str) -> Path:
-    base = project / MEMORY_ROOT / area / f"{utc_stamp()}-{slug(title)}.md"
+    base = _work_path(project, MEMORY_ROOT / area / f"{utc_stamp()}-{slug(title)}.md")
     if not base.exists():
         return base
     stem = base.stem
@@ -3602,7 +3636,7 @@ def memory_entries_with_source_hash(project: Path, content_hash: str) -> list[di
     matches = []
     needle = f"- **Source Hash**: {content_hash}"
     for area in CAPTURE_AREAS:
-        root = project / MEMORY_ROOT / area
+        root = _work_path(project, MEMORY_ROOT / area)
         if not root.exists():
             continue
         for path in sorted(root.glob("*.md")):
@@ -3618,7 +3652,7 @@ def memory_entries_with_source_hash(project: Path, content_hash: str) -> list[di
 
 
 def source_ledger_path(project: Path) -> Path:
-    return project / SOURCE_LEDGER_PATH
+    return _work_path(project, SOURCE_LEDGER_PATH)
 
 
 def read_source_ledger(project: Path) -> dict:
@@ -4073,7 +4107,7 @@ def write_scan_import_proposal(
     output: Path | None,
 ) -> Path:
     if output is None:
-        target = project / PROPOSAL_ROOT / f"{utc_stamp()}-source-import-{slug(title)}.md"
+        target = _work_path(project, PROPOSAL_ROOT / f"{utc_stamp()}-source-import-{slug(title)}.md")
     else:
         target = resolve_output_path(project, output)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -4236,11 +4270,11 @@ def cmd_scan_import(args) -> int:
 
 
 def default_ocr_sidecar_path(project: Path, source_rel: str) -> Path:
-    return project / EXTRACTS_ROOT / f"{slug(source_rel)}.ocr.json"
+    return _work_path(project, EXTRACTS_ROOT / f"{slug(source_rel)}.ocr.json")
 
 
 def ocr_adapter_config_path(project: Path) -> Path:
-    return project / OCR_ADAPTER_CONFIG_PATH
+    return _work_path(project, OCR_ADAPTER_CONFIG_PATH)
 
 
 def runtime_command_args(value) -> list[str]:
@@ -4479,7 +4513,7 @@ def cmd_ocr_status(args) -> int:
     index = read_file_index(project)
     adapter_status = ocr_adapter_status(project)
     sidecars = []
-    extracts = project / EXTRACTS_ROOT
+    extracts = _work_path(project, EXTRACTS_ROOT)
     if extracts.exists():
         sidecars = [rel(project, path) for path in sorted(extracts.glob("*.ocr.json")) if path.is_file()]
     pending = []

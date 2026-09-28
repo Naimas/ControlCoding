@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from cc_setup_service import ReadPolicy, SetupServiceError, _Snapshots, _root
+from cc_layout import is_contained, managed_path, managed_relative
 from cc_memory_lib import work_features as work
 
 POLICY = ReadPolicy(file_bytes=65536, target_bytes=4 * 1024 * 1024)
@@ -33,9 +34,14 @@ def _scope(root, reader):
     identity = reader.observe(root, {}, directory=True)
     if identity is None:
         raise WorkObserverError('root_unavailable')
-    binding = {'root': os.path.normcase(str(root)), 'identity': identity, 'paths': SCOPE,
+    # SCOPE entries are fixed safe glob patterns. The layout resolver accepts
+    # literal managed paths only, so prefix these constants after validating
+    # the marker instead of broadening the resolver to accept wildcard input.
+    contained = is_contained(root)
+    physical_scope = ["cc/" + path if contained else path for path in SCOPE]
+    binding = {'root': os.path.normcase(str(root)), 'identity': identity, 'paths': physical_scope,
                'policy': 'controlwork-observer-v1', 'records': MAX_RECORDS, 'file_bytes': POLICY.file_bytes}
-    return {'scope_id': _hash(json.dumps(binding, sort_keys=True).encode()), 'paths': SCOPE,
+    return {'scope_id': _hash(json.dumps(binding, sort_keys=True).encode()), 'paths': physical_scope,
             'max_records': MAX_RECORDS, 'file_bytes': POLICY.file_bytes,
             'notice': 'Reads local memory text and session summaries. No initialization, indexing, external links, model calls or chat collection.'}
 
@@ -103,7 +109,7 @@ def observe(root_value, *, preview=False, scope_id=None, query=''):
                 return {'project_root': root_value, 'work_scope': scope}
             if scope_id != scope['scope_id']:
                 raise WorkObserverError('scope_mismatch')
-            found_root = reader.observe(root / '.controlwork', {}, directory=True) is not None
+            found_root = reader.observe(managed_path(root, '.controlwork'), {}, directory=True) is not None
             captured, directories = {}, {}
             inspected = 0
             def names(path):
@@ -118,7 +124,8 @@ def observe(root_value, *, preview=False, scope_id=None, query=''):
                 return sorted(result)
             def capture(relative):
                 tick()
-                snap = reader.observe(root / relative, {})
+                actual = managed_relative(root, relative)
+                snap = reader.observe(root / actual, {})
                 if snap is not None:
                     if len(captured) >= MAX_RECORDS:
                         raise WorkObserverError('memory_limit')
@@ -126,7 +133,7 @@ def observe(root_value, *, preview=False, scope_id=None, query=''):
             capture('CONTROLWORK.md')
             capture('.controlwork/graph-suggestions.json')
             for relative in DIRECTORIES:
-                directory = root / relative
+                directory = root / managed_relative(root, relative)
                 if reader.observe(directory, {}, directory=True) is None:
                     continue
                 listed = names(directory)
@@ -160,10 +167,11 @@ def observe(root_value, *, preview=False, scope_id=None, query=''):
                     session = _session(data)
                     entry = work.session_to_graph_entry(session)
                     entry['path'] = relative
-                    sessions.append({**session, 'path': relative, 'node_id': entry['id']})
+                    sessions.append({**session, 'path': relative, 'physicalPath': managed_relative(root, relative),
+                                     'node_id': entry['id']})
                 else:
                     text = data.decode('utf-8-sig')
-                    parsed = work.entry_from_text(root, root / relative, text)
+                    parsed = work.entry_from_text(root, root / managed_relative(root, relative), text)
                     if not relative.startswith('.controlwork/memory/'):
                         parsed.update(body=text, area='context' if relative == 'CONTROLWORK.md' else Path(relative).parent.name,
                                       lifecycle='active' if relative == 'CONTROLWORK.md' else 'captured')
@@ -172,6 +180,7 @@ def observe(root_value, *, preview=False, scope_id=None, query=''):
                     if relative == 'CONTROLWORK.md':
                         entry.update(title='CONTROLWORK.md', source='canonical_context', tokens=sorted(set(work.graph_tokens(text))))
                     documents.append({'id': entry['id'], **{k: str(entry.get(k, '')) for k in ('title', 'path', 'area', 'lifecycle', 'source', 'category', 'captured')},
+                                      'physicalPath': managed_relative(root, relative),
                                       'excerpt': text[:8000], 'excerpt_truncated': len(text) > 8000, 'sha256': _hash(data)})
                 chunks += len(work.split_markdown_chunks(entry.get('body', ''), relative, entry.get('lifecycle', '')))
                 if chunks > 512:

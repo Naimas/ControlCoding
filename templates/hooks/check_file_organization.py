@@ -44,9 +44,9 @@ from pathlib import Path
 
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from hook_utils import control_plane_path, find_project_root
+    from hook_utils import control_plane_path, find_project_root, managed_relative
 except ImportError:
-    from templates.hooks.hook_utils import control_plane_path, find_project_root
+    from templates.hooks.hook_utils import control_plane_path, find_project_root, managed_relative
 
 
 # Patterns that identify working documents and their required subdirectory.
@@ -216,7 +216,9 @@ def main():
             sys.exit(0)
 
         # File is in the wrong place - block
-        suggested_path = f"{required_dir}/{os.path.basename(rel)}"
+        suggested_path = managed_relative(
+            project_root, f"{required_dir}/{os.path.basename(rel)}"
+        )
         _emit_block(
             f"CONTROL CODING: File organization violation. "
             f"{os.path.basename(rel)} matches the pattern for "

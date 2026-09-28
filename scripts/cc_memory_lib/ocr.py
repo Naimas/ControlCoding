@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+from cc_layout import managed_path
 
 from .schema import CONTROL_DIRNAME, MEMORY_DIRNAME
 from .store import _print_json_error_or_text, _print_json_or_text, _read_json, _relative_path, _require_initialized, _write_json
@@ -28,7 +29,7 @@ def _runtime_command_args(value: Any) -> list[str]:
 
 
 def _ocr_config_path(project: Path) -> Path:
-    return project / CONTROL_DIRNAME / MEMORY_DIRNAME / OCR_ADAPTER_CONFIG_FILENAME
+    return managed_path(project, CONTROL_DIRNAME, MEMORY_DIRNAME, OCR_ADAPTER_CONFIG_FILENAME)
 
 
 def _ocr_config(project: Path) -> dict[str, Any]:

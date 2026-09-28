@@ -35,6 +35,13 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+try:
     from mcp_consultant import _load_image_b64
 except ImportError:
     def _load_image_b64(path):
@@ -744,7 +751,9 @@ class BaseAgent(ABC):
     def _project_control_plane_read_path(project_root: str | Path, filename: str) -> Path:
         """Return canonical control-plane file path with legacy fallback."""
         root = Path(project_root).resolve()
-        canonical = root / ".controlcoding" / filename
+        canonical = managed_path(root, ".controlcoding", filename)
+        if is_contained(root):
+            return canonical
         legacy = root / ".claude" / filename
         if canonical.exists():
             return canonical
@@ -1056,7 +1065,12 @@ class BaseAgent(ABC):
         try:
             from concierge import AgentCaller
             project_root = getattr(self.state, "project_root", ".")
-            caller = AgentCaller(project_root)
+            caller = AgentCaller(Path(project_root))
+            # A project without the installed consultation launcher cannot
+            # use the subprocess transport.  Keep the direct adapter fallback
+            # available for that partial-install case.
+            if not (caller.tools_dir / "consult.py").is_file():
+                raise FileNotFoundError("consult.py is not installed")
             # Map agent name to mcp role for transport
             return caller.call_consult(
                 role=role, prompt=prompt, backend=resolved_backend)

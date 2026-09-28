@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import stat
 from pathlib import Path, PurePosixPath
+from cc_layout import managed_path, managed_relative, storage_root
 
 from .runtime import memory_runtime_error
 from . import freshness_projection, work_features
@@ -428,19 +429,19 @@ ControlCoding and ControlWork both use PolyForm Shield. Permitted internal and n
 
 
 def _controlwork_root(project: Path) -> Path:
-    return project / CONTROLWORK_DIRNAME
+    return managed_path(project, CONTROLWORK_DIRNAME)
 
 
 def _controlwork_config_path(project: Path) -> Path:
-    return _controlwork_root(project) / "config.json"
+    return managed_path(project, CONTROLWORK_DIRNAME, "config.json")
 
 
 def _controlwork_context_path(project: Path) -> Path:
-    return project / CONTROLWORK_CONTEXT_FILENAME
+    return managed_path(project, CONTROLWORK_CONTEXT_FILENAME)
 
 
 def _controlwork_link_path(project: Path) -> Path:
-    return _controlwork_root(project) / "link.json"
+    return managed_path(project, CONTROLWORK_DIRNAME, "link.json")
 
 
 def _controlwork_agent_adapter(source_text: str) -> str:
@@ -461,9 +462,9 @@ def _resolve_work_path(path: str | Path) -> Path:
 
 
 def _controlwork_validation(path: Path) -> dict:
-    context_path = path / CONTROLWORK_CONTEXT_FILENAME
-    config_path = path / CONTROLWORK_DIRNAME / "config.json"
-    memory_path = path / CONTROLWORK_DIRNAME / CONTROLWORK_MEMORY_DIRNAME
+    context_path = _controlwork_context_path(path)
+    config_path = _controlwork_config_path(path)
+    memory_path = managed_path(path, CONTROLWORK_DIRNAME, CONTROLWORK_MEMORY_DIRNAME)
     issues = []
     if not context_path.exists():
         issues.append(f"{CONTROLWORK_CONTEXT_FILENAME} is missing")
@@ -503,10 +504,10 @@ def _controlwork_fingerprint(path: Path) -> dict:
         f"{CONTROLWORK_DIRNAME}/config.json",
         f"{CONTROLWORK_DIRNAME}/categories.json",
     ):
-        target = path / relative
+        target = managed_path(path, relative)
         if target.exists() and target.is_file():
             files.append(target)
-    memory_root = path / CONTROLWORK_DIRNAME / CONTROLWORK_MEMORY_DIRNAME
+    memory_root = managed_path(path, CONTROLWORK_DIRNAME, CONTROLWORK_MEMORY_DIRNAME)
     for area in CONTROLWORK_MEMORY_AREAS:
         if area == "views":
             continue
@@ -518,8 +519,9 @@ def _controlwork_fingerprint(path: Path) -> dict:
                 if item.is_file() and item.name != ".gitkeep"
             )
     unreadable: list[str] = []
-    for item in sorted(files, key=lambda candidate: candidate.relative_to(path).as_posix()):
-        rel_item = item.relative_to(path).as_posix()
+    logical_root = storage_root(path)
+    for item in sorted(files, key=lambda candidate: candidate.relative_to(logical_root).as_posix()):
+        rel_item = item.relative_to(logical_root).as_posix()
         digest.update(rel_item.encode("utf-8", errors="replace"))
         digest.update(b"\0")
         try:
@@ -542,7 +544,7 @@ def _hash_json_payload(payload) -> str:
 
 
 def _read_controlwork_text(path: Path) -> str:
-    target = path / CONTROLWORK_CONTEXT_FILENAME
+    target = managed_path(path, CONTROLWORK_CONTEXT_FILENAME)
     try:
         return target.read_text(encoding="utf-8-sig")
     except OSError:
@@ -587,7 +589,7 @@ def _controlwork_context_signature(path: Path) -> dict:
 
 
 def _controlwork_shared_config_contract(path: Path) -> dict:
-    config = _read_json(path / CONTROLWORK_DIRNAME / "config.json")
+    config = _read_json(managed_path(path, CONTROLWORK_DIRNAME, "config.json"))
     memory = config.get("memory", {}) if isinstance(config.get("memory"), dict) else {}
     return {
         "exists": bool(config),
@@ -604,7 +606,7 @@ def _controlwork_shared_config_contract(path: Path) -> dict:
 
 
 def _normalize_controlwork_category_registry(path: Path) -> dict:
-    registry = _read_json(path / CONTROLWORK_DIRNAME / "categories.json")
+    registry = _read_json(managed_path(path, CONTROLWORK_DIRNAME, "categories.json"))
     categories = []
     raw_categories = registry.get("categories", [])
     if not isinstance(raw_categories, list):
@@ -628,7 +630,7 @@ def _normalize_controlwork_category_registry(path: Path) -> dict:
 def _controlwork_memory_content_fingerprint(path: Path) -> dict:
     digest = hashlib.sha256()
     files: list[Path] = []
-    memory_root = path / CONTROLWORK_DIRNAME / CONTROLWORK_MEMORY_DIRNAME
+    memory_root = managed_path(path, CONTROLWORK_DIRNAME, CONTROLWORK_MEMORY_DIRNAME)
     for area in CONTROLWORK_MEMORY_AREAS:
         if area == "views":
             continue
@@ -640,8 +642,9 @@ def _controlwork_memory_content_fingerprint(path: Path) -> dict:
                 if item.is_file() and item.name != ".gitkeep"
             )
     unreadable: list[str] = []
-    for item in sorted(files, key=lambda candidate: candidate.relative_to(path).as_posix()):
-        rel_item = item.relative_to(path).as_posix()
+    logical_root = storage_root(path)
+    for item in sorted(files, key=lambda candidate: candidate.relative_to(logical_root).as_posix()):
+        rel_item = item.relative_to(logical_root).as_posix()
         digest.update(rel_item.encode("utf-8", errors="replace"))
         digest.update(b"\0")
         try:
@@ -660,7 +663,7 @@ def _controlwork_memory_content_fingerprint(path: Path) -> dict:
 def _controlwork_memory_content_inventory(embedded_path: Path, external_path: Path) -> dict:
     def manifest(project_path: Path) -> dict[str, str]:
         files: list[Path] = []
-        memory_root = project_path / CONTROLWORK_DIRNAME / CONTROLWORK_MEMORY_DIRNAME
+        memory_root = managed_path(project_path, CONTROLWORK_DIRNAME, CONTROLWORK_MEMORY_DIRNAME)
         for area in CONTROLWORK_MEMORY_AREAS:
             if area == "views":
                 continue
@@ -672,8 +675,9 @@ def _controlwork_memory_content_inventory(embedded_path: Path, external_path: Pa
                     if item.is_file() and item.name != ".gitkeep"
                 )
         result: dict[str, str] = {}
-        for item in sorted(files, key=lambda candidate: candidate.relative_to(project_path).as_posix()):
-            rel_item = item.relative_to(project_path).as_posix()
+        logical_root = storage_root(project_path)
+        for item in sorted(files, key=lambda candidate: candidate.relative_to(logical_root).as_posix()):
+            rel_item = item.relative_to(logical_root).as_posix()
             try:
                 result[rel_item] = hashlib.sha256(item.read_bytes()).hexdigest()
             except OSError:
@@ -818,7 +822,7 @@ def _controlwork_semantic_drift(project: Path, external_path: Path | None) -> di
 
 
 def _controlwork_views_drift(project: Path) -> list[dict]:
-    views_dir = project / CONTROLWORK_DIRNAME / CONTROLWORK_MEMORY_DIRNAME / "views"
+    views_dir = managed_path(project, CONTROLWORK_DIRNAME, CONTROLWORK_MEMORY_DIRNAME, "views")
     expected = {
         "index.md",
         "active-decisions.md",
@@ -891,14 +895,14 @@ def _controlwork_views_drift(project: Path) -> list[dict]:
 
 
 def _controlwork_derived_status(project: Path) -> dict:
-    context_packets_root = project / CONTROLWORK_DIRNAME / "context-packets"
+    context_packets_root = managed_path(project, CONTROLWORK_DIRNAME, "context-packets")
     packet_inventory, packet_reason = (
         freshness_projection._stable_markdown_inventory_for_feature_status(
             context_packets_root,
             "context_packets_unreadable",
         )
     )
-    packet_path = f"{CONTROLWORK_DIRNAME}/context-packets"
+    packet_path = managed_relative(project, f"{CONTROLWORK_DIRNAME}/context-packets")
     if packet_reason or packet_inventory is None:
         context_packet_status = {
             "path": packet_path,
@@ -919,7 +923,7 @@ def _controlwork_derived_status(project: Path) -> dict:
             "available": True,
             "count": len(packet_entries),
             "latest": (
-                _relative_path(project, context_packets_root / latest_name)
+                work_features.rel(project, context_packets_root / latest_name)
                 if latest_name
                 else ""
             ),
@@ -934,7 +938,7 @@ def _controlwork_derived_status(project: Path) -> dict:
         },
         "contextPackets": context_packet_status,
         "obsidianProjection": {
-            "exists": (project / "wiki").exists(),
+            "exists": work_features._work_path(project, work_features.WIKI_ROOT).exists(),
             "drift": [],
             "stale": False,
             "checkCommand": "python scripts/cc.py memory work-obsidian check --project-root .",
@@ -1213,8 +1217,8 @@ def _copy_controlwork_into_project(
     if target_root.exists():
         shutil.rmtree(target_root)
 
-    shutil.copy2(source_project / CONTROLWORK_CONTEXT_FILENAME, target_context)
-    shutil.copytree(source_project / CONTROLWORK_DIRNAME, target_root)
+    shutil.copy2(_controlwork_context_path(source_project), target_context)
+    shutil.copytree(_controlwork_root(source_project), target_root)
     _write_json(_controlwork_config_path(target_project), _controlwork_config())
     if preserve_link is not None:
         _write_json(_controlwork_link_path(target_project), preserve_link)
@@ -1238,8 +1242,8 @@ def _export_controlwork_from_project(
 
     target_project = target_project.resolve()
     target_project.mkdir(parents=True, exist_ok=True)
-    target_context = target_project / CONTROLWORK_CONTEXT_FILENAME
-    target_root = target_project / CONTROLWORK_DIRNAME
+    target_context = _controlwork_context_path(target_project)
+    target_root = _controlwork_root(target_project)
     target_adapter = target_project / "AGENTS.md"
 
     if not force and (target_context.exists() or target_root.exists()):
@@ -1283,7 +1287,7 @@ def _ensure_controlwork_layout(project: Path) -> list[str]:
         keep = area_path / ".gitkeep"
         if not keep.exists():
             keep.write_text("", encoding="utf-8")
-            created.append(_relative_path(project, keep))
+            created.append(work_features.rel(project, keep))
     created.extend(work_features.ensure_feature_layout(project))
     return created
 
@@ -1304,9 +1308,9 @@ def cmd_memory_work_init(
     config_payload = _controlwork_config()
     if force or not config_path.exists():
         _write_json(config_path, config_payload)
-        created.append(_relative_path(project, config_path))
+        created.append(work_features.rel(project, config_path))
     else:
-        preserved.append(_relative_path(project, config_path))
+        preserved.append(work_features.rel(project, config_path))
 
     scan_payload = work_features.refresh_file_index(project)
     analysis = work_features.build_scan_analysis(project, scan_payload)
@@ -1332,9 +1336,9 @@ def cmd_memory_work_init(
             _controlwork_context_template(name, work_purpose),
             encoding="utf-8",
         )
-        created.append(_relative_path(project, context_path))
+        created.append(work_features.rel(project, context_path))
     else:
-        preserved.append(_relative_path(project, context_path))
+        preserved.append(work_features.rel(project, context_path))
 
     base_document = work_features.ensure_project_base_document(
         project,
@@ -1343,17 +1347,17 @@ def cmd_memory_work_init(
         understanding=understanding,
     )
     if base_document["created"]:
-        created.append(base_document["path"])
+        created.append(work_features.project_base_path(project, base_document["path"]).relative_to(project).as_posix())
     else:
-        preserved.append(base_document["path"])
+        preserved.append(work_features.project_base_path(project, base_document["path"]).relative_to(project).as_posix())
 
     payload = {
         "ok": True,
         "projectRoot": str(project),
         "distribution": "embedded_controlcoding",
         "standaloneCompatible": True,
-        "canonicalContext": CONTROLWORK_CONTEXT_FILENAME,
-        "baseDocument": base_document["path"],
+        "canonicalContext": managed_relative(project, CONTROLWORK_CONTEXT_FILENAME),
+        "baseDocument": work_features.project_base_path(project, base_document["path"]).relative_to(project).as_posix(),
         "guidedSetup": {
             "status": understanding.get("status", "needs_human_confirmation"),
             "selectedKind": understanding.get("selectedKind", "archive_organization"),
@@ -1361,12 +1365,12 @@ def cmd_memory_work_init(
             "questions": understanding.get("questions", []),
             "blockedUntilApproval": understanding.get("blockedUntilApproval", []),
         },
-        "controlworkRoot": CONTROLWORK_DIRNAME,
+        "controlworkRoot": managed_relative(project, CONTROLWORK_DIRNAME),
         "created": created,
         "preserved": preserved,
         "hostAdapterNote": (
             f"ControlCoding host adapters are not overwritten. Use "
-            f"`cc export host-context --source {CONTROLWORK_CONTEXT_FILENAME} --host <host>` "
+            f"`cc export host-context --source {managed_relative(project, CONTROLWORK_CONTEXT_FILENAME)} --host <host>` "
             "only when you explicitly want a ControlWork projection."
         ),
     }
@@ -1375,8 +1379,8 @@ def cmd_memory_work_init(
         payload,
         (
             "Embedded ControlWork project plane initialized\n"
-            f"  Canonical context: {CONTROLWORK_CONTEXT_FILENAME}\n"
-            f"  ControlWork root: {CONTROLWORK_DIRNAME}\n"
+            f"  Canonical context: {managed_relative(project, CONTROLWORK_CONTEXT_FILENAME)}\n"
+            f"  ControlWork root: {managed_relative(project, CONTROLWORK_DIRNAME)}\n"
             f"  Created: {len(created)}\n"
             f"  Preserved: {len(preserved)}"
         ),
@@ -1407,11 +1411,11 @@ def _work_status_payload(project: Path) -> dict:
         "projectRoot": str(project),
         "distribution": config.get("distribution", "") if config else "",
         "standaloneCompatible": bool(config.get("standaloneCompatible")) if config else False,
-        "canonicalContext": CONTROLWORK_CONTEXT_FILENAME,
-        "baseDocument": work_features.configured_base_document_path(project, config),
+        "canonicalContext": managed_relative(project, CONTROLWORK_CONTEXT_FILENAME),
+        "baseDocument": work_features.project_base_path(project, work_features.configured_base_document_path(project, config)).relative_to(project).as_posix(),
         "hasConfig": bool(config),
         "hasCanonicalContext": context_exists,
-        "hasBaseDocument": (project / work_features.configured_base_document_path(project, config)).exists() if config else False,
+        "hasBaseDocument": work_features.project_base_path(project, work_features.configured_base_document_path(project, config)).exists() if config else False,
         "guidedSetup": {
             "hasProjectUnderstanding": bool(understanding),
             "status": understanding.get("status", "not_generated") if understanding else "not_generated",
@@ -1457,8 +1461,8 @@ def _work_parity_projection(project: Path, distribution: str) -> dict:
         "projectRoot": str(project),
         "distribution": distribution or config_contract.get("distribution", ""),
         "hasConfig": bool(config_contract.get("exists")),
-        "hasCanonicalContext": (project / CONTROLWORK_CONTEXT_FILENAME).is_file(),
-        "canonicalContext": CONTROLWORK_CONTEXT_FILENAME,
+        "hasCanonicalContext": _controlwork_context_path(project).is_file(),
+        "canonicalContext": managed_relative(project, CONTROLWORK_CONTEXT_FILENAME),
         "memoryCounts": _controlwork_memory_counts(_controlwork_root(project)),
         "features": work_features.feature_status_payload(project),
         "sharedContractHash": _hash_json_payload(shared_contract),
@@ -1595,7 +1599,7 @@ def _work_quickstart_next_commands(project: Path, scope: str, topic: str) -> lis
 
 def _work_quickstart_stale_warnings(project: Path) -> list[str]:
     warnings: list[str] = []
-    memory_root = project / work_features.MEMORY_ROOT
+    memory_root = work_features._work_path(project, work_features.MEMORY_ROOT)
     view_index = memory_root / "views" / "index.md"
     source_files = [
         path
@@ -1619,7 +1623,7 @@ def _work_quickstart_stale_warnings(project: Path) -> list[str]:
     elif index_path.stat().st_mtime > analysis_path.stat().st_mtime:
         warnings.append("Project Plane scan analysis may be stale compared with the file scan index.")
 
-    packet_root = project / work_features.CONTEXT_PACKET_ROOT
+    packet_root = work_features._work_path(project, work_features.CONTEXT_PACKET_ROOT)
     if not packet_root.exists() or not list(packet_root.glob("*.md")):
         warnings.append("No Project Plane context packet exists yet for starting or resuming an AI chat.")
     return warnings
@@ -1637,6 +1641,7 @@ def _work_quickstart_dry_run_payload(project: Path, scope: str, topic: str) -> d
         f"{CONTROLWORK_DIRNAME}/memory/views/index.md",
         f"{CONTROLWORK_DIRNAME}/context-packets/quickstart-{work_features.slug(scope)}-{work_features.slug(topic or 'context')}.md",
     ]
+    expected_writes = [managed_relative(project, path) for path in expected_writes]
     return {
         "ok": True,
         "dryRun": True,
@@ -1652,7 +1657,7 @@ def _work_quickstart_dry_run_payload(project: Path, scope: str, topic: str) -> d
         },
         "hostAdapterPolicy": (
             "Embedded quickstart does not overwrite ControlCoding host adapters. "
-            f"Use `cc export host-context --source {CONTROLWORK_CONTEXT_FILENAME} --host <host>` only when an explicit ControlWork projection is wanted."
+            f"Use `cc export host-context --source {managed_relative(project, CONTROLWORK_CONTEXT_FILENAME)} --host <host>` only when an explicit ControlWork projection is wanted."
         ),
         "projectionPolicy": "Generated views, packets, scan indexes, and graph output are projections or review evidence. CONTROLWORK.md and reviewed .controlwork/memory entries remain authoritative.",
     }
@@ -1684,7 +1689,7 @@ def cmd_memory_work_quickstart(
     written.extend(_ensure_controlwork_layout(project))
     if not _controlwork_config_path(project).exists():
         _write_json(_controlwork_config_path(project), _controlwork_config())
-        written.append(_relative_path(project, _controlwork_config_path(project)))
+        written.append(work_features.rel(project, _controlwork_config_path(project)))
     name = str(project_name or project.name or "ControlWork Project").strip()
     work_purpose = str(purpose or "Project knowledge and work memory").strip()
 
@@ -1711,7 +1716,7 @@ def cmd_memory_work_quickstart(
             _controlwork_context_template(name, work_purpose),
             encoding="utf-8",
         )
-        written.append(_relative_path(project, _controlwork_context_path(project)))
+        written.append(work_features.rel(project, _controlwork_context_path(project)))
 
     base_document = work_features.ensure_project_base_document(
         project,
@@ -1737,7 +1742,7 @@ def cmd_memory_work_quickstart(
         limit=limit,
         include_legacy=include_legacy,
     )
-    packet_path = project / work_features.CONTEXT_PACKET_ROOT / f"quickstart-{work_features.slug(scope)}-{work_features.slug(topic or 'context')}.md"
+    packet_path = work_features._work_path(project, work_features.CONTEXT_PACKET_ROOT / f"quickstart-{work_features.slug(scope)}-{work_features.slug(topic or 'context')}.md")
     target = work_features.write_context_pack(project, packet, scope, topic, output=packet_path)
     written.append(work_features.rel(project, target))
 
@@ -1827,7 +1832,7 @@ def cmd_memory_work_attach(
         "ok": True,
         "projectRoot": str(project),
         "externalPath": str(external_path),
-        "linkPath": f"{CONTROLWORK_DIRNAME}/link.json",
+        "linkPath": managed_relative(project, f"{CONTROLWORK_DIRNAME}/link.json"),
         "syncCommands": [
             "cc memory work-sync --direction pull --force",
             "cc memory work-sync --direction push --force",
@@ -1839,7 +1844,7 @@ def cmd_memory_work_attach(
         (
             "Attached external ControlWork project\n"
             f"  External path: {external_path}\n"
-            f"  Link: {CONTROLWORK_DIRNAME}/link.json\n"
+            f"  Link: {managed_relative(project, f'{CONTROLWORK_DIRNAME}/link.json')}\n"
             "  Sync policy: manual_explicit"
         ),
     )
@@ -2202,9 +2207,9 @@ def cmd_memory_work_capture(
             return 1
     stamp = work_features.utc_stamp()
     filename = f"{stamp}-{work_features.slug(title)}.md"
-    path = project / work_features.MEMORY_ROOT / area / filename
+    path = work_features._work_path(project, work_features.MEMORY_ROOT / area / filename)
     path.write_text(_work_capture_content(area, title, body, lifecycle, source, approved_category, stamp), encoding="utf-8")
-    payload = {"ok": True, "path": _relative_path(project, path)}
+    payload = {"ok": True, "path": work_features.rel(project, path)}
     _print_json_or_text(json_output, payload, f"Captured Work Plane memory: {payload['path']}")
     return 0
 
@@ -2511,7 +2516,7 @@ def cmd_memory_work_mcp_call(
 
 
 def _dev_context_root(project: Path) -> Path:
-    return project / CONTROL_DIRNAME / "context-packets"
+    return managed_path(project, CONTROL_DIRNAME, "context-packets")
 
 
 def _context_source_excerpt(project: Path, max_chars: int = 2800) -> tuple[str, str]:
@@ -2634,8 +2639,8 @@ def cmd_memory_dev_context_pack(
         target = _dev_context_root(project) / f"{_now_iso().replace(':', '').replace('-', '').replace('.', '')}-{work_features.slug(scope)}-{work_features.slug(topic or 'context')}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
-    payload = {"ok": True, "path": _relative_path(project, target), "scope": scope, "topic": topic}
-    _print_json_or_text(json_output, payload, f"Generated dev context packet: {_relative_path(project, target)}")
+    payload = {"ok": True, "path": work_features.rel(project, target), "scope": scope, "topic": topic}
+    _print_json_or_text(json_output, payload, f"Generated dev context packet: {work_features.rel(project, target)}")
     return 0
 
 
@@ -2736,8 +2741,8 @@ def cmd_memory_init(
     payload = {
         "ok": True,
         "projectRoot": str(project),
-        "manifest": f"{CONTROL_DIRNAME}/{MANIFEST_FILENAME}",
-        "database": f"{CONTROL_DIRNAME}/{MEMORY_DIRNAME}/{DB_FILENAME}",
+        "manifest": managed_relative(project, f"{CONTROL_DIRNAME}/{MANIFEST_FILENAME}"),
+        "database": managed_relative(project, f"{CONTROL_DIRNAME}/{MEMORY_DIRNAME}/{DB_FILENAME}"),
         "installMode": storage_mode,
         "profile": normalized_profile,
         "projectShort": short,
@@ -2785,7 +2790,7 @@ def cmd_memory_doctor(project: Path, json_output: bool = False) -> int:
     if manifest:
         add("manifest", "ok", f"project_short={manifest.get('project_short', '')}; mode={manifest.get('install_mode', '')}")
     else:
-        add("manifest", "fail", f"{CONTROL_DIRNAME}/{MANIFEST_FILENAME} missing or invalid")
+        add("manifest", "fail", f"{managed_relative(project, f'{CONTROL_DIRNAME}/{MANIFEST_FILENAME}')} missing or invalid")
 
     for rel_name, path in (
         ("memory_dir", _memory_dir(project)),
@@ -2820,7 +2825,7 @@ def cmd_memory_doctor(project: Path, json_output: bool = False) -> int:
         except sqlite3.Error as exc:
             add("database_schema", "fail", str(exc))
     else:
-        add("database_schema", "fail", f"{CONTROL_DIRNAME}/{MEMORY_DIRNAME}/{DB_FILENAME} missing")
+        add("database_schema", "fail", f"{managed_relative(project, f'{CONTROL_DIRNAME}/{MEMORY_DIRNAME}/{DB_FILENAME}')} missing")
 
     for log_name in REQUIRED_LOGS:
         issue = _validate_jsonl(_logs_dir(project) / log_name)

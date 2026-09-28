@@ -1,5 +1,7 @@
 """Bounded descriptors and acquisition checkpoint reuse in isolated projects."""
+from pathlib import Path
 import pytest
+from cc_layout import layout_marker_path
 from test_cc_knowledge import project
 from cc_memory_lib import knowledge_service as service
 from cc_memory_lib import knowledge_scan as scan
@@ -13,7 +15,7 @@ def test_interrupted_acquisition_resumes_cached_file_and_revalidates_content(pro
     observed = []
 
     def interrupted(self, path, observations, **kwargs):
-        if not kwargs.get('directory'):
+        if not kwargs.get('directory') and Path(path) != layout_marker_path(project):
             observed.append(str(path))
             if len(observed) == 2:
                 raise KeyboardInterrupt()
@@ -28,7 +30,7 @@ def test_interrupted_acquisition_resumes_cached_file_and_revalidates_content(pro
     reads = []
 
     def resumed(self, path, observations, **kwargs):
-        if not kwargs.get('directory'):
+        if not kwargs.get('directory') and Path(path) != layout_marker_path(project):
             reads.append(str(path))
         return original(self, path, observations, **kwargs)
 

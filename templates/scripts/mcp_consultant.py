@@ -135,12 +135,22 @@ PROJECT_ROOT = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
 CONTROL_PLANE_DIR = ".controlcoding"
 LEGACY_CONTROL_PLANE_DIR = ".claude"
 
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
+
 
 def _control_plane_dir() -> Path:
     env_path = os.environ.get("CONSULT_LOG_DIR")
     if env_path:
         return Path(env_path)
-    canonical = PROJECT_ROOT / CONTROL_PLANE_DIR
+    canonical = managed_path(PROJECT_ROOT, CONTROL_PLANE_DIR)
+    if is_contained(PROJECT_ROOT):
+        return canonical
     if canonical.exists():
         return canonical
     legacy = PROJECT_ROOT / LEGACY_CONTROL_PLANE_DIR
@@ -150,7 +160,9 @@ def _control_plane_dir() -> Path:
 
 
 def _control_plane_read_path(*parts: str) -> Path:
-    canonical = PROJECT_ROOT / CONTROL_PLANE_DIR / Path(*parts)
+    canonical = managed_path(PROJECT_ROOT, CONTROL_PLANE_DIR, *parts)
+    if is_contained(PROJECT_ROOT):
+        return canonical
     if canonical.exists():
         return canonical
     legacy = PROJECT_ROOT / LEGACY_CONTROL_PLANE_DIR / Path(*parts)
@@ -1819,9 +1831,10 @@ def _parse_verifier_response(raw, backend):
         }
 
 
-def save_verifier_report(report, project_root="."):
+def save_verifier_report(report, project_root=None):
     """Save verifier report to the canonical control-plane directory."""
-    report_path = Path(project_root) / VERIFIER_REPORT_PATH
+    root = PROJECT_ROOT if project_root is None else Path(project_root).resolve()
+    report_path = managed_path(root, VERIFIER_REPORT_PATH)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         json.dumps(report, indent=2, ensure_ascii=False),
@@ -2030,10 +2043,10 @@ except ImportError:
 
 
 DEFAULT_EVENT_LOG = os.environ.get(
-    "TANDEM_EVENT_LOG", f"{CONTROL_PLANE_DIR}/event_log.jsonl"
+    "TANDEM_EVENT_LOG", str(managed_path(PROJECT_ROOT, CONTROL_PLANE_DIR, "event_log.jsonl"))
 )
 DEFAULT_DECISION_LOG = os.environ.get(
-    "TANDEM_DECISION_LOG", f"{CONTROL_PLANE_DIR}/decision_log.jsonl"
+    "TANDEM_DECISION_LOG", str(managed_path(PROJECT_ROOT, CONTROL_PLANE_DIR, "decision_log.jsonl"))
 )
 
 

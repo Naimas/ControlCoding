@@ -125,7 +125,16 @@ class _Snapshots:
         self.last_source = "root"
 
     def __enter__(self):
-        return self
+        # Layout selection is an input even when the marker is absent. Retain
+        # its ancestors so preview/apply cannot silently switch storage roots.
+        try:
+            from cc_layout import layout_marker_path, is_contained
+            self.observe(layout_marker_path(self.root), {})
+            is_contained(self.root)
+            return self
+        except BaseException:
+            self.stack.close()
+            raise
 
     def __exit__(self, *args):
         return self.stack.__exit__(*args)
@@ -337,11 +346,14 @@ def _core():
 
 
 def _trusted(core):
-    return {**{core.HOOKS_DIR / n: "templates/hooks/" + n for n in core.INIT_HOOKS},
+    return {**{(core.SCRIPT_DIR if n == "cc_layout.py" else core.HOOKS_DIR) / n:
+               ("scripts/" if n == "cc_layout.py" else "templates/hooks/") + n for n in core.INIT_HOOKS},
             core.TEMPLATES_DIR / "CLAUDE.md.template": "templates/CLAUDE.md.template",
             core.SCRIPT_DIR / "fitness_check.py": "scripts/fitness_check.py",
             Path(__file__).absolute(): "scripts/cc_setup_service.py",
-            core.SCRIPT_DIR / "cc.py": "scripts/cc.py"}
+            core.SCRIPT_DIR / "cc.py": "scripts/cc.py",
+            core.SCRIPT_DIR / "cc_layout.py": "scripts/cc_layout.py",
+            core.SCRIPTS_DIR / "control_plane_utils.py": "templates/scripts/control_plane_utils.py"}
 
 
 def _require_root(reader):
@@ -387,10 +399,12 @@ def validate_setup_request(request, *, policy=None):
 
 
 def _read_sources(reader, core):
+    from cc_layout import managed_path, is_contained
     sources, selected = [], {}
     for name in ("cc_config.json", "settings.json"):
-        for folder in (core.CONTROL_PLANE_DIRNAME, core.LEGACY_CONTROL_PLANE_DIRNAME):
-            path = reader.root / folder / name
+        folders = (core.CONTROL_PLANE_DIRNAME,) if is_contained(reader.root) else (core.CONTROL_PLANE_DIRNAME, core.LEGACY_CONTROL_PLANE_DIRNAME)
+        for folder in folders:
+            path = managed_path(reader.root, folder, name)
             snap = reader.observe(path, {})
             label = reader.label(path)
             item = {"source": label, "state": "absent", "selected": False}

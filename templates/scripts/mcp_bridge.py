@@ -60,11 +60,20 @@ Requirements:
 
 import json
 import os
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastmcp import FastMCP
+
+try:
+    from cc_layout import is_contained, managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import is_contained, managed_path
 
 try:
     from watchfiles import watch
@@ -75,7 +84,20 @@ except ImportError:
 # --- Configuration ---
 
 AGENT_ID = os.environ.get("BRIDGE_AGENT_ID", "agent")
-BRIDGE_DIR = Path(os.environ.get("BRIDGE_DIR", ".bridge")).resolve()
+
+
+def _default_bridge_dir() -> Path:
+    """Resolve only the built-in bridge location into contained storage."""
+    configured = os.environ.get("BRIDGE_DIR")
+    if configured is not None:
+        return Path(configured).resolve()
+    project = Path(os.environ.get("SESSION_PROJECT_ROOT", ".")).resolve()
+    if is_contained(project):
+        return managed_path(project, ".bridge")
+    return Path(".bridge").resolve()
+
+
+BRIDGE_DIR = _default_bridge_dir()
 MESSAGES_DIR = BRIDGE_DIR / "messages"
 POLL_INTERVAL = float(os.environ.get("BRIDGE_POLL_INTERVAL", "2.0"))
 DEFAULT_TIMEOUT = float(os.environ.get("BRIDGE_TIMEOUT", "120.0"))

@@ -19,36 +19,17 @@ from pathlib import Path
 
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from hook_utils import normalize_protected_zones
+    from hook_utils import control_plane_path, find_project_root, normalize_protected_zones
 except ImportError:
-    from templates.hooks.hook_utils import normalize_protected_zones
-
-
-CONTROL_PLANE_DIRS = (".controlcoding", ".claude")
+    from templates.hooks.hook_utils import control_plane_path, find_project_root, normalize_protected_zones
 
 
 def _find_project_root() -> Path:
-    starts = [Path.cwd(), Path(__file__).resolve().parent]
-    for start in starts:
-        for candidate in [start, *start.parents]:
-            if (candidate / ".git").is_dir():
-                return candidate
-            for dirname in CONTROL_PLANE_DIRS:
-                if (candidate / dirname / "cc_config.json").exists():
-                    return candidate
-    return Path.cwd()
-
-
-def _control_plane_path(project_root: Path, relative_name: str) -> Path:
-    for dirname in CONTROL_PLANE_DIRS:
-        candidate = project_root / dirname / relative_name
-        if candidate.exists():
-            return candidate
-    return project_root / CONTROL_PLANE_DIRS[0] / relative_name
+    return find_project_root(Path.cwd())
 
 
 def _load_protected_zones(project_root: Path) -> list[dict]:
-    config_path = _control_plane_path(project_root, "cc_config.json")
+    config_path = control_plane_path(project_root, "cc_config.json")
     if not config_path.exists():
         return []
     try:
@@ -59,7 +40,7 @@ def _load_protected_zones(project_root: Path) -> list[dict]:
 
 
 def _load_approved_lifts(project_root: Path) -> set[str]:
-    lift_path = _control_plane_path(project_root, "lift_request.json")
+    lift_path = control_plane_path(project_root, "lift_request.json")
     if not lift_path.exists():
         return set()
     try:
@@ -93,7 +74,7 @@ def _load_approved_lifts(project_root: Path) -> set[str]:
 def _consume_approved_lifts(project_root: Path, consumed_zones: set[str]) -> None:
     if not consumed_zones:
         return
-    lift_path = _control_plane_path(project_root, "lift_request.json")
+    lift_path = control_plane_path(project_root, "lift_request.json")
     if not lift_path.exists():
         return
     try:

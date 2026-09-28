@@ -9,6 +9,7 @@ import time
 from urllib.parse import unquote, urlsplit
 
 from cc_setup_service import ReadPolicy, SetupServiceError, _Snapshots, _root
+from cc_layout import is_contained, managed_path
 
 SCOPES = {'project': ['/*.md (except AGENTS.md)', '/docs/**/*.md'],
           'plans': ['/_work/plans/*.md'], 'handoffs': ['/_work/handoff/*.md']}
@@ -65,7 +66,7 @@ def observe(root_value, scope):
         with _Snapshots(root, {}, POLICY) as reader:
             if reader.observe(root, {}, directory=True) is None:
                 raise DocumentationError('root_unavailable')
-            directories, captured = {}, {}
+            directories, captured, physical_paths = {}, {}, {}
             entries_seen = 0
 
             def listing(directory):
@@ -114,11 +115,23 @@ def observe(root_value, scope):
                     data = reader.observe(path, {})
                     if data is None:
                         raise DocumentationError('changed_input')
-                    captured[path.relative_to(root).as_posix()] = data[-1]
+                    relative = path.relative_to(root).as_posix()
+                    captured[relative] = data[-1]
+                    physical_paths[relative] = relative
 
             if scope == 'project':
                 walk(Path('.'))
                 walk(Path('docs'), True)
+                if is_contained(root):
+                    # Keep application documents at the project root distinct from
+                    # CC-owned canonical documents stored in the managed namespace.
+                    for relative in ('CONTROLCODING.md', 'CONTROLWORK.md', 'PROJECT.md', 'STATUS.md', 'ROADMAP.md', 'BUGS.md'):
+                        physical = managed_path(root, relative)
+                        data = reader.observe(physical, {})
+                        if data is not None:
+                            managed_relative = 'cc/' + relative
+                            captured[managed_relative] = data[-1]
+                            physical_paths[managed_relative] = physical.relative_to(root).as_posix()
             else:
                 walk(Path('_work') / ('plans' if scope == 'plans' else 'handoff'))
             reader.recheck()
@@ -134,7 +147,8 @@ def observe(root_value, scope):
                 title = (heading[1].strip() if heading else PurePosixPath(relative).name)[:180]
                 name = PurePosixPath(relative).name.lower()
                 area = 'plans' if scope == 'plans' or 'roadmap' in name or name.endswith('-plan.md') else 'archive' if scope == 'handoffs' else 'evidence' if 'evidence' in name else 'documentation'
-                documents.append({'id': 'source:' + digest(relative.encode()), 'path': relative, 'title': title,
+                documents.append({'id': 'source:' + digest(relative.encode()), 'path': relative,
+                                  'physicalPath': physical_paths.get(relative, relative), 'title': title,
                                   'area': area, 'sha256': digest(data), 'bytes': len(data),
                                   'excerpt': text[:1200], 'excerpt_truncated': len(text) > 1200})
                 for target in references(text, relative):
@@ -145,7 +159,10 @@ def observe(root_value, scope):
             edges = [{'source': by_path[source], 'target': by_path[target], 'kind': 'markdown_reference'}
                      for source, target in sorted(links) if target in by_path]
             unresolved = sum(target not in by_path for _, target in links)
-            result = {'schema_version': 1, 'scope': scope, 'paths': SCOPES[scope], 'documents': documents,
+            paths = list(SCOPES[scope])
+            if scope == 'project' and is_contained(root):
+                paths.extend('/cc/' + name for name in ('CONTROLCODING.md', 'CONTROLWORK.md', 'PROJECT.md', 'STATUS.md', 'ROADMAP.md', 'BUGS.md'))
+            result = {'schema_version': 1, 'scope': scope, 'paths': paths, 'documents': documents,
                       'edges': edges, 'unresolved_references': unresolved,
                       'snapshot_id': digest(json.dumps({p: digest(v) for p, v in sorted(captured.items())}).encode()),
                       'notice': 'Observed source files, not imported memory or verified work. Markdown inline links only; external links and out-of-scope targets are never read. Unresolved references may be outside scope, not broken.',

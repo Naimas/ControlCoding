@@ -29,6 +29,10 @@ cc = "cc:main"
 package-dir = { "" = "scripts" }
 py-modules = [
   "cc",
+  "cc_layout",
+  "cc_layout_cli",
+  "cc_external",
+  "cc_external_boundary",
   "cc_evidence",
   "cc_evidence_inputs",
   "cc_evidence_process",

@@ -23,6 +23,8 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from cc_layout import is_contained, managed_path
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -32,7 +34,7 @@ SKIP_DIRS = {
     ".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv", "venv",
     "env", ".env", ".tox", ".mypy_cache", ".pytest_cache", ".cache",
     "dist", "build", "target", "out", "bin", "obj", ".next", ".nuxt",
-    ".controlcoding", ".claude", ".bridge", "devlog",
+    ".controlcoding", ".claude", ".bridge", "devlog", "cc",
 }
 
 # File extensions to language mapping
@@ -814,7 +816,12 @@ def main():
         directories, test_files, test_patterns, git_stable, hotspots, imports,
     )
 
-    output_path = root / args.output
+    output_path = (
+        managed_path(root, "CONTROLCODING.md.draft")
+        if args.output == "CONTROLCODING.md.draft" and is_contained(root)
+        else root / args.output
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(draft, encoding="utf-8")
     print(f"Draft written to: {output_path}")
     print(f"\nNext steps:")

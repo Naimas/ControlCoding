@@ -15,6 +15,12 @@ PAGE_TYPES = {
     'timeline': ('Timeline', r'\b20\d\d-\d\d-\d\d\b|milestone|release|decision'),
     'glossary': ('Glossary', r'glossary|definition|terminology|\bterms?\b'),
     'open_questions': ('Open questions', r'\?|\btodo\b|open question|unresolved|unknown'),
+    'architecture': ('Architecture and as-built', r'architect|as.built|interface|module|service|design'),
+    'concepts': ('Concepts', r'concept|definition|means|represents'),
+    'requirements': ('Requirements', r'require|must|shall|acceptance|requisit'),
+    'decisions': ('Decisions and rationale', r'decision|because|rationale|decis|because'),
+    'sources': ('Source inventory', None),
+    'outputs': ('Outputs and evidence', r'output|deliverable|evidence|receipt|result|proof'),
 }
 STATE = 'wiki_review:sections:v1'
 PROPOSALS = 'wiki_review:proposals:v1'
@@ -35,6 +41,8 @@ def _check_budget(approved, proposals):
 
 def validate_budget(db):
     """Validate retained review state before compilation or archive restore."""
+    from .knowledge_wiki_tools import validate
+    validate(db)
     approved = get(db, STATE, {})
     proposals = get(db, PROPOSALS, [])
     _check_budget(approved, proposals)
@@ -165,6 +173,8 @@ def commit_sections(db, approved, proposals):
     if any(key not in PAGE_TYPES or len(sections) > MAX_SECTIONS
            for key, sections in approved.items()):
         raise KnowledgeError('wiki_review_section_limit')
+    from .knowledge_wiki_tools import checkpoint
+    checkpoint(db, get(db, STATE, {}))
     put(db, STATE, approved)
     put(db, EPOCH, get(db, EPOCH, 0) + 1)
     put(db, 'library_epoch', get(db, 'library_epoch', 0) + 1)
@@ -215,6 +225,10 @@ def dispatch(root, action, value=None):
                 used = set(re.findall(r'\[(S\d+)\]', body))
                 if not used or used - {d['citation'] for d in deps}:
                     raise KnowledgeError('invalid_wiki_review_citation')
+                for paragraph in re.split(r'\n\s*\n', body):
+                    prose = '\n'.join(line for line in paragraph.splitlines() if line.strip() and not line.startswith('#'))
+                    if prose and not re.search(r'\[S\d+\]', prose):
+                        raise KnowledgeError('wiki_uncited_paragraph')
                 proposal = {'id': uuid4().hex, 'page_type': page_type, 'key': key,
                             'title': title, 'body': body, 'dependencies': deps,
                             'base_revision': row['revision'], 'base_review_epoch': get(db, EPOCH, 0),
@@ -258,6 +272,8 @@ def dispatch(root, action, value=None):
 
 def purge_source(db, source):
     """Erase retained derived text when a private source is forgotten."""
+    from .knowledge_wiki_tools import purge
+    purge(db, source)
     approved = get(db, STATE, {})
     for sections in approved.values():
         for key, section in list(sections.items()):

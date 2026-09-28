@@ -32,6 +32,14 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+try:
+    from cc_layout import managed_path
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if _scripts_dir.is_dir():
+        sys.path.insert(0, str(_scripts_dir))
+    from cc_layout import managed_path
+
 from base_agent import (
     AgentStateBase, BaseAgent, BackendAdapter, ToolExecutor,
     ReportBuilder, ToolCall, ToolResult,
@@ -881,7 +889,7 @@ class ArchitectAgent(BaseAgent):
         if not self._project_root:
             return "Error: no project root set"
 
-        devlog_dir = self._project_root / "devlog"
+        devlog_dir = managed_path(self._project_root, "devlog")
         if not devlog_dir.exists():
             return ("Error: devlog/ directory not found. "
                     "Decision recorded in state only.")

@@ -57,6 +57,7 @@ from codewarden_backend import (
     sanitize_content,
 )
 from violation_store import record_violation, summarize_history
+from hook_utils import managed_path
 
 # --- CONFIGURATION ---
 
@@ -218,7 +219,7 @@ def _check_engagement_gate(project_root):
     Missing config remains default-active through control_plane_utils.
     Missing or failing governance code is fail-closed.
     """
-    tools_dir = project_root / "tools"
+    tools_dir = managed_path(project_root, "tools")
     sys.path.insert(0, str(tools_dir))
     try:
         from control_plane_utils import is_component_active

@@ -6,6 +6,7 @@ import os
 import re
 import zlib
 from pathlib import Path
+from cc_layout import is_contained
 
 from .schema import HOST_CONTEXT_FILES, SKIP_DIRS, TEXT_EXTENSIONS
 
@@ -283,9 +284,10 @@ def _iter_scannable_files(project: Path, scope: str = "full") -> list[Path]:
     if scope == "governed":
         return _iter_governed_scannable_files(project)
     files: list[Path] = []
+    contained = is_contained(project)
     for root, dirs, names in os.walk(project):
         root_path = Path(root)
-        dirs[:] = [name for name in dirs if name not in SKIP_DIRS]
+        dirs[:] = [name for name in dirs if name not in SKIP_DIRS and not (contained and root_path == project and name == "cc")]
         for name in names:
             path = root_path / name
             try:

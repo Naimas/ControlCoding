@@ -9,6 +9,7 @@ from cc_setup_service import _Snapshots, _root, ReadPolicy
 from cc_panel_configuration import encoded, digest, require, text, relative, load_json, _inputs
 from cc_panel_transaction import commit, JOURNAL
 from cc_controlwork_observer import DIRECTORIES, MAX_RECORDS
+from cc_layout import managed_path, managed_relative
 
 AREAS = tuple(work.CAPTURE_AREAS)
 FIELDS = {'init': {'name', 'purpose'}, 'capture': {'title', 'body', 'area'},
@@ -52,6 +53,12 @@ def prepare(root_value, value, source_paths, request_id, timestamp):
     from cc_memory_lib.knowledge_import import SUPPORTED, extract
     require(all(Path(p).suffix.lower() in SUPPORTED for p in sources), 'unsupported_document')
     root = _root(root_value)
+    def physical(name):
+        normalized = str(name).replace('\\', '/')
+        first = normalized.split('/', 1)[0]
+        if normalized in ('CONTROLWORK.md', 'PROJECT.md', JOURNAL) or first in ('.controlwork', '.controlcoding'):
+            return managed_path(root, normalized)
+        return root / normalized
     scripts = Path(__file__).absolute().parent
     trusted = {scripts / p: 'scripts/'+p for p in ('cc_controlwork_manage.py', 'cc_panel_configuration.py',
         'cc_panel_transaction.py', 'cc_setup_service.py', 'cc_project_map_definition.py', 'cc_controlwork_observer.py',
@@ -59,17 +66,17 @@ def prepare(root_value, value, source_paths, request_id, timestamp):
         'cc_memory_lib/knowledge_import.py', 'cc_memory_lib/extractors.py')}
     with _Snapshots(root, trusted, ReadPolicy()) as reader:
         require(reader.observe(root, {}, directory=True) is not None, 'missing_root')
-        require(reader.observe(root / JOURNAL, {}) is None, 'recovery_required')
+        require(reader.observe(physical(JOURNAL), {}) is None, 'recovery_required')
         for path in trusted:
             require(reader.observe(path, {}) is not None, 'missing_source')
-        def observe(name, cap=65536):
-            snap = reader.observe(root / name, {})
+        def observe(name, cap=65536, *, owned=False):
+            snap = reader.observe(physical(name) if owned else root / name, {})
             require(snap is None or len(snap[-1]) <= cap, 'memory_limit')
             return snap
-        context = observe('CONTROLWORK.md')
-        config = observe('.controlwork/config.json')
-        categories = observe('.controlwork/categories.json')
-        graph_review = observe('.controlwork/graph-suggestions.json')
+        context = observe('CONTROLWORK.md', owned=True)
+        config = observe('.controlwork/config.json', owned=True)
+        categories = observe('.controlwork/categories.json', owned=True)
+        graph_review = observe('.controlwork/graph-suggestions.json', owned=True)
         if config:
             cfg = load_json(config[-1])
             require(type(cfg.get('schemaVersion')) is int and cfg['schemaVersion'] == 1 and cfg.get('product') == 'ControlWork', 'invalid_memory')
@@ -80,7 +87,7 @@ def prepare(root_value, value, source_paths, request_id, timestamp):
         # is bounded and membership participates in the preview identity.
         memberships, existing_records = {}, set()
         for folder in DIRECTORIES:
-            path = root / folder
+            path = physical(folder)
             if reader.observe(path, {}, directory=True) is None:
                 continue
             names = []
@@ -131,7 +138,7 @@ def prepare(root_value, value, source_paths, request_id, timestamp):
                     name = 'import-'+identity[:24]+'.md'
                     path = (work.MEMORY_ROOT / value['area'] / name).as_posix()
                     generated = commands._work_capture_content(value['area'], Path(source).stem, body, 'captured', source, '', stamp)
-                    existing = observe(path)
+                    existing = observe(path, owned=True)
                     if existing:
                         # Re-import preserves the original capture date only if all
                         # other bytes still match this source and Core format.
@@ -143,15 +150,16 @@ def prepare(root_value, value, source_paths, request_id, timestamp):
         files, changes, blockers = [], {}, []
         for name, data in sorted(outputs.items()):
             require(len(data) <= 65536, 'memory_limit')
-            snap = observe(name)
+            snap = observe(name, owned=name in ('CONTROLWORK.md', 'PROJECT.md') or name.startswith(('.controlwork/', '.controlcoding/')))
             keep = snap is not None and (name in preserve or snap[-1] == data)
             op = 'keep' if keep else 'conflict' if snap else 'create'
             if op == 'conflict':
                 blockers.append('Existing record differs: '+name)
             if op == 'create':
-                changes[root / name] = data
+                changes[physical(name)] = data
             intended = snap[-1] if keep else data
-            files.append({'path': name, 'action': op, 'bytes': len(intended), 'sha256': digest(intended),
+            physical_name = managed_relative(root, name) if name in ('CONTROLWORK.md', 'PROJECT.md') or name.startswith(('.controlwork/', '.controlcoding/')) else name
+            files.append({'path': physical_name, 'logical_path': name, 'action': op, 'bytes': len(intended), 'sha256': digest(intended),
                           'before_sha256': digest(snap[-1]) if snap else None,
                           'preview': intended.decode('utf-8', errors='replace')[:8000], 'truncated': len(intended.decode('utf-8', errors='replace')) > 8000})
         reader.recheck()

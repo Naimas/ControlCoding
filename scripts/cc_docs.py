@@ -17,6 +17,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from cc_layout import managed_path
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility.
@@ -1342,7 +1344,7 @@ def _iter_audit_scan_files(root: Path) -> list[Path]:
 
 def _duplicate_audit_findings(project: Path) -> list[dict[str, Any]]:
     audit_reports = project / "audit_reports"
-    outputs = project / ".controlwork" / "memory" / "outputs"
+    outputs = managed_path(project, ".controlwork", "memory", "outputs")
     if not audit_reports.is_dir() or not outputs.is_dir():
         return []
 
@@ -1387,7 +1389,7 @@ def _audit_candidate_files(project: Path) -> list[Path]:
     docs_dir = project / "docs"
     if docs_dir.is_dir():
         candidates.extend(_iter_audit_scan_files(docs_dir))
-    outputs_dir = project / ".controlwork" / "memory" / "outputs"
+    outputs_dir = managed_path(project, ".controlwork", "memory", "outputs")
     if outputs_dir.is_dir():
         candidates.extend(_iter_audit_scan_files(outputs_dir))
     return sorted(set(candidates))
@@ -1969,7 +1971,13 @@ def cmd_docs_check(
 
 def _proposal_path(project: Path, output: Path | None) -> Path:
     if output is None:
-        return project / ".controlcoding" / "docs" / "proposals" / f"{_stamp()}-docs-maintenance.md"
+        return managed_path(
+            project,
+            ".controlcoding",
+            "docs",
+            "proposals",
+            f"{_stamp()}-docs-maintenance.md",
+        )
     target = output if output.is_absolute() else project / output
     target = target.resolve()
     project_resolved = project.resolve()
