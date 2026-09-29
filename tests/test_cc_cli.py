@@ -13913,6 +13913,49 @@ class TestInitPreservation:
     def isolated_central(self, tmp_path, monkeypatch):
         monkeypatch.setattr(cc, "_central_hooks_dir", lambda: tmp_path / "central fixture" / "hooks")
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX execute permissions")
+    @pytest.mark.parametrize("contained", [False, True])
+    def test_new_git_hooks_executable_existing_modes_preserved(self, tmp_path, contained):
+        import stat
+        project = tmp_path / "application"
+        git_hooks = project / ".git" / "hooks"
+        git_hooks.mkdir(parents=True)
+        if contained:
+            from cc_layout import MARKER_BYTES
+            (project / "cc").mkdir()
+            (project / "cc" / "layout.json").write_bytes(MARKER_BYTES)
+        assert cc.cmd_init(project, quiet=True) == 0
+        hooks = [git_hooks / name for name in ("pre-commit", "post-commit")]
+        assert all(stat.S_IMODE(path.stat().st_mode) == 0o700 for path in hooks)
+        control = project / "cc" if contained else project
+        assert not (control / "CONTROLCODING.md").stat().st_mode & 0o111
+        # Even a non-executable existing hook belongs to the adopter. Re-running
+        # init must neither replace its bytes nor silently change permissions.
+        for path in hooks:
+            path.write_bytes(b"#!/bin/sh\n# adopter hook\nexit 0\n")
+            path.chmod(0o600)
+        before = _init_inventory(project)
+        assert cc.cmd_init(project, quiet=True, preview_only=True) == 0
+        assert cc.cmd_init(project, quiet=True) == 0
+        assert _init_inventory(project) == before
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX execute permissions")
+    def test_git_hook_permission_failure_does_not_publish_unusable_hook(self, tmp_path, monkeypatch):
+        project = tmp_path / "application"
+        git_hooks = project / ".git" / "hooks"
+        git_hooks.mkdir(parents=True)
+        (project / "user.txt").write_bytes(b"preserve me")
+
+        def denied(fd, mode):
+            raise PermissionError("fixture: cannot make hook executable")
+
+        monkeypatch.setattr(os, "fchmod", denied)
+        assert cc.cmd_init(project, quiet=True) == 1
+        assert not (git_hooks / "pre-commit").exists()
+        assert not (git_hooks / "post-commit").exists()
+        assert not list(git_hooks.iterdir())
+        assert (project / "user.txt").read_bytes() == b"preserve me"
+
     @pytest.mark.parametrize("central", [False, True])
     def test_fresh_preview_repeat_preserves_bytes_metadata_constants(self, tmp_path, central, monkeypatch):
         project = tmp_path / "project with spaces"

@@ -175,10 +175,22 @@ def test_contained_successful_git_commit_refreshes_only_contained_control_state(
     assert result.returncode == 0, result.stderr
     event_log = project / "cc" / ".controlcoding" / "event_log.jsonl"
     deadline = time.monotonic() + 5
-    while not event_log.exists() and time.monotonic() < deadline:
+    events = []
+    while time.monotonic() < deadline:
+        # Post-commit runs in the background. Creation precedes the completed
+        # event; Windows also denies reads while append_event holds its lock.
+        try:
+            text = event_log.read_text(encoding="utf-8")
+            # Only parse completed JSONL records; a malformed completed line
+            # remains a failure, not a reason to silently ignore the event.
+            events = [json.loads(line) for line in text.split("\n")[:-1] if line]
+        except (FileNotFoundError, PermissionError):
+            pass
+        else:
+            if any(event.get("event") == "agent_started" and event.get("agent") == "codewarden" for event in events):
+                break
         time.sleep(0.05)
     assert event_log.is_file()
-    events = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines() if line]
     assert any(event.get("event") == "agent_started" and event.get("agent") == "codewarden" for event in events)
     assert not (project / ".controlcoding").exists()
     assert not (project / "cc_hook_log.jsonl").exists()

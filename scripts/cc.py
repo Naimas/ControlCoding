@@ -8326,12 +8326,15 @@ def _plan_init(project: Path, central_hooks: bool = False, *,
             raise OSError(f"required init source missing: {path}")
         return snapshot[-1]
 
-    def output(path, data, *, retain=False, reason="identical bytes"):
+    def output(path, data, *, retain=False, reason="identical bytes", executable=False):
         snapshot = observe(path, observations)
         if snapshot is not None and not retain and snapshot[-1] != data:
             raise OSError(f"init conflict at {path}: existing bytes differ; reconcile explicitly before init")
         files[path] = {"data": data, "action": "keep" if snapshot is not None else "create",
-                       "reason": reason if snapshot is not None else "absent destination"}
+                       "reason": reason if snapshot is not None else (
+                           "absent destination; owner-executable Git hook on POSIX"
+                           if executable else "absent destination"),
+                       "executable": executable}
 
     def json_input(name):
         target = _control_plane_path(project, name)
@@ -8419,7 +8422,8 @@ def _plan_init(project: Path, central_hooks: bool = False, *,
         for name, text in [("pre-commit", _build_repo_precommit_hook_script(hooks_dest, fitness_dest)),
                            ("post-commit", _build_repo_postcommit_hook_script(hooks_dest))]:
             output(git_hooks / name, text.encode("utf-8"), retain=True,
-                   reason="existing Git hook retained; generated CC gate not installed here or verified")
+                   reason="existing Git hook retained; generated CC gate not installed here or verified",
+                   executable=True)
 
     directory(_control_plane_dir(project))
     config_path, config_snapshot, config = json_input("cc_config.json")
@@ -8464,7 +8468,7 @@ def _plan_init(project: Path, central_hooks: bool = False, *,
     return {"observations": observations, "directories": directories, "files": files}
 
 
-def _init_publish(path: Path, data: bytes, observations: dict, created: list):
+def _init_publish(path: Path, data: bytes, observations: dict, created: list, *, executable=False):
     """Publish exclusively; never replace a destination or clean up a foreign stage."""
     import tempfile
     descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.init-", suffix=".tmp")
@@ -8477,18 +8481,26 @@ def _init_publish(path: Path, data: bytes, observations: dict, created: list):
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(data)
             stream.flush()
+        if executable and os.name == "posix":
+            # Set permissions on the owned inode before exclusive publication.
+            # Existing hooks never reach this path; keep mkstemp's private access.
+            os.fchmod(descriptor, 0o700)
         if os.name == "nt":
             os.close(descriptor)
             descriptor = -1
         snapshot = _init_snapshot(stage)
         if snapshot is None or snapshot[:2] != owned or snapshot[-1] != data:
             raise OSError(f"init stage changed: {stage}")
+        if executable and os.name == "posix" and stat.S_IMODE(snapshot[2]) != 0o700:
+            raise OSError(f"init stage permissions changed: {stage}")
         _init_recheck(observations)
         os.link(stage, path)
         created.append(path)
         published = _init_snapshot(path)
         if published is None or published[:2] != owned or published[-1] != data:
             raise OSError(f"init publication changed: {path}")
+        if executable and os.name == "posix" and stat.S_IMODE(published[2]) != 0o700:
+            raise OSError(f"init publication permissions changed: {path}")
         observations[path] = (False, published)
     finally:
         try:
@@ -8538,7 +8550,8 @@ def _apply_init(plan: dict, created: list):
     for path, item in plan["files"].items():
         _init_recheck(observations)
         if item["action"] == "create":
-            _init_publish(path, item["data"], observations, created)
+            _init_publish(path, item["data"], observations, created,
+                          executable=item["executable"])
     _init_recheck(observations)
 
 

@@ -156,7 +156,7 @@ class _Snapshots:
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
         if directory:
             flags |= os.O_DIRECTORY
-        parent = self.entries.get(path.parent)
+        parent = self.entries.get(path.parent) if path.parent != path else None
         return os.open(path.name if parent else path, flags,
                        dir_fd=parent[2] if parent else None)
 
@@ -174,7 +174,7 @@ class _Snapshots:
         try:
             # Parents have already been opened from the volume root downward.
             # lstat avoids opening FIFOs/devices, and fstat closes replacement races.
-            parent = self.entries.get(path.parent)
+            parent = self.entries.get(path.parent) if path.parent != path else None
             if parent and parent[1] is None:
                 self.entries[path] = (directory, None, None)
                 return None
@@ -242,7 +242,9 @@ class _Snapshots:
         for path, (directory, snapshot, fd) in self.entries.items():
             source = self.label(path)
             try:
-                parent = self.entries.get(path.parent)
+                # The volume root is its own parent and has no child name.
+                # Check its absolute entry against the pinned descriptor.
+                parent = self.entries.get(path.parent) if path.parent != path else None
                 if parent and parent[1] is None:
                     continue  # Its missing parent is itself rechecked first.
                 if os.name == "posix" and parent:

@@ -566,6 +566,12 @@ gate there. Canonical context/config/settings take precedence; ordinary legacy
 inputs remain unchanged, and absent canonical configuration can be created using
 their custom fields. A legacy-only `CLAUDE.md` remains the context source.
 
+On POSIX, newly generated Git hooks are published with owner read/write/execute
+permissions (`0700`). Existing hooks retain their bytes and permissions, even
+if they are not executable; init does not repair or certify an existing gate.
+Inspect and reconcile an existing non-executable hook explicitly, then verify
+both an allowed commit and a deliberately prohibited change on a disposable copy.
+
 Hook and fitness copies must be absent or byte-identical. Different copies
 conflict regardless of mtime. Existing `cc_config.json` must be valid and
 compatible with the requested local/central mode. Existing settings must already
