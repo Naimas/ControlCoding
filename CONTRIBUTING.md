@@ -115,6 +115,21 @@ outside the checkout and attribute it separately from the maintained receipt.
 The hosted job's total allowance and actual matrix timing require independent
 review; a local run or changed per-suite bound does not establish hosted success.
 
+Integrated Product acceptance also runs separately from the maintained gate:
+
+```bash
+python -B -m pytest tests/test_cc_product_integrated_acceptance.py -q -s -p no:cacheprovider --basetemp /external/workbench/fixtures --junitxml /external/workbench/integrated.xml
+```
+
+Run it once with the selected source and again with `CC_PW07_RUNTIME` naming the
+fresh wheel's extracted module directory (the directory containing `cc.py`).
+Keep each run's fixtures, logs and JUnit separate. The harness checks module
+origins and drives real CLI preview/apply and owner receipts; its local release
+adapter inspects materialized output. These deterministic journeys do not qualify
+live deployment, genuine participant usability or live model quality. Actual
+Electron input, strict TypeScript, a fresh desktop build, native wheel-Core bridge
+coverage and independent source/evidence review remain separate obligations.
+
 Quick smoke test (fastest subset):
 
 ```bash

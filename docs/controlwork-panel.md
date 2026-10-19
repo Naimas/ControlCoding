@@ -1,5 +1,13 @@
 # ControlWork desktop memory
 
+The local PW06 candidate names this destination **Library**. Existing `Memory`
+and `ControlWork` saved routes still open it. Library tools are the initial lane;
+Product roadmap remains an explicit alternative and works without memory.
+Both lanes stay mounted so switching destinations or lanes retains local selection
+and filters. Library status distinguishes setup, current records, no matches,
+refresh needs and unavailable observations. Conversation import starts with
+readable Markdown; portable JSON and plain text remain available.
+
 The optional desktop **ControlWork** section reads the existing embedded Project
 Plane. It replaces the Memory placeholder. The separate **Manage project memory**
 workflow adds reviewed portable archive writes; see [management contract](controlwork-management.md).

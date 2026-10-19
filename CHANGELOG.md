@@ -16,12 +16,28 @@ All notable changes to ControlCoding are documented in this file.
 - Git byte preservation for Python owner sources: checkout line-ending
   conversion must not invalidate implementation identities or compatibility pins.
 
-The frozen implementation passed all 23 required suites locally on Windows:
-3,343 passed, 33 classified host skips, zero failures/errors; all 109 Progress
-cases passed without skips. These results precede the publication documentation
-and Git-attributes overlay and do not claim hosted CI success for this commit.
-The September 28 desktop download is unchanged. Further UI work, integrated
-product acceptance, two-person usability and live model quality remain open.
+The integrated candidate passed all 23 required suites locally on Windows:
+3,343 passed, 33 classified host skips and zero failures/errors. All 83 mandatory
+controls passed, including seven separate authentic retention cases. Source and
+wheel journeys each passed ten integrated cases. Independent source and terminal
+review found no blocking findings. These source-bound results precede this
+publication documentation overlay and do not establish hosted CI success; the
+prior October 19 public CI run failed all four jobs.
+
+### Added - Integrated acceptance, October 19, 2026
+
+- Six independent public-CLI lifecycle journeys, also runnable against an
+  extracted wheel, with explicit approvals, current evidence and retained history.
+- Recovery controls for four document layout/ownership combinations, including
+  publication failures, retry and concurrent edits while preserving outside data.
+- Contribution and workflow guidance matching these qualified integration paths.
+
+The separately maintained local desktop passed 402 Node tests and 430 assertion
+entries across 23 native processes; its corrections preserve manual planning
+mappings and editor content during navigation. That source is outside this Core
+package. The September 28 desktop download remains unchanged. Real-project
+adoption, two-person usability and live model quality remain open. No numbered
+release is created by this development-source update.
 
 ### Added — desktop development preview, September 28, 2026
 

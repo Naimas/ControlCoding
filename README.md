@@ -61,13 +61,21 @@ and **Overview** views. Overview reads current progress without initializing
 project memory. These additions are **not included in the September 28 desktop
 download below**. Its screenshots and download remain dated preview material.
 
-Local Windows qualification of the frozen implementation completed on October
-19: all 23 required suites completed, with 3,343 test passes, 33 explicit host
-skips and no failures or errors. All 109 Progress cases passed without skips.
-This is local implementation evidence, not a hosted CI result for this commit.
-The publication also updates documentation and Git byte-preservation rules.
-Further UI work, integrated product acceptance, two-person usability and live
-model quality evaluation remain open; no new desktop package or numbered
+Local integrated qualification completed on October 19, 2026: all 23 required
+suites passed, with 3,343 test passes, 33 classified host skips and no failures
+or errors. All 83 mandatory cases passed, including seven separate authentic
+retention controls. The integrated journeys passed ten cases per source/wheel
+origin. Separate local desktop qualification passed 402 Node tests and 430
+assertions across 23 native processes, bound to the exact qualified inputs.
+Independent source and terminal evidence review passed without blocking findings.
+
+This source update adds the integrated CLI/document recovery tests and matching
+guides. Core method 0.11.0 is unchanged. Local desktop corrections preserve manual
+planning mappings and editor content during navigation; the desktop source stays
+outside this Core repository package and the September 28 download is unchanged.
+These results do not establish hosted CI success for this publication. The prior
+October 19 public CI run failed all four jobs. Real-project adoption, two-person
+usability and live model quality remain open; no new desktop package or numbered
 release is published by this source update.
 
 ## Desktop UI Preview

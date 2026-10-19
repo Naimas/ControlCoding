@@ -1,5 +1,13 @@
 # Project Document and feature planning
 
+The local desktop candidate extends the review pattern to later Development
+stages, Library and Settings. Normal artifact and observation entry uses forms;
+advanced JSON remains optional. Product acceptance, execution permission,
+verification and release remain separate Core decisions. All existing route IDs
+remain compatible, with readable Library/Settings labels and guarded drafts.
+This local UI work does not publish or update the installed desktop. Participant
+usability and live model quality remain separately deferred.
+
 The experimental Product workflow saves a whole-app Project Document and carries
 selected features through Request, Specification and Implementation plan.
 Core commands work without the optional desktop, a model or initialized memory.
@@ -24,6 +32,32 @@ file scope and actionable steps/checks; observed existing files bind their exact
 bytes, while proposed new files must remain absent. Approval is permission for
 that exact plan, not proof that implementation or verification has happened.
 Continue using the existing Development stages after plan acceptance.
+
+The reviewed file observations are exact. A manual source edit, including creation
+of a previously absent planned file, makes that plan's source observation stale.
+Review the changed bytes, observe the plan files again, save the revised plan
+review and accept it explicitly before capturing the implementation candidate.
+Earlier decisions remain in history; unchanged intent and specification do not
+need to be authored again.
+
+A new manual detailed draft uses the current upstream revision. Its plan carries
+the checks already selected in the Specification; assign their task obligations
+in the readable editor. This prepares a draft for review and grants no approval
+or passing evidence. Retained artifacts and reviewed import/proposal payloads
+keep their original references.
+
+Save the canonical draft before exiting, then explicitly select the same project
+on restart. Saved documents, decisions, stable IDs, history and pending work are
+the continuation path; unsaved editor fields have no durable autosave guarantee.
+New independent work starts with its own scope and approvals. An incident child
+also needs fresh planning and verification, while retaining its operational origin.
+
+A local release observation can use a configured pinned `release_status` adapter
+that inspects actual local output and environment. Its scope is that fixture or
+local installation. A manual release report remains self-reported, and an older
+monitor result cannot establish release or monitoring for a changed candidate.
+The desktop's ordinary forms do not execute deployment adapters or provide an
+observed-release form; those integrations use the canonical CLI/private adapter.
 
 Additional independent features can be added without changing earlier frozen
 scope. A selection records exact feature revisions, linked changes and criterion

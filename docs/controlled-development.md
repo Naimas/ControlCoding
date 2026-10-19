@@ -1,5 +1,19 @@
 # Controlled Development
 
+The optional local desktop candidate has readable forms for the later Build,
+Verify, Review & release and Maintain artifacts. Use Project checks for actual
+verification and invariant runs; recording an artifact or observation cannot
+replace their current receipts. Human evidence and independent review have
+separate record forms and explicit previews. A review by the candidate's own
+implementer remains rejected by Core. Local actor labels are not authenticated
+people. Manual deployment reports remain self-reported.
+
+Current plan/candidate/release references are reused. Retained references that
+differ from the current record show drift and require deliberate review. Inspect
+exact identities and optional protocol JSON in advanced panels. Drafts survive
+navigation; save or explicitly discard before changing their scope. A successful
+operation acknowledges only its submitted draft, retaining unrelated edits.
+
 ControlCoding records each software change as a versioned development path:
 intent, specification, approved plan, implementation, verification, review and
 release, and operational outcome. This is an experimental development candidate.
@@ -13,10 +27,12 @@ evaluator version and digest. Every change retains its creation method identity.
 or schemas fail closed; changing the method requires an explicit supported
 migration rather than reinterpretation of old approvals.
 
-The current candidate implements method **0.6.1**. Migration is explicit and
-supports the exact retained CD10 0.5.0 and PW00 0.6.0 implementations. Other identities
-remain unsupported. Preserve their original registry and matching implementation;
-do not edit method identities to make an old registry appear current.
+The current candidate implements method **0.11.0**. Migration is explicit and
+follows the exact supported predecessor identities through the compatibility
+chain, including retained CD10/PW00 and Product workflow methods. Unknown pairs
+remain unsupported. Preserve each original registry and matching implementation;
+do not edit method identities to make an old registry appear current. Retained
+approvals remain historical where current execution evidence is required.
 
 The registry is logically `.controlcoding/development.json`. Contained projects
 route it through their existing layout. Its schema 2 manifest references immutable

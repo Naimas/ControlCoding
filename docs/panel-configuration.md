@@ -1,5 +1,12 @@
 # Guided panel configuration
 
+In the local PW06 candidate this destination is named **Settings**; the saved
+`Setup` route remains compatible. The page shows the current configuration state
+and next step. Direct choices need no JSON. Optional AI packet exchange remains
+under an advanced disclosure with the same request/source validation. Unsaved
+configuration edits block project replacement and reload until saved or explicitly
+discarded. Saving a draft and installing the reviewed Core files stay separate.
+
 The development desktop has a three-step Setup page for two decision phases:
 direct project choices, then optional AI proposals and review. The last step
 previews either a draft save or a bounded Core installation. This increment does

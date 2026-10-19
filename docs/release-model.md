@@ -84,6 +84,12 @@ development repository must not be interpreted as a public feature claim.
 
 ## Core And Optional Helpers
 
+Local integrated qualification keeps source, extracted wheel and optional
+desktop identities separate. The public wheel contains its declared Core
+modules; the desktop's private bridge is supplied by the separate UI source.
+A test adapter overlay or a local observed release does not publish a new Core
+release, update the installed desktop or demonstrate hosted deployment.
+
 Core remains usable without specialist orchestration. Bounded manual
 consultation is part of the Core usage story only when the user explicitly
 chooses it and mediates the exchange.
