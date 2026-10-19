@@ -14,7 +14,7 @@ from types import MappingProxyType
 @dataclass(frozen=True)
 class MapPolicy:
     max_input_bytes: int = 2 * 1024 * 1024
-    max_output_bytes: int = 768 * 1024
+    max_output_bytes: int = 4 * 1024 * 1024
     max_nodes: int = 2000
     max_edges: int = 8000
     max_sources: int = 4000

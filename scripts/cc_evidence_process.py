@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 
 OUTPUT_LIMIT = 16 * 1024 * 1024
 DRAIN_SECONDS = 0.5
+
+
+def progress_observation():
+    """Observe an already loaded Progress owner without requiring it for Evidence.
+
+    Progress imports its owner before reads; a present broken owner must raise.
+    Look it up each time so helpers imported earlier attach to the same context.
+    """
+    owner = sys.modules.get('cc_product_progress_observation')
+    return None if owner is None else owner.current()
 
 
 def _available(stream) -> int:
@@ -39,6 +50,9 @@ def run_command(argv, *, cwd, timeout, env=None, output_limit=OUTPUT_LIMIT,
     Only the owned child is killed; this is not a process-tree sandbox.
     """
     started = time.monotonic()
+    observer = progress_observation()
+    if observer is not None:
+        timeout = observer.remaining(timeout)
     sizes = {"stdout": 0, "stderr": 0}
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     proc = None

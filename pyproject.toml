@@ -39,9 +39,39 @@ py-modules = [
   "cc_memory",
   "cc_project_map_model",
   "cc_project_map_sources",
+  "cc_project_map_snapshots",
   "cc_setup",
   "cc_setup_service",
   "cc_feature",
+  "cc_development",
+  "cc_product",
+  "cc_product_evolution",
+  "cc_product_cli",
+  "cc_product_documents",
+  "cc_product_adoption",
+  "cc_product_planning",
+  "cc_product_progress",
+  "cc_product_progress_contract",
+  "cc_product_progress_observation",
+  "cc_planning",
+  "cc_planning_cli",
+  "cc_development_archive",
+  "cc_development_store",
+  "cc_development_history",
+  "cc_development_compatibility",
+  "cc_development_migration",
+  "cc_development_sessions",
+  "cc_development_bundle",
+  "cc_development_adapters",
+  "cc_development_jobs",
+  "cc_development_eval",
+  "cc_development_execution",
+  "cc_development_gateway",
+  "cc_development_codex",
+  "cc_development_release",
+  "cc_development_github",
+  "cc_development_operations",
+  "cc_development_diagnosis",
   "cc_docs",
   "cc_review",
   "cc_init_module",
@@ -49,4 +79,7 @@ py-modules = [
 
 [tool.setuptools.packages.find]
 where = ["scripts"]
-include = ["cc_memory_lib*"]
+include = ["cc_memory_lib*", "cc_development_lib*"]
+
+[tool.setuptools.package-data]
+cc_development_lib = ["*.json"]

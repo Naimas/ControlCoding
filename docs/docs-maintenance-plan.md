@@ -28,6 +28,12 @@ The audit covers:
 
 Errors make the audit fail. Warnings remain non-blocking audit findings.
 
+The experimental [controlled development method](./controlled-development.md)
+has a separate artifact and decision owner. Documentation audit checks its CLI
+routes and declared documentation references; it cannot approve its intent,
+specification, plan or release. Changes to the development service use the
+required `controlled-development-regression` suite in addition to this audit.
+
 ### `docs check`
 
 `cc docs check` evaluates the same audit payload in a CI-oriented form. It

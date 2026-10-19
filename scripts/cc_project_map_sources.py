@@ -15,6 +15,7 @@ import tomllib
 
 import cc_project_map_model as model
 from cc_setup_service import _Snapshots, _ordinary, _root, _signature, SetupServiceError
+from cc_project_map_snapshots import MapSnapshotBatches
 
 
 ADAPTER = "cc-project-map-sources/v1"
@@ -122,7 +123,7 @@ def preview_project_map_scope(request, *, policy=None):
     policy = _policy(policy)
     _, normalized = _request(request, policy)
     binding = {"request": normalized, "policy": {f.name: getattr(policy, f.name) for f in fields(policy)}, "adapter": ADAPTER,
-               "detail_policy": "file-overview-with-bounded-symbols-v2"}
+               "detail_policy": "batched-file-overview-v3"}
     return {"schema_version": 1, "adapter": ADAPTER,
             "preview_id": _hash(json.dumps(binding, sort_keys=True).encode("utf-8")),
             "design_paths": normalized["design_paths"], "code_extensions": sorted(_CODE),
@@ -140,6 +141,7 @@ class _Inventory:
 
     def _names(self, path, limit):
         self.tick()
+        self.reader.observe(path, {}, directory=True)
         fd = self.reader.entries[path][2]
         names = []
         with os.scandir(path if os.name == "nt" else fd) as entries:
@@ -158,6 +160,7 @@ class _Inventory:
 
     def inspect(self, path):
         self.tick()
+        self.reader.observe(path.parent, {}, directory=True)
         if os.name == "posix":
             return os.stat(path.name, dir_fd=self.reader.entries[path.parent][2], follow_symlinks=False)
         return path.lstat()
@@ -372,7 +375,7 @@ def observe_project_map(request, *, policy=None, expected_preview=None):
             raise MapSourceError("time_limit")
 
     try:
-        with _Snapshots(root, {}, policy) as reader:
+        with MapSnapshotBatches(root, policy, tick) as reader:
             root_snapshot = reader.observe(root, {}, directory=True)
             if root_snapshot is None:
                 raise MapSourceError("root_unavailable")
@@ -441,7 +444,11 @@ def observe_project_map(request, *, policy=None, expected_preview=None):
                               "root_identity": root_id, "preview_id": preview["preview_id"], "projection": projection,
                               "observations": sorted(proposal.observations, key=lambda row: row["source"]),
                               "findings": proposal.findings, "counts": {"enumerated_entries": inventory.count,
-                              "content_bytes": reader.used["target"], "retained_entries": len(reader.entries)}}
+                              "content_bytes": reader.used["target"], "retained_entries": reader.peak_entries,
+                              "observed_entries": len(reader.ledger), "read_batches": reader.windows}}
+                    if proposal.symbols_enabled and any(n['kind'] == 'symbol' for n in proposal.nodes):
+                        # Preserve the smaller optional-detail budget; complete files win.
+                        model._bounded_copy(result, model.MapPolicy(), 768 * 1024)
                     result = model._bounded_copy(result, model.MapPolicy(), model.MapPolicy().max_output_bytes)
                 except model.MapValidationError as error:
                     if attempt or error.code != "limit" or not any(n["kind"] == "symbol" for n in proposal.nodes):

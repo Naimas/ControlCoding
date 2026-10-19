@@ -41,10 +41,19 @@ performance claims.
 
 Graph retrieval and integrated wiki: [usage, review and limits](./graph-wiki.md).
 
+Optional document organization: [sections, local AI suggestions and source links](./document-organization.md).
+
+Optional document topic labels: [tags, filters, local proposals and management](./document-tags.md).
+
+AI-assisted document kinds and stable plan references: [project codes, proposals and review](./document-codes.md).
+
 ## Current Documents
 
 | File | Status | Purpose |
 |---|---|---|
+| [controlled-development.md](./controlled-development.md) | Development candidate | Versioned change artifacts, current evidence gates, exact preview confirmation and explicit environment adapters. |
+| [product-workflow.md](./product-workflow.md) | Product candidate | Reviewed Project Document, versioned scope, typed dependencies, condition progress, task order and explicit file exports. |
+| [planning-discussion.md](./planning-discussion.md) | Experimental assistance | Durable bounded discussion, reviewed scoped proposals, send policy and separate semantic quality grading. |
 | [panel-ai-roles.md](./panel-ai-roles.md) | Development candidate | Per-project local/API role assignments, policy enforcement, persistence and execution limits. |
 | [install-controlcoding-on-your-project.md](./install-controlcoding-on-your-project.md) | Current | Primary installation guide. |
 | [quick-start.md](./quick-start.md) | Current | Compact setup and startup path. |
@@ -54,6 +63,7 @@ Graph retrieval and integrated wiki: [usage, review and limits](./graph-wiki.md)
 | [project-memory-engine.md](./project-memory-engine.md) | Current | Local Project Memory Engine and practical workflows. |
 | [controlwork-management.md](./controlwork-management.md) | Development candidate | Portable archive initialization, document import and manual knowledge/session capture with reviewed writes. |
 | [controlwork-panel.md](./controlwork-panel.md) | Development candidate | Optional desktop ControlWork views, bounded read scope, session summaries and Core graph retrieval. |
+| [document-codes.md](./document-codes.md) | Development candidate | Project AI classification, reviewed topic proposals and stable plan references. |
 | [memory-system-schema.md](./memory-system-schema.md) | Current | Memory and GraphRAG architecture with shipped and planned states distinguished. |
 | [memory-graph-contract.md](./memory-graph-contract.md) | Contract | Portable graph shapes, lifecycle, confidence, and compatibility aliases. |
 | [memory-graphrag-release-notes.md](./memory-graphrag-release-notes.md) | Reference | Memory GraphRAG hardening history and limitations. |
@@ -110,3 +120,7 @@ context and graph, explicit archive migration and current limits.
 
 [Work plan and Gantt](./work-schedule.md) describes hierarchical work blocks,
 process order, dependency arrows, calendar estimates, buffers and critical path.
+
+[Software project documents and views](./software-project-guide.md) distinguishes
+requirements, architecture, implementation plans, evidence and working sources,
+and explains which visual view answers each project-management question.

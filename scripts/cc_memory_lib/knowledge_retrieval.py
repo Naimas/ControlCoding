@@ -12,7 +12,8 @@ INTENTS = ('auto', 'lookup', 'decision', 'work', 'architecture', 'synthesis', 'h
 
 
 def options(value, text):
-    defaults = dict(graph=True, wiki=True, intent='auto', paths=[], kinds=[], lifecycle='all', before=None)
+    defaults = dict(graph=True, wiki=True, intent='auto', paths=[], kinds=[], lifecycle='all', before=None,
+                    tags=[], tag_mode='any', document_codes=[])
     if value is None:
         value = {}
     if type(value) is not dict or set(value) - set(defaults):
@@ -28,7 +29,20 @@ def options(value, text):
                        or s.startswith('/') or ':' in s and field == 'paths'
                        or '..' in s.split('/') for s in entries)):
             raise KnowledgeError('invalid_retrieval_options')
+    if (type(result['tags']) is not list or len(result['tags']) > 8 or len(set(result['tags'])) != len(result['tags'])
+            or any(type(i) is not str or not re.fullmatch('[a-f0-9]{16}', i) for i in result['tags'])
+            or result['tag_mode'] not in ('any', 'all')):
+        raise KnowledgeError('invalid_retrieval_options')
+    if (type(result['document_codes']) is not list or len(result['document_codes']) > 8
+            or len(set(result['document_codes'])) != len(result['document_codes'])
+            or any(type(code) is not str or not re.fullmatch(r'[A-Z][A-Z0-9]{1,7}-[A-Z][A-Z0-9]{1,7}-[A-Z][A-Z0-9]{1,7}-[0-9]{3,6}', code)
+                   for code in result['document_codes'])):
+        raise KnowledgeError('invalid_retrieval_options')
     if result['before'] is not None:
+        if result['tags']:
+            raise KnowledgeError('historical_tag_filter_unavailable')
+        if result['document_codes']:
+            raise KnowledgeError('historical_document_code_filter_unavailable')
         try:
             date = datetime.fromisoformat(result['before'])
             if date.tzinfo is None:
@@ -49,13 +63,28 @@ def options(value, text):
     return result
 
 
-def allowed(source, config):
+def allowed(source, config, db=None):
     if source['deleted'] or source['id'].startswith('wiki:'):
         return False
     if config['paths'] and not any(source['path'] == p or source['path'].startswith(p.rstrip('/') + '/') for p in config['paths']):
         return False
     if config['kinds'] and source['kind'] not in config['kinds']:
         return False
+    if config['tags']:
+        if db is None:
+            raise KnowledgeError('tag_filter_context_required')
+        from .knowledge_tags import assignment, registry
+        found = assignment(db, source, registry(db)['tags'])
+        current = set(found['ids']) if found['confirmed'] else set()
+        if not (bool(current.intersection(config['tags'])) if config['tag_mode'] == 'any' else set(config['tags']) <= current):
+            return False
+    if config['document_codes']:
+        if db is None:
+            raise KnowledgeError('document_code_filter_context_required')
+        from .knowledge_document_codes import _state, _display
+        state = _state(db, source)
+        if not state['confirmed'] or _display(state['assignment']) not in config['document_codes']:
+            return False
     if config['lifecycle'] != 'all':
         # Only canonical structured states may classify current/planned work.
         try:
@@ -82,7 +111,7 @@ def expand(db, root, text, seeds, config):
         return cache[identifier]
     def eligible(identifier):
         row = source(identifier)
-        return row is not None and allowed(row, config)
+        return row is not None and allowed(row, config, db)
     def reject(identifier, reason):
         if len(excluded) < 40:
             excluded.append({'source': identifier, 'reason': reason})
@@ -138,6 +167,13 @@ def expand(db, root, text, seeds, config):
                                 'revision': r['source_revision'], 'effective': r['effective']}
                                for r in reviewed if node in (r['source'], r['target'])]
                 candidates += [e for e in finding_edges if node in (e['source'], e['target'])]
+                from .knowledge_organization import related_edges
+                candidates += related_edges(db, node)
+                from .knowledge_document_lineage import edges_for
+                candidates += edges_for(db, node)
+                if not config['tags']:
+                    from .knowledge_tags import shared_hint_edges
+                    candidates += shared_hint_edges(db, node)
                 if config['intent'] in ('work', 'decision'):
                     candidates.sort(key=lambda e: (not e['kind'].startswith(('human_reviewed:', 'canonical_work:', 'recorded_dev:')), e['kind']))
                 for edge in candidates:
@@ -153,7 +189,7 @@ def expand(db, root, text, seeds, config):
                     if edge['revision'] != origin['revision'] or edge.get('effective') is False:
                         reject(other, 'stale_or_unapproved_relation')
                         continue
-                    if not edge['kind'].startswith(('explicit_markdown_reference', 'original_document_link', 'canonical_work:', 'recorded_dev:', 'human_reviewed:', 'wiki_reviewed:')):
+                    if not edge['kind'].startswith(('explicit_markdown_reference', 'original_document_link', 'canonical_work:', 'recorded_dev:', 'human_reviewed:', 'wiki_reviewed:', 'topic_tag_hint')):
                         continue
                     clean = {k: edge[k] for k in ('source', 'target', 'kind', 'revision')}
                     if clean not in edges:
@@ -185,7 +221,7 @@ def history(db, text, config):
     """Recorded original versions before cutoff; not reconstructed Git membership."""
     terms, results, scanned, truncated = set(tokenize(text)), [], 0, False
     for source in db.execute('SELECT * FROM sources ORDER BY id'):
-        if not allowed(source, config):
+        if not allowed(source, config, db):
             continue
         row = db.execute('SELECT * FROM revisions WHERE source=? AND julianday(observed)<=julianday(?) '
                          'ORDER BY julianday(observed) DESC, revision LIMIT 1', (source['id'], config['before'])).fetchone()

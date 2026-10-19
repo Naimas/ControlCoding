@@ -1,7 +1,9 @@
 # Work plan and Gantt
 
-Development candidate in the optional desktop panel. Open **ControlWork**, then
-**Work plan & Gantt → Refresh work plan**. Project memory must be enabled. Include
+Development candidate in the optional desktop panel. From a loaded **Status** or
+**Project Map**, choose **Work roadmap**. The existing schedule is also available
+in **ControlWork → Work roadmap → Refresh work plan**. Project memory must be
+enabled; selecting the roadmap never enables it automatically. Include
 the Dev records scope to observe canonical work, or assign objective, phase and
 activity roles to documents and approve their relations in **Work traceability**.
 Filenames and prose alone do not create tasks or dependencies.
@@ -16,6 +18,11 @@ Filenames and prose alone do not create tasks or dependencies.
   group spans, explicit buffers and calculated total float. Choose a project
   start date to replace relative days with dates. Zoom and scroll stay within
   the view. Unknown or invalid timing is shown as unscheduled.
+
+The process axis names numbered steps and the actual work items in each step;
+objective and phase names come from the records. Arrows are visible initially.
+Column headings stay fixed while the chart scrolls. Longer explanations are under
+**How to read this plan**. These changes do not infer business phases or dates.
 
 Select a row to inspect predecessors, successors, recorded state, owner and
 blockers. Hover highlights its direct dependency connections. Enable **All

@@ -100,6 +100,82 @@
       "description": "Verify graph retrieval, original citations, reviewed wiki findings and guarded revision recovery."
     },
     {
+      "id": "document-classification-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_document_types.py tests/test_cc_document_classification_review.py tests/test_cc_document_organization.py tests/test_cc_document_tags.py tests/test_cc_document_codes.py tests/test_cc_document_lineage.py -q --junitxml {project}/.controlcoding/verification_receipts/document-classification-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify source-bound document roles, reviewed organization and tags, numbered plan references, succession and code-filtered retrieval."
+    },
+    {
+      "id": "controlled-development-regression",
+      "timeoutSeconds": 750,
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_development_core.py tests/test_cc_development_adapters.py tests/test_cc_development_cli.py tests/test_cc_development_eval.py tests/test_cc_development_execution.py tests/test_cc_development_gateway.py tests/test_cc_development_codex.py tests/test_cc_development_release.py tests/test_cc_development_github.py tests/test_cc_development_release_jobs.py -q --junitxml {project}/.controlcoding/verification_receipts/controlled-development-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify revision-bound development gates, approved adapter jobs and the isolated desktop transport."
+    },
+    {
+      "id": "development-operations-regression",
+      "timeoutSeconds": 900,
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_development_operations.py tests/test_cc_development_diagnosis.py tests/test_cc_development_operations_core.py -q --junitxml {project}/.controlcoding/verification_receipts/development-operations-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify canonical incident history, atomic linked intent drafts and bounded diagnosis with native local jobs."
+    },
+    {
+      "id": "product-workflow-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_product_core.py tests/test_cc_product_documents.py tests/test_cc_product_migration.py -q --junitxml {project}/.controlcoding/verification_receipts/product-workflow-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify manual product decisions, selected-source review, trusted Markdown roundtrip and exact predecessor continuity."
+    },
+    {
+      "id": "planning-discussion-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_planning.py tests/test_cc_planning_upgrade.py tests/test_cc_planning_recovery.py tests/test_cc_planning_transport.py tests/test_cc_planning_quality.py -q --junitxml {project}/.controlcoding/verification_receipts/planning-discussion-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify durable scoped proposals, exact request bindings, bounded attempts, independent quality records and predecessor approval continuity."
+    },
+    {
+      "id": "product-evolution-regression",
+      "timeoutSeconds": 1200,
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_product_evolution.py tests/test_cc_product_evolution_upgrade.py tests/test_cc_product_evolution_transport.py tests/test_cc_product_evolution_acceptance.py -q --junitxml {project}/.controlcoding/verification_receipts/product-evolution-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify atomic scope adoption, typed dependency gates, current combined criteria and authentic predecessor continuity."
+    },
+    {
+      "id": "planning-depth-regression",
+      "timeoutSeconds": 900,
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_product_adoption.py tests/test_cc_product_adoption_core.py tests/test_cc_product_planning_detail.py tests/test_cc_product_planning_detail_core.py tests/test_cc_product_planning_execution.py tests/test_cc_product_planning_upgrade.py tests/test_cc_product_planning_discussion.py tests/test_cc_planning_detail_core.py -q --junitxml {project}/.controlcoding/verification_receipts/planning-depth-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify reviewed source adoption, detailed planning, richer worker qualification and authentic predecessor continuity."
+    },
+    {
+      "id": "product-progress-regression",
+      "timeoutSeconds": 3000,
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_product_progress_core.py tests/test_cc_product_progress_acceptance.py tests/test_cc_product_progress_transport.py tests/test_cc_product_progress_upgrade.py -q --junitxml {project}/.controlcoding/verification_receipts/product-progress-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify coherent read-only Product progress, exact condition coverage, bounded transport and authentic predecessor continuity."
+    },
+    {
+      "id": "product-progress-adapters-regression",
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_project_map_model.py tests/test_cc_project_map_sources.py tests/test_cc_project_map_definition.py tests/test_cc_project_map_controls.py tests/test_cc_project_map_batches.py tests/test_cc_project_map_analysis.py tests/test_cc_knowledge_work_schedule.py -q --junitxml {project}/.controlcoding/verification_receipts/product-progress-adapters-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify independent code-map and optional schedule owners beside canonical Product progress."
+    },
+    {
+      "id": "development-storage-regression",
+      "timeoutSeconds": 300,
+      "kind": "regression",
+      "required": true,
+      "command": "python -m pytest tests/test_cc_development_store.py tests/test_cc_development_history.py tests/test_cc_development_compatibility.py tests/test_cc_development_migration.py tests/test_cc_development_sessions.py tests/test_cc_development_bundle.py tests/test_cc_development_migration_runtime.py -q --junitxml {project}/.controlcoding/verification_receipts/development-storage-regression.xml -o junit_logging=all -o junit_log_passing_tests=false",
+      "description": "Verify checkpoint history, bounded cold replay, explicit compatibility, session quotas and complete recoverable backups; genuine historical-runtime cases require CC_TEST_PRIOR_RUNTIME."
+    },
+    {
       "id": "diff-check",
       "kind": "smoke",
       "required": false,

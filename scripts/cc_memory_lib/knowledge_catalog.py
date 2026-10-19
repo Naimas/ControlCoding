@@ -31,6 +31,9 @@ def read(root, value):
         if (value['snapshot'] is not None and value['snapshot'] != identity) or (value['offset'] and value['snapshot'] is None):
             raise KnowledgeError('catalog_snapshot_changed')
         kind = value['kind']
+        if kind == 'sources':
+            from .knowledge_tags import assignment, registry
+            tag_names = registry(db)['tags']
         columns, where, order = KINDS[kind]
         total = db.execute('SELECT count(*) FROM ' + kind + ' WHERE ' + where).fetchone()[0]
         rows, size = [], 0
@@ -39,6 +42,7 @@ def read(root, value):
             row = dict(raw)
             if kind == 'sources':
                 row['physicalPath'] = physical_source_path(root, row['path'], row['kind'])
+                row['tags'] = assignment(db, row, tag_names)
             if kind == 'wiki':
                 dependencies = json.loads(row.pop('dependencies'))
                 row.update(source_count=len(dependencies), stale=bool(freshness(db, dependencies)),

@@ -125,11 +125,17 @@ def restore(root, source):
         # archive; the source backup stays untouched for a later migration.
         from .knowledge_wiki_review import validate_budget
         validate_budget(candidate)
+        from .knowledge_document_review import reviews
+        reviews(candidate)
         if version in (2, 3):
             validate_storage(candidate)
         from .knowledge_service import policy
         config = policy(get(candidate, 'policy'))
         put(candidate, 'policy', {**config, 'automatic': False, 'worker': False})
+        from .knowledge_document_codes import SETTINGS as code_settings_key
+        code_settings = get(candidate, code_settings_key)
+        if isinstance(code_settings, dict) and code_settings.get('automatic'):
+            put(candidate, code_settings_key, {**code_settings, 'automatic': False})
         put(candidate, 'needs_reconcile', True)
         put(candidate, 'embedding_identity', None)
         put(candidate, 'worker_heartbeat', None)
@@ -182,6 +188,6 @@ def restore(root, source):
                 if version in (2, 3):
                     target.execute('PRAGMA user_version=' + str(version))
         return {'restored': True, 'requires_reconcile': True,
-                'notice': 'Original source files are not in this archive. Automatic updates and workers are disabled.'}
+                'notice': 'Original source files are not in this archive. Automatic updates, document classification and workers are disabled.'}
     finally:
         candidate.close()

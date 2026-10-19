@@ -877,6 +877,95 @@ def test_cli_strict_flag_and_adopter_imports(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def _copy_evidence_adopter(root, extra=()):
+    root.mkdir()
+    for name in ('cc_evidence','cc_evidence_inputs','cc_evidence_process','cc_layout',*extra):
+        shutil.copyfile(ROOT/'scripts'/(name+'.py'),root/(name+'.py'))
+
+
+def test_standalone_evidence_helpers_attach_to_late_real_progress_context(tmp_path):
+    adopter=tmp_path/'adopter'
+    _copy_evidence_adopter(adopter,('cc_product_progress_observation',))
+    program=r'''
+import sys,time
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+import cc_evidence,cc_evidence_inputs as inputs,cc_evidence_process as process
+assert 'cc_product_progress_observation' not in sys.modules
+assert inputs.progress_observation() is process.progress_observation() is None
+import cc_product_progress_observation as owner
+root=Path(sys.argv[1])/'project';root.mkdir();(root/'source').write_bytes(b'1234')
+with owner.observing() as observed:
+    assert inputs.progress_observation() is process.progress_observation() is observed
+    with inputs.SafeRoot(root) as safe:
+        safe.read('source',inputs.Budget());safe.read('source',inputs.Budget())
+    assert observed.input_bytes==8 and observed.read_entries>=2
+    def forbidden(*args,**kwargs):raise AssertionError('Expired context spawned a child')
+    process.subprocess.Popen=forbidden
+    observed.deadline=time.monotonic()-1
+    try:process.run_command([sys.executable,'-B','-c','pass'],cwd=root,timeout=30)
+    except owner.ObservationError as error:assert error.code=='progress_limits_exhausted'
+    else:raise AssertionError('Shared deadline was bypassed')
+assert inputs.progress_observation() is process.progress_observation() is None
+'''
+    result=subprocess.run([sys.executable,'-I','-S','-B','-c',program,str(adopter)],
+        cwd=adopter,capture_output=True,timeout=30)
+    assert result.returncode==0,result.stderr
+
+
+@pytest.mark.parametrize('owner_state',['missing','broken'])
+def test_progress_import_cannot_hide_missing_or_broken_observation_owner(tmp_path,owner_state):
+    adopter=tmp_path/'adopter'
+    _copy_evidence_adopter(adopter,('cc_product_progress','cc_product_progress_contract'))
+    if owner_state=='broken':
+        (adopter/'cc_product_progress_observation.py').write_text(
+            "raise RuntimeError('broken_observation_owner')\n",encoding='utf-8')
+    program=r'''
+import sys
+sys.path.insert(0,sys.argv[1])
+import cc_evidence,cc_evidence_inputs,cc_evidence_process
+assert 'cc_product_progress_observation' not in sys.modules
+try:import cc_product_progress
+except ModuleNotFoundError as error:
+    assert sys.argv[2]=='missing' and error.name=='cc_product_progress_observation'
+except RuntimeError as error:
+    assert sys.argv[2]=='broken' and str(error)=='broken_observation_owner'
+else:raise AssertionError('Progress imported without its functioning observation owner')
+'''
+    result=subprocess.run([sys.executable,'-I','-S','-B','-c',program,str(adopter),owner_state],
+        cwd=adopter,capture_output=True,timeout=30)
+    assert result.returncode==0,result.stderr
+
+
+def test_minimal_source_runner_compatibility_does_not_relax_active_progress_minimum(tmp_path):
+    import cc_product_progress_observation as observations
+    (tmp_path/'pyproject.toml').write_text("[project]\nname='fixture'\n",encoding='utf-8')
+    scripts=tmp_path/'scripts';scripts.mkdir();(scripts/'cc.py').write_text('VALUE=1\n',encoding='utf-8')
+    ordinary=inputs.runner_context(scripts)
+    assert ordinary['complete'] and ordinary['engineFileCount']==1
+    with observations.observing() as observer:
+        guarded=inputs.runner_context(scripts)
+        assert guarded=={'complete':False,'digest':None,'reasons':['runner_context_unknown']}
+        assert observer.read_entries>0 and observer.input_bytes>0
+
+
+def test_incomplete_installed_engine_is_unknown_with_and_without_progress(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    import cc_product_progress_observation as observations
+    runtime=tmp_path/'installed';runtime.mkdir();(runtime/'cc.py').write_text('VALUE=1\n',encoding='utf-8')
+    metadata=runtime/'controlcoding-0.11.0.dist-info';metadata.mkdir()
+    (metadata/'METADATA').write_text('Metadata-Version: 2.1\nName: controlcoding\nVersion: 0.11.0\n',encoding='utf-8')
+    (metadata/'RECORD').write_text('cc.py,,\n',encoding='utf-8')
+    def distribution(name):
+        assert name=='controlcoding';return SimpleNamespace(files=['cc.py'])
+    monkeypatch.setattr(inputs.importlib.metadata,'distribution',distribution)
+    expected={'complete':False,'digest':None,'reasons':['runner_context_unknown']}
+    assert inputs.runner_context(runtime)==expected
+    with observations.observing() as observer:
+        assert inputs.runner_context(runtime)==expected
+        assert observer.read_entries>0 and observer.input_bytes>0
+
+
 @pytest.mark.parametrize("field,value", [("command", "python -c 'pass'"), ("required", False),
                                         ("kind", "regression"), ("timeoutSeconds", 42)])
 def test_contract_byte_change_is_stale_even_if_commands_pass(tmp_path, cheap_context, field, value):

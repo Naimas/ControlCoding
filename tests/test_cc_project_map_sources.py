@@ -445,7 +445,7 @@ def test_local_maintainer_material_is_explicitly_excluded(tmp_path, request_data
     write(tmp_path, "main.py", "x=1")
     preview = source.preview_project_map_scope(request_data)
     assert folder in preview["excluded_names"]
-    assert preview["detail_policy"] == "file-overview-with-bounded-symbols-v2"
+    assert preview["detail_policy"] == "batched-file-overview-v3"
     result = source.observe_project_map(request_data)
     assert result["projection"]["summary"]["units"] == 1
     assert "PRIVATE_BODY" not in json.dumps(result)

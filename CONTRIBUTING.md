@@ -65,6 +65,56 @@ limit; it does not establish the cause or guarantee hosted completion. The globa
 default remains 300 seconds and the CLI limit remains 390. A core timeout still
 produces incomplete evidence and fails the current-required gate.
 
+Product scope evolution and authentic predecessor continuity run together in
+required `product-evolution-regression`, with a finite 1200-second deadline in
+tracked and generated contracts. The complete four-file command passed all 46
+controls without skips in about 910 seconds when run alone on the observed
+Windows host, exceeding the previous 900-second limit. This includes about 470
+seconds in acceptance controls and 413 seconds in scope/dependency controls,
+plus genuine upgrade and transport checks. The deadline adds about 32 percent
+reserve over that measurement.
+This deadline does not establish hosted timing or turn an interrupted run into
+a complete pass. The global default remains 300 seconds.
+
+Detailed source adoption/planning and richer worker qualification run in required
+`planning-depth-regression`, with a finite 900-second deadline. The measured
+complete local command took about 703 seconds, including 442 seconds in genuine
+retained-owner continuity controls. This allowance covers those bounded replay
+and restore paths with observed host variance; failed cases and deadline
+exhaustion still fail the group. The global default remains 300 seconds.
+Genuine continuity tests require retained immutable predecessor runtimes:
+`CC_TEST_PRIOR_RUNTIME`, `CC_TEST_PW00_RUNTIME`, `CC_TEST_PW00_RETENTION_RUNTIME`,
+`CC_TEST_PW01_RUNTIME`, `CC_TEST_PW02_RUNTIME` and `CC_TEST_PW03_RUNTIME` as
+applicable. Supply the original runtime directories, never current modules
+relabelled with historical constants. Mandatory local acceptance supplies all
+of them and requires zero predecessor skips. A hosted job without these retained
+artifacts does not qualify those continuity paths; its explicit skip reports
+must be reviewed separately from the remaining required checks.
+
+Product progress runs in required `product-progress-regression`, with the exact
+ordered Core, acceptance, transport and upgrade test files and a finite
+3000-second bound. The complete command measured 2366.12 seconds on the local
+Windows host; 633.88 seconds (26.79%) remain for setup and runtime variance.
+This local measurement does not establish hosted runtime or success. Required
+`product-progress-adapters-regression` separately covers the seven code-map and
+knowledge-schedule owner files with the unchanged 300-second default. Tracked
+and generated commands, target order and distinct
+JUnit paths must agree. Neither group can omit unknown coverage to produce a
+complete result. Supply `CC_TEST_PW04_RUNTIME` with the original immutable
+0.10.0 runtime for the genuine detailed-profile continuity controls, alongside
+all earlier runtime variables above. Full authentic 0.10 fixture setup measured
+806.29 seconds and retains its 960-second child bound: 153.71 seconds (19.06%)
+of reserve. Early fixture children remain at 300 seconds; other existing suite
+and child bounds are unchanged. Missing retained artifacts produce explicit
+skips and do not qualify mandatory local continuity acceptance.
+
+The separate mandatory local retention command remains
+`python -m pytest tests/test_cc_development_retention_migration.py -q` with all
+seven authentic controls and zero predecessor skips. Retain its JUnit/logs
+outside the checkout and attribute it separately from the maintained receipt.
+The hosted job's total allowance and actual matrix timing require independent
+review; a local run or changed per-suite bound does not establish hosted success.
+
 Quick smoke test (fastest subset):
 
 ```bash

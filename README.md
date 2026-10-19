@@ -29,8 +29,9 @@ it is not a runtime dependency of the software being built.
 **[Download current Core (ZIP)](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip)** · [Installation guide](docs/install-controlcoding-on-your-project.md)
 
 **Status: development source. Requires Python 3.11+.** This download follows
-`master` and includes the September 2026 preservation, setup, verification,
-knowledge and work-planning updates. A new numbered release has not been published.
+`master` and includes the October 19, 2026 Product workflow, controlled
+development and observed-progress update, alongside setup, verification,
+knowledge and work planning. A new numbered release has not been published.
 The desktop preview has its own dated prerelease tag and downloads below.
 
 > **The `v3.0.2` files under GitHub Releases are an older snapshot.** They do not
@@ -38,6 +39,36 @@ The desktop preview has its own dated prerelease tag and downloads below.
 
 The verified Core update and its remaining limits are described under
 [Unreleased Development Work](#unreleased-development-work).
+
+## Current Development Source ? October 19, 2026
+
+The current Core source connects product intent to reviewed development work:
+
+| Workflow | Current source behavior |
+|---|---|
+| **Product** | Version product documents, review source adoption and planning discussions, and connect requirements and criteria to changes. |
+| **Development** | Record intent, design, detailed plans, build and verification evidence, review/release decisions, operations and retained history. |
+| **Observed progress** | Read condition coverage, blockers, task order and evidence freshness. Missing or changed evidence stays visible; existing files alone do not establish completion. |
+
+See the [Product workflow](docs/product-workflow.md),
+[controlled development](docs/controlled-development.md) and
+[planning discussion](docs/planning-discussion.md) guides.
+The controlled-development method is version **0.11.0**; this is distinct from
+package/release version numbering.
+
+The corresponding local desktop source includes **Product**, **Development**
+and **Overview** views. Overview reads current progress without initializing
+project memory. These additions are **not included in the September 28 desktop
+download below**. Its screenshots and download remain dated preview material.
+
+Local Windows qualification of the frozen implementation completed on October
+19: all 23 required suites completed, with 3,343 test passes, 33 explicit host
+skips and no failures or errors. All 109 Progress cases passed without skips.
+This is local implementation evidence, not a hosted CI result for this commit.
+The publication also updates documentation and Git byte-preservation rules.
+Further UI work, integrated product acceptance, two-person usability and live
+model quality evaluation remain open; no new desktop package or numbered
+release is published by this source update.
 
 ## Desktop UI Preview
 

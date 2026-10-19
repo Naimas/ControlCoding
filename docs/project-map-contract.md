@@ -53,7 +53,7 @@ they are caller-owned stable identifiers, never generated from titles.
 | Policy field | Default ceiling |
 | --- | ---: |
 | `max_input_bytes` | 2,097,152 |
-| `max_output_bytes` | 786,432 |
+| `max_output_bytes` | 4,194,304 |
 | `max_nodes` | 2,000 |
 | `max_edges` | 8,000 |
 | `max_sources` | 4,000 |

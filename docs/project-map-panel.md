@@ -22,26 +22,54 @@ and existing report links. Quality markers stay independent of completion.
 
 ## Using the map
 
-Open a project with the panel's native folder chooser and select **Project Map**.
-Navigation alone does not scan code. Choose **Preview read scope**, inspect the
-listed bounds/exclusions, then **Observe project**. Optionally use **Select
-design documents** to choose up to 32 Markdown/text files inside that root;
+Open a project with the panel's native folder chooser and select **Status** or
+**Project Map**. Status now starts with the code grid, using the same map and
+selection. Setup configuration remains in Setup.
+Navigation alone does not scan code. The initial page names the selected project
+and explains the three views. Choose **Review project files**, inspect the read
+scope, then **Build project map**. The top toolbar shows the same next action;
+reviewing a scope does not read file contents or populate the map. Automatic
+refresh controls appear after a map exists. Optionally expand **Optional: include
+design documents** and use **Select design documents** to choose up to 32
+Markdown/text files inside that root;
 selection invalidates the old map and prepares a new scope preview. Excluded
 private/hidden documents remain unsupported. Clear documents to return to code
 inventory alone.
 
-The three perspectives share the selected element:
+The three code perspectives share the selected element:
 
-- **Roadmap & ownership:** collapsible proposed software containment, from the
+- **Code structure:** collapsible proposed software containment, from the
   root through folder modules, files and Python symbols. Work phases, owners and
   dates are explicitly unobserved until an authoritative adapter supplies them.
   Filesystem containment is not a delivery schedule or a confirmed service map.
-- **Architecture & delivery:** rows identify software elements; columns separate
+- **Plans & evidence:** rows identify software elements; columns separate
   observed presence, plan, delivery, verification and controls. The table scrolls
   inside its boundary at narrow widths. No fabricated waterfall stages are added.
-- **Code completion:** one square per file or per Python symbol, grouped by the
+- **Code grid:** one square per file or per Python symbol, grouped by the
   nearest module. Switching granularity changes the unit count; it never mixes
   file and symbol completion denominators. Equal squares do not imply equal work.
+
+A fourth prominent button, **Work roadmap**, opens the recorded work hierarchy
+and dependency timeline in process order, with optional calendar estimates. It
+uses the existing ControlWork schedule, without creating tasks from file names or
+enabling memory. See [Work plan and Gantt](work-schedule.md). Source observation
+and detailed checks are grouped under **Sources, checks & map settings**. View
+buttons remain visible on page scroll, and evidence column headers stay fixed
+inside the scrolling table. Folder/file icons identify the source tree entries.
+
+Large file inventories are read in bounded batches and delivered with a 4 MiB
+metadata limit. Optional Python symbols may be omitted to preserve the complete
+file grid; the UI reports this limited detail. File inventories are never silently
+truncated. Saving new mapping names/groups remains unavailable for batched scopes
+because that writer requires all source inputs pinned together. Existing mapping
+choices remain readable. Other source, node and analysis limits still apply.
+
+Project Map describes code and links to the recorded work schedule. The document
+graph and work authoring remain in ControlWork; a source hierarchy is not a Gantt.
+The map observation is held for
+the current app session and must be rebuilt after restarting the app. The initial
+empty state does not mean that the selected project has no code or that its
+document library is empty.
 
 Hover or focus a square for a popup explaining its element and status. Click,
 tap or Enter pins the inspector. The inspector shows ownership breadcrumbs,
@@ -70,7 +98,8 @@ source edit or execution button exists.
 
 **Refresh map** obtains a fresh bound preview for the same selected documents
 and repeats observation. The top Refresh button follows the current page: on
-Project Map it previews an unprepared scope or refreshes a prepared map. Changing
+Project Map it reviews an unprepared scope, builds a prepared first map or
+refreshes an existing map. Changing
 documents requires reviewing the new scope before reading. The preview timestamp
 is main supplied and remains part of that scope digest; the helper response time
 labels when the operation ran. The panel never uses either as evidence freshness.
@@ -81,9 +110,10 @@ selection and view selection; late old-generation replies are dropped. A failed
 setup observation does not masquerade as a map result. Setup and map observations
 have separate result/error/time fields while sharing one owned helper at a time.
 The map's 60-second age reminder is a request to refresh, not a file watcher or
-an assertion that younger data still matches disk. There is no automatic refresh,
-cache, observation history or persistence of source bodies. Reviewed mapping
-choices alone persist through the separate preview/save workflow.
+an assertion that younger data still matches disk. Optional [automatic refresh
+and observation history](project-map-refresh.md) are available after the initial
+map. They repeat previously read scopes and do not persist source bodies.
+Reviewed mapping choices persist through the separate preview/save workflow.
 
 Compact mode shows summary and an Expand action; full linked views are in expanded
 mode. Both themes use the existing panel palette. Matrix content can scroll
@@ -141,9 +171,11 @@ Demo responses cannot enter the real map view.
 
 The isolated helper still uses an absolute trusted Python/script path, `-I -B`,
 array arguments, no shell, a bounded environment and a trusted working directory.
-Limits remain 64 KiB request, 1 MiB reply plus newline, 16 KiB discarded stderr,
+Limits remain 64 KiB request, 16 KiB discarded stderr,
 15-second owned subprocess timeout and one-second predecessor-reap guard. The
-whole map payload also remains at most 768 KiB compact UTF-8. Map JSON uses UTF-8
+whole map payload is at most 4 MiB compact UTF-8, with 64 KiB reserved for its
+response envelope plus a newline. Non-map replies remain limited to 1 MiB plus
+newline. Map JSON uses UTF-8
 without ASCII expansion so the bound remains meaningful for Unicode filenames.
 No HTTP/WebSocket server, provider, project process or command dispatcher is added.
 

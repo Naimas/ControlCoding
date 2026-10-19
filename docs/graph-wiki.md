@@ -16,8 +16,8 @@ filters accept only structured canonical Dev lifecycle states; ordinary prose is
 not silently assigned a lifecycle.
 
 Graph expansion follows up to two hops through explicit document references,
-canonical Work/Dev links, current approved work relations and reviewed wiki
-findings. Both endpoints must remain available and in scope. Stale or proposed
+canonical Work/Dev links, current approved work relations, reviewed plan
+succession and reviewed wiki findings. Both endpoints must remain available and in scope. Stale or proposed
 relations do not expand evidence. Up to forty originals and two hundred examined
 edges are visited; cycles and duplicate passages are collapsed. Graph and wiki
 discoveries reserve up to two of the ten slots, alongside the existing lexical
@@ -36,6 +36,11 @@ The CLI `query` action accepts the existing JSON request and optional `retrieval
 ```json
 {"text":"Why was this design chosen?","semantic":false,"retrieval":{"graph":true,"wiki":true,"intent":"decision","paths":["docs"],"kinds":[],"lifecycle":"all","before":null}}
 ```
+
+Use `document_codes: ["DEV-PLAT-F03-007"]` in `retrieval` to restrict current
+evidence to exact, human-confirmed references. Up to eight references may be
+combined with paths and topic tags. Stale or unknown references contribute no
+evidence. Historical search rejects this current-state filter.
 
 For recorded history, set `intent` to `history` and `before` to an ISO timestamp
 with timezone. This returns the latest retained original revision before the
@@ -98,3 +103,84 @@ These functions have technical regression coverage. Independent human answer
 quality, broad semantic detection, seven-day adoption and release approval are
 separate acceptance gates; no provider or background automation is enabled by
 opening this page.
+## Reading the wiki and its original documents
+
+### Document function, topic and original wording
+
+In **Sources**, choose a category card to filter the entire selected archive by
+function: design, implementation plan, requirements, source material, chat conversation,
+work session record,
+agent instructions, technical contract, verification, decision, usage guide or
+work record. **Type to clarify** collects records with missing or conflicting
+clues. Each card gives a defining question; selecting it shows its purpose and
+examples. Counts include matching records beyond the current library page. Zero
+means no included source in that category, not that the project has no such files.
+
+A document's *type* describes its function; a *topic* groups its subject matter.
+**Sources** means all selected inputs available to memory. **Source material** is
+one particular document role. Being cited does not turn a plan into verification
+evidence or a conversation into an approved decision.
+
+**Stored in** identifies the collection separately. A verification report stored
+in ControlWork's sources collection remains a verification document when its
+name or title provides that specific clue. A structured work-session log is a
+**Work session record**, not automatically a chat transcript.
+
+Cards and the original reader show the role, its purpose and **Why this type?**.
+Explicit archive kinds are marked recorded. Filename conventions are identified;
+inferences from names, titles and directories are marked suggested. This bounded
+classifier does not perform an AI semantic review or infer progress and approval.
+Unknown author labels, such as numbered increments, are preserved without a
+fabricated explanation. Historical citations do not borrow a newer source's title
+to classify the old document.
+
+Open a source card's **Confirm or change category** to select its function and
+give a reason. ControlCoding saves this choice in private archive metadata for
+that exact observed source version; it does not edit, rename or move the original.
+The saved category applies consistently to filters, counts and wiki source cards.
+**Use automatic assignment** removes the saved choice. Structured chat and session
+records retain their archive kind.
+
+After a source refresh detects changed content, the old confirmation becomes
+invalid and a visible notice requests review; the current automatic suggestion
+is shown meanwhile. Concurrent changes reject a stale form. Classification
+metadata is included in archive backup, validated during restore and removed
+when its conversation is forgotten. Category confirmation is not approval of
+the document's claims or evidence.
+
+**Full original document** means the complete author's Markdown, formatted for
+reading. The wiki card contains a short excerpt. Neither view is a generated
+explanation of its technical terminology. Citation line numbers are available in
+the reader's expandable provenance details.
+
+Instruction classification does not change ingestion permissions. `AGENTS.md`
+remains excluded by the existing memory source policy, and no instruction file is
+executed by this view. An empty instruction category does not establish that the
+project contains no agent instruction files.
+
+### Open a cited original
+
+In **ControlWork → Memory, wiki & conversations → Wiki**, select a topic.
+The introduction explains what the topic covers. Source cards show the document
+title, its exact path and a short quoted passage. These automatic excerpts are
+an index of your selected sources, not an AI explanation or proof that planned
+work has been implemented. Saved AI drafts and human-reviewed sections are
+identified separately.
+
+Choose **Open original document** on a source card. The same screen opens a
+read-only side panel with the complete Markdown file, white paper formatting,
+local images and a collapsible **Contents** index. Relative links to other indexed
+Markdown documents open in that panel, including documents outside the current
+catalog window. Missing or unselected links explain why they cannot open; they do
+not silently add files to the authorized scope. External links are labeled and
+do not launch a browser. Other source formats expose their indexed text instead
+of claiming to display the complete original file.
+
+**Source S1**, for example, labels a quoted passage. Its line numbers locate the
+passage in the source text. **Why this source appears and version details** explains
+the classification and contains the SHA-256 version fingerprint. The fingerprint
+detects source changes; it is not a password or a task identifier. The full file
+must match the cited version before it is displayed. If it changed, refresh the
+sources and select the current wiki page; a historical citation never silently
+opens newer content as though it were the old version. Historical excerpts, human
+notes and accepted review text remain available under the existing retention rules.

@@ -191,6 +191,8 @@ def save_draft(root, value):
 def purge_dependents(db, source):
     """Forgetting a transcript also removes retained derived extracts of it."""
     from .knowledge_wiki_review import purge_source
+    from .knowledge_document_review import PREFIX
+    db.execute('DELETE FROM meta WHERE key=?', (PREFIX + source,))
     purge_source(db, source)
     for table in ('wiki', 'wiki_history'):
         for row in db.execute('SELECT id,revision,dependencies FROM ' + table).fetchall():

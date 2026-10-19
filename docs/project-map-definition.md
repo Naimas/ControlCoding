@@ -67,8 +67,9 @@ application exit/timeout can still interrupt it and require diagnosis.
 Preview reobserves the source scope, checks snapshot/revision and computes the
 exact before/after entries. Commit repeats that preparation and requires the
 same digest. Digests bind data; they do not authenticate a human or authorize
-unrelated operations. The existing 64 KiB request, 1 MiB response, 768 KiB map
-and 15-second helper supervision limits remain. No generic setup apply exists.
+unrelated operations. Limits are 64 KiB per request, 4 MiB for map metadata plus
+64 KiB for its response envelope, and 15 seconds for helper supervision.
+Non-map response limits remain 1 MiB. No generic setup apply exists.
 After a successful save the UI refreshes from disk; if that refresh fails it
 keeps the save receipt but shows no current map. Failed saves never retry.
 
@@ -79,6 +80,13 @@ observe/preview but fail closed for persistence. UNC/device paths, reparse
 points, symlinks, hardlinked definitions and unsafe ancestors are rejected.
 Retained root/ancestor handles preserve the selected path chain. Observed
 content hashes are rechecked with retained source handles before the write.
+
+Large maps can be read in batches and can display existing reviewed choices.
+Saving new choices is unavailable when the source observation needs multiple
+batches: the writer still requires simultaneous source pins. The projection and
+preview expose `write_supported: false` and `write_reason: mapping_write_scope_limit`;
+the UI explains the limitation and the server rejects commits before creating any
+private directory or journal. A readable large map does not imply write support.
 
 Existing definitions are opened without read/write/delete sharing, checked as
 ordinary single-link files, and compared to the expected byte digest under

@@ -15,6 +15,17 @@ changes into standalone ControlWork.
 
 ## Sources and updates
 
+**Project documents to follow** can restrict the project scope to an explicit
+list of up to 128 project-relative Markdown/text files. In this mode, only those
+paths and their ancestors are inspected; other directories are not enumerated.
+It can follow selected module documents outside `docs/` without ingesting an
+entire historical collection. Hidden paths, linked files/directories, AGENTS.md,
+private state and runtime directories are rejected. Missing or deselected files
+leave active retrieval after reconciliation; their historical revisions remain.
+The selection persists across worker restarts and memory backups. Existing
+configurations retain root Markdown plus recursive `docs/` until a list is saved.
+Other enabled scopes still operate independently of the project-document list.
+
 The optional **Follow DOCX, XLSX and PDF: root + docs/** scope follows rich files
 in the project root and recursively inside `docs/`. It is disabled by default.
 Within that scope, **Rich documents to follow** selects all supported files or

@@ -23,12 +23,28 @@ def fingerprint(path, directory=False):
     return [s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns]
 
 
-def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
-    from .knowledge_sources import LIMITS, KnowledgeReadPolicy, digest
+def capture(root, scopes, db=None, rich_paths=None, ocr_records=None, project_paths=None):
+    from .knowledge_sources import LIMITS, KnowledgeReadPolicy, digest, project_selection
+    project_paths = project_selection(project_paths)
     root = _root(str(root))
     policy = KnowledgeReadPolicy()
     started = time.monotonic()
     files, directories, sidecars, entries = {}, {}, {}, 0
+    selected_states = {}
+
+    def selected_signature(relative):
+        # Inspect only the selected path's ancestors, never enumerate siblings.
+        current = root
+        for part in Path(relative).parts[:-1]:
+            current = current / part
+            try:
+                ordinary(current, True)
+            except FileNotFoundError:
+                return None
+        try:
+            return fingerprint(root / relative)
+        except FileNotFoundError:
+            return None
 
     def tick():
         if time.monotonic() - started > LIMITS['seconds']:
@@ -95,8 +111,16 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
 
     for scope in scopes:
         if scope == 'project':
-            walk(Path('.'))
-            walk(Path('docs'), True)
+            if project_paths is None:
+                walk(Path('.'))
+                walk(Path('docs'), True)
+            else:
+                for relative in project_paths:
+                    tick()
+                    signature = selected_signature(relative)
+                    selected_states[relative] = signature
+                    if signature is not None:
+                        files[relative] = ('document', signature, relative)
         elif scope == 'rich-documents':
             walk(Path('.'), kind='rich-document')
             walk(Path('docs'), True, kind='rich-document')
@@ -111,7 +135,7 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
                 walk(Path('.controlcoding') / folder, kind='receipt')
         else:
             walk(Path('_work') / ('plans' if scope == 'plans' else 'handoff'), True, kind=scope)
-    if is_contained(root) and 'project' in scopes:
+    if is_contained(root) and 'project' in scopes and project_paths is None:
         # These CC-owned canonical documents moved physically, but their source
         # IDs and stored paths remain in the established project namespace.
         for name in ('CONTROLCODING.md', 'CONTROLWORK.md', 'PROJECT.md', 'STATUS.md', 'ROADMAP.md', 'BUGS.md'):
@@ -119,7 +143,8 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
             if physical.is_file():
                 logical = 'cc/' + name
                 files.setdefault(logical, ('document', fingerprint(physical), physical.relative_to(root).as_posix()))
-    manifest = digest(json.dumps([VERSION, EXTRACTOR_VERSION, str(root), scopes, rich_paths, files, directories, sidecars, ocr_records], sort_keys=True))
+    manifest = digest(json.dumps([VERSION, EXTRACTOR_VERSION, str(root), scopes, rich_paths, project_paths,
+                                 selected_states, files, directories, sidecars, ocr_records], sort_keys=True))
     if db is not None and get(db, PREFIX + 'manifest') != manifest:
         with db:
             clear(db)
@@ -211,5 +236,9 @@ def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
         owned_namespace = logical.parts and logical.parts[0] in ('.controlcoding', '.controlwork')
         physical = root if relative == '.' else source_path(root, relative) if owned_namespace else root / logical
         if listing(physical) != names:
+            raise KnowledgeError('changed_input')
+    for relative, signature in selected_states.items():
+        tick()
+        if selected_signature(relative) != signature:
             raise KnowledgeError('changed_input')
     return sources

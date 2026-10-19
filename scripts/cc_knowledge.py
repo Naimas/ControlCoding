@@ -50,7 +50,12 @@ def main():
     parser.add_argument('action', choices=['status', 'configure', 'sync', 'index', 'catalog', 'page', 'page-revision', 'notes',
                                           'conversation', 'conversation-read', 'query', 'forget', 'worker', 'wiki-lint', 'wiki-draft', 'backup', 'restore', 'library', 'catalog-window', 'graph-view', 'graph-source', 'source-retry', 'work-view', 'work-propose', 'work-review', 'work-schedule-view', 'work-schedule-save', 'ocr-preview', 'ocr-save', 'wiki-tools-view', 'wiki-tools-decide', 'wiki-tools-compare', 'wiki-tools-recover', 'wiki-tools-adopt', 'wiki-tools-propose-finding', 'wiki-review-view', 'wiki-review-propose', 'wiki-review-decide',
                                           'consolidation-migrate', 'consolidation-view', 'consolidation-create', 'consolidation-propose', 'consolidation-decide', 'consolidation-undo',
-                                          'consolidation-settings', 'consolidation-prepare', 'consolidation-attempt', 'consolidation-import', 'consolidation-fail', 'consolidation-queue', 'consolidation-prune', 'consolidation-context'])
+                                          'consolidation-settings', 'consolidation-prepare', 'consolidation-attempt', 'consolidation-import', 'consolidation-fail', 'consolidation-queue', 'consolidation-prune', 'consolidation-context',
+                                          'tag-view', 'tag-prepare', 'tag-save', 'tag-proposal-save', 'tag-proposal-decide',
+                                          'tag-history', 'tag-manage-preview', 'tag-manage-apply', 'tag-undo',
+                                          'code-settings', 'code-configure', 'code-view', 'code-next', 'code-prepare',
+                                          'code-proposal-save', 'code-decide', 'code-fail',
+                                          'code-link-candidates', 'code-link-save', 'code-link-remove'])
     args = parser.parse_args()
     try:
         if args.action == 'consolidation-migrate':
@@ -75,7 +80,7 @@ def main():
             if len(raw) > 65536:
                 raise KnowledgeError('request_limit')
             value = json.loads(raw) if raw.strip() else None
-        if args.action not in ('status', 'sync', 'index', 'catalog', 'wiki-lint', 'wiki-review-view', 'work-schedule-view', 'consolidation-view', 'consolidation-settings', 'consolidation-queue', 'consolidation-context'):
+        if args.action not in ('status', 'sync', 'index', 'catalog', 'wiki-lint', 'wiki-review-view', 'work-schedule-view', 'consolidation-view', 'consolidation-settings', 'consolidation-queue', 'consolidation-context', 'code-settings', 'code-next'):
             raw = sys.stdin.buffer.read(65537)
             if len(raw) > 65536:
                 raise KnowledgeError('request_limit')

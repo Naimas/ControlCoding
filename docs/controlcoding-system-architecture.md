@@ -35,6 +35,7 @@ contract says otherwise.
 | Documentation governance | File organization standard | [`file-organization-standard.md`](./file-organization-standard.md), [`adoption-guide.md`](./adoption-guide.md) |
 | Documentation maintenance | Experimental docs maintenance command reference | [`docs-maintenance-plan.md`](./docs-maintenance-plan.md) |
 | Host/tool compatibility | Cross-tool and install docs | [`cross-tool-guide.md`](./cross-tool-guide.md), [`install-controlcoding-on-your-project.md`](./install-controlcoding-on-your-project.md) |
+| Product progress | Read-only Core projection of Product scope and Development owner evidence | [`product-workflow.md`](./product-workflow.md#progress-and-task-order) |
 
 ### Where Does This Go?
 
@@ -389,12 +390,27 @@ Detailed documents:
 
 ## Verification Map
 
+The experimental [controlled development owner](./controlled-development.md)
+connects intent, specification, plan, implementation candidate, current proof,
+review and release, and operational outcome. `cc_development_lib` owns immutable
+artifact versions and exact-revision decisions. Its adapters observe Planner,
+features and canonical verification owners; desktop and memory views do not
+establish approval. Configured environment commands require their own reviewed
+preview. Autonomous coding-host execution remains unavailable in this candidate.
+
+Source and method implementation changes invalidate the affected identities.
+Operational observations bind the current candidate and release, and declared
+metric breaches or missing observations block closure. The optional desktop
+Development page presents these Core results and preserves the source release
+boundary described in [the release model](./release-model.md).
+
 Use targeted checks based on what changed.
 
 | Change type | Suggested checks |
 |---|---|
 | Public docs or command examples | `python scripts/cc.py truth check-docs --project-root .` |
 | Capability registry or command routing | `python scripts/cc.py truth check --include-docs --project-root .` |
+| Controlled development gates and adapters | `python -m pytest tests/test_cc_development_core.py tests/test_cc_development_adapters.py tests/test_cc_development_cli.py -q` |
 | Memory or GraphRAG behavior | `python -m pytest tests/test_cc_memory.py -q` |
 | Setup and host compatibility | `python -m pytest tests/test_cc_setup.py tests/test_cc_cli.py -q` |
 | ControlWork standalone behavior | Run the corresponding tests in the standalone `ControlWork` repository |

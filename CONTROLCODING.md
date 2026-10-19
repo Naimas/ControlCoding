@@ -63,6 +63,16 @@ prerequisite for Core.
   Project Plane compatibility features.
 - `cc release-doctor` evaluates the publishable source contract declared in
   `controlcoding.release.json`.
+- `cc planning` provides experimental bounded local discussion persistence and
+  typed proposal review. Core invokes no provider; replies cannot approve scope,
+  execution or delivered behavior. Live model quality remains separately unqualified.
+- `cc product` provides reviewed Project Documents, immutable increment selections,
+  explicit scope impact decisions, typed dependencies and shared criterion
+  integration review. These reuse normal Development approvals and current
+  evidence gates; Product acceptance does not approve execution or delivery.
+  `cc product progress` reads bounded canonical condition coverage, roadmap and
+  plan task order without memory or a provider. It preserves exact scope and
+  historical releases; read-only progress grants no approval or execution.
 - Generated host context, runtime state, receipts, databases, and caches are
   local artifacts. They are not part of a clean source release unless a public
   contract explicitly says otherwise.

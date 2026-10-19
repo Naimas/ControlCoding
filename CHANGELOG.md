@@ -4,6 +4,25 @@ All notable changes to ControlCoding are documented in this file.
 
 ## Unreleased
 
+### Added ? Product workflow and observed progress, October 19, 2026
+
+- Product document revisions, source adoption, planning discussions, scoped
+  evolution and detailed development plans linked to requirements and criteria.
+- Controlled development method 0.11.0, with reviewed execution, release and
+  operations records, exact retained history and explicit compatibility steps.
+- Read-only progress observations with condition coverage, evidence freshness,
+  blockers and task order, consumed by Product, Development and Overview in
+  the separately maintained desktop source.
+- Git byte preservation for Python owner sources: checkout line-ending
+  conversion must not invalidate implementation identities or compatibility pins.
+
+The frozen implementation passed all 23 required suites locally on Windows:
+3,343 passed, 33 classified host skips, zero failures/errors; all 109 Progress
+cases passed without skips. These results precede the publication documentation
+and Git-attributes overlay and do not claim hosted CI success for this commit.
+The September 28 desktop download is unchanged. Further UI work, integrated
+product acceptance, two-person usability and live model quality remain open.
+
 ### Added — desktop development preview, September 28, 2026
 
 - Optional Windows x64 portable panel with Project Map, document circuit view,

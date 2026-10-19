@@ -1,0 +1,3 @@
+# Method identities and compatibility pins hash exact Python source bytes.
+# Preserve the qualified bytes on checkout, including existing mixed line endings.
+*.py -text

@@ -175,7 +175,10 @@ def project(observation, definition, revision):
             symbol['node'] = remap.get(symbol['node'], symbol['node'])
     bundle['snapshot_id'] = 'review:' + digest((source_snapshot + revision).encode())
     result['projection'] = model.build_map_projection(bundle)
-    result['review'] = {'revision': revision, 'source_snapshot': source_snapshot, 'entries': definition['entries'], 'write_supported': os.name == 'nt'}
+    batched = observation.get('counts', {}).get('read_batches', 1) > 1
+    result['review'] = {'revision': revision, 'source_snapshot': source_snapshot, 'entries': definition['entries'],
+                        'write_supported': os.name == 'nt' and not batched,
+                        'write_reason': 'mapping_write_scope_limit' if batched else None}
     return model._bounded_copy(result, model.MapPolicy(), model.MapPolicy().max_output_bytes)
 
 
@@ -269,8 +272,10 @@ def preview_change(request, expected_preview, snapshot, revision, change):
     before = {r['id']: r for r in definition['entries']}
     changes = [{'before': before.get(r['id']), 'after': r} for r in proposed['entries'] if before.get(r['id']) != r]
     binding = {'root_identity': observation['root_identity'], 'snapshot': snapshot, 'revision': revision, 'change': change, 'definition': proposed}
+    batched = observation.get('counts', {}).get('read_batches', 1) > 1
     return {'approval_id': digest(encoded(binding)), 'revision': revision, 'snapshot': snapshot,
-            'path': managed_relative(root, LOCATION), 'changes': changes, 'write_supported': os.name == 'nt'}, proposed, observation
+            'path': managed_relative(root, LOCATION), 'changes': changes, 'write_supported': os.name == 'nt' and not batched,
+            'write_reason': 'mapping_write_scope_limit' if batched else None}, proposed, observation
 
 
 def _exclusive(path, create=False):
@@ -322,6 +327,7 @@ def _write(fd, data):
 def commit_change(request, expected_preview, snapshot, revision, change, approval_id):
     require(os.name == 'nt', 'write_unsupported')
     preview, proposed, observation = preview_change(request, expected_preview, snapshot, revision, change)
+    require(observation.get('counts', {}).get('read_batches', 1) <= 1, 'mapping_write_scope_limit')
     require(preview['approval_id'] == approval_id, 'preview_mismatch')
     root = _root(request['project_root'])
     journal_created = False

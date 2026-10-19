@@ -6,6 +6,8 @@ No source contents, environment values or per-file inventory leave this module.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 import configparser
 import hashlib
 import importlib.metadata
@@ -23,7 +25,7 @@ import time
 import uuid
 
 from cc_layout import is_contained, managed_relative, MARKER
-from cc_evidence_process import run_command
+from cc_evidence_process import run_command, progress_observation
 
 POLICY_VERSION = 1
 MAX_ENTRIES = 10000
@@ -43,6 +45,7 @@ GENERATED = {"_work", ".controlwork", ".controlcoding", ".claude", ".codex",
              ".agents", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
              ".venv", "venv", "node_modules", "build", "dist", ".tox", ".nox"}
 PRIVATE_FILES = {"AGENTS.md", ".env"}
+_SNAPSHOT_INPUTS = ContextVar('development_snapshot_inputs', default=None)
 
 
 class EvidenceError(Exception):
@@ -77,7 +80,7 @@ def _state(info, *, path_comparison=False):
     # Compare ctime between two handle observations, not across those APIs.
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
             None if path_comparison and os.name == "nt" else info.st_ctime_ns,
-            stat.S_IFMT(info.st_mode), info.st_mode & 0o111)
+            stat.S_IFMT(info.st_mode), None if path_comparison and os.name == 'nt' else info.st_mode & 0o111)
 
 
 class Budget:
@@ -88,10 +91,16 @@ class Budget:
         self.deadline = time.monotonic() + seconds
 
     def check(self):
+        observer = progress_observation()
+        if observer is not None:
+            observer.check()
         if time.monotonic() > self.deadline:
             raise EvidenceError("snapshot_timeout")
 
     def entry(self):
+        observer = progress_observation()
+        if observer is not None:
+            observer.entry()
         self.check()
         self.entries -= 1
         if self.entries < 0:
@@ -168,6 +177,9 @@ class SafeRoot:
             self.fd = None
 
     def validate(self):
+        observer = progress_observation()
+        if observer is not None:
+            observer.check()
         # Reopen each parent without following links, then compare the retained
         # root. This never substitutes a new root for the one used to read bytes.
         with SafeRoot(self.path) as other:
@@ -209,6 +221,20 @@ class SafeRoot:
         return os.lstat(parent / name) if os.name == "nt" else os.stat(name, dir_fd=parent, follow_symlinks=False)
 
     def read(self, relative, budget, *, missing=False):
+        observer = progress_observation()
+        if observer is None:
+            return self._read_observed(relative, budget, missing=missing)
+        observer.entry()
+        bounds=(budget.per_file,budget.remaining,budget.entries)
+        try:
+            result = self._read_observed(relative, budget, missing=missing)
+            observer.file(self.path, relative, result, bounds)
+            return result
+        except (OSError, ValueError, EvidenceError) as error:
+            observer.failure(self.path, relative, 'file', error, bounds)
+            raise
+
+    def _read_observed(self, relative, budget, *, missing=False):
         components = parts(relative)
         budget.check()
         try:
@@ -238,6 +264,9 @@ class SafeRoot:
                         budget.check()
                         data = os.read(fd, min(65536, size - len(result), budget.remaining))
                         budget.remaining -= len(data)  # Never refunded on a later failure.
+                        observer = progress_observation()
+                        if observer is not None:
+                            observer.consume(len(data))
                         if not data:
                             raise EvidenceError("file_changed")
                         result.extend(data)
@@ -252,6 +281,20 @@ class SafeRoot:
             raise
 
     def listing(self, relative, budget):
+        observer = progress_observation()
+        if observer is None:
+            return self._listing_observed(relative, budget)
+        observer.entry()
+        bounds=(budget.per_file,budget.remaining,budget.entries)
+        try:
+            result = self._listing_observed(relative, budget)
+            observer.listing(self.path, relative, result, bounds)
+            return result
+        except (OSError, ValueError, EvidenceError) as error:
+            observer.failure(self.path, relative, 'directory', error, bounds)
+            raise
+
+    def _listing_observed(self, relative, budget):
         with self.directory(relative) as parent:
             result = []
             with os.scandir(parent) as entries:
@@ -581,7 +624,50 @@ def _records(data):
     return data.split(b"\0")[:-1]
 
 
+@contextmanager
+def snapshot_inputs(root):
+    """Reuse complete input identities within one read-only Development snapshot.
+
+    Re-observe every used policy without this cache before returning. This is
+    canonical input identity equality, not a filesystem transaction or proof cache.
+    """
+    if progress_observation() is not None:
+        yield
+        return
+    cached = {}
+    token = _SNAPSHOT_INPUTS.set(cached)
+    try:
+        yield
+        _SNAPSHOT_INPUTS.set(None)
+        for project, policy, expected in cached.values():
+            actual = capture_inputs(project, policy)
+            if not actual['complete'] or actual != expected:
+                raise EvidenceError('development_inputs_changed')
+        root.validate()
+    finally:
+        _SNAPSHOT_INPUTS.reset(token)
+
+
 def capture_inputs(project, policy, *, budget=None):
+    cached = _SNAPSHOT_INPUTS.get()
+    if cached is None or budget is not None or progress_observation() is not None:
+        return _capture_inputs(project, policy, budget=budget)
+    project = os.path.abspath(project)
+    key = (os.path.normcase(project), json.dumps(policy, sort_keys=True, ensure_ascii=True,
+                                               separators=(',', ':')))
+    if key not in cached:
+        result = _capture_inputs(project, policy)
+        if not result['complete']:
+            return result
+        cached[key] = (project, deepcopy(policy), deepcopy(result))
+    return deepcopy(cached[key][2])
+
+
+def _capture_inputs(project, policy, *, budget=None):
+    observer = progress_observation()
+    cache_key = ('inputs', os.path.abspath(project), digest(policy))
+    if observer is not None and not observer.verifying and cache_key in observer.memo:
+        return observer.memo[cache_key]
     budget = budget or Budget()
     result = {"complete": False, "reasons": [], "scopeKind": "unknown", "scopeVersion": POLICY_VERSION,
               "policyDigest": digest([POLICY_VERSION, policy, sorted(ALWAYS), sorted(GENERATED), sorted(PRIVATE_FILES)]),
@@ -681,6 +767,8 @@ def capture_inputs(project, policy, *, budget=None):
         result["reasons"] = [exc.code]
     except (OSError, ValueError, TypeError, UnicodeError):
         result["reasons"] = ["input_inspection_failed"]
+    if observer is not None and not observer.verifying:
+        observer.memo[cache_key] = result
     return result
 
 
@@ -711,20 +799,98 @@ def _unique_object(pairs):
     return result
 
 
+def _progress_dependencies(search_paths, budget):
+    """Read distribution discovery and Name/Version through the shared observer.
+
+    Unsupported archive metadata is unknown rather than an unaccounted complete
+    context. Ordinary runner discovery keeps its existing importlib path.
+    """
+    from email.parser import BytesParser
+    dependencies = []
+    for directory in search_paths:
+        try:
+            with SafeRoot(directory) as safe:
+                entries = safe.listing('', budget)
+                for name, info in sorted(entries):
+                    lower = name.lower()
+                    if not lower.endswith(('.dist-info', '.egg-info')):
+                        continue
+                    if stat.S_ISDIR(info.st_mode):
+                        relative = name + ('/METADATA' if lower.endswith('.dist-info') else '/PKG-INFO')
+                    elif lower.endswith('.egg-info') and stat.S_ISREG(info.st_mode):
+                        relative = name
+                    else:
+                        raise EvidenceError('dependencies_unknown')
+                    raw, _ = safe.read(relative, budget)
+                    metadata = BytesParser().parsebytes(raw)
+                    name_value, version = metadata.get('Name'), metadata.get('Version')
+                    if not name_value or not version:
+                        raise EvidenceError('dependencies_unknown')
+                    dependencies.append([name_value.lower().replace('_', '-'), version])
+                safe.validate()
+        except (FileNotFoundError, NotADirectoryError):
+            path = Path(directory)
+            with SafeRoot(path.parent) as safe:
+                if safe.read(path.name, budget, missing=True) is not None:
+                    raise EvidenceError('dependencies_unknown')
+    return dependencies
+
+
+def _progress_engine_files(root, budget):
+    """Use the installed distribution's confined RECORD, never implicit metadata I/O."""
+    import csv
+    import io
+    from email.parser import BytesParser
+    matches=[]
+    for name, info in root.listing('',budget):
+        if not stat.S_ISDIR(info.st_mode) or not name.lower().endswith('.dist-info'):
+            continue
+        normalized=name[:-10].rsplit('-',1)[0].lower().replace('_','-')
+        if normalized!='controlcoding':
+            continue
+        metadata=BytesParser().parsebytes(root.read(name+'/METADATA',budget)[0])
+        if metadata.get('Name','').lower().replace('_','-')!='controlcoding':
+            raise EvidenceError('engine_layout_unknown')
+        raw=root.read(name+'/RECORD',budget)[0]
+        records=list(csv.reader(io.StringIO(raw.decode('utf-8'))))
+        if any(len(row)!=3 for row in records):
+            raise EvidenceError('engine_layout_unknown')
+        matches.append({row[0] for row in records if row[0].endswith('.py')
+                        and (row[0].startswith('cc_') or row[0]=='cc.py')})
+    if len(matches)!=1:
+        raise EvidenceError('engine_layout_unknown')
+    return matches[0]
+
+
 def runner_context(engine_dir):
+    observer = progress_observation()
+    cache_key = ('runner', str(engine_dir))
+    if observer is not None and not observer.verifying and cache_key in observer.memo:
+        return observer.memo[cache_key]
     try:
         with SafeRoot(engine_dir) as root:
             budget = Budget()
             # Source checkout: all owned Python sources. Installed distribution:
             # explicit metadata inventory, never enumerate arbitrary sys.path.
-            if root.path.name == "scripts" and (root.path.parent / "pyproject.toml").is_file():
+            if observer is not None:
+                source_layout=False
+                if root.path.name=='scripts':
+                    with SafeRoot(root.path.parent) as parent:
+                        source_layout=parent.read('pyproject.toml',Budget(per_file=2*1024*1024,total=2*1024*1024),missing=True) is not None
+                        parent.validate()
+            else:
+                source_layout=root.path.name=='scripts' and (root.path.parent/'pyproject.toml').is_file()
+            if source_layout:
                 files = _walk(root, budget, engine=True)
+            elif observer is not None:
+                files=_progress_engine_files(root,budget)
             else:
                 distribution = importlib.metadata.distribution("controlcoding")
                 files = {str(p).replace("\\", "/") for p in distribution.files or []
                          if str(p).endswith(".py") and (str(p).startswith("cc_") or str(p) == "cc.py")}
-                if not {"cc.py", "cc_evidence.py", "cc_evidence_inputs.py", "cc_evidence_process.py"} <= files:
-                    raise EvidenceError("engine_layout_unknown")
+            if (observer is not None or not source_layout) and not {
+                    "cc.py", "cc_evidence.py", "cc_evidence_inputs.py", "cc_evidence_process.py"} <= files:
+                raise EvidenceError("engine_layout_unknown")
             records = []
             for path in sorted(files):
                 records.append([path, hashlib.sha256(root.read(path, budget)[0]).hexdigest()])
@@ -735,18 +901,27 @@ def runner_context(engine_dir):
         # (including conflicting installed versions) in the dependency inventory.
         search_paths = list(dict.fromkeys(os.path.normcase(os.path.abspath(p or os.curdir))
                                          for p in sys.path))
-        for distribution in importlib.metadata.distributions(path=search_paths):
-            budget.entry()
-            name, version = distribution.metadata.get("Name"), distribution.version
-            if not name or not version:
-                raise EvidenceError("dependencies_unknown")
-            dependencies.append([name.lower().replace("_", "-"), version])
+        observer = progress_observation()
+        if observer is not None:
+            dependencies = _progress_dependencies(search_paths, budget)
+        else:
+            for distribution in importlib.metadata.distributions(path=search_paths):
+                budget.entry()
+                name, version = distribution.metadata.get("Name"), distribution.version
+                if not name or not version:
+                    raise EvidenceError("dependencies_unknown")
+                dependencies.append([name.lower().replace("_", "-"), version])
         value = {"policyVersion": POLICY_VERSION, "engineDigest": digest(records),
                  "engineFileCount": len(records), "python": platform.python_version(),
                  "implementation": platform.python_implementation(), "os": platform.system(),
                  "architecture": platform.machine(), "dependenciesDigest": digest(sorted(dependencies)),
                  "dependencyCount": len(dependencies)}
-        return {"complete": True, "digest": digest(value), **value, "reasons": []}
+        result = {"complete": True, "digest": digest(value), **value, "reasons": []}
+        if observer is not None:
+            observer.fact('runner:' + str(engine_dir), result, lambda: runner_context(engine_dir))
+            if not observer.verifying:
+                observer.memo[cache_key] = result
+        return result
     except (OSError, ValueError, TypeError, EvidenceError, importlib.metadata.PackageNotFoundError):
         return {"complete": False, "digest": None, "reasons": ["runner_context_unknown"]}
 
@@ -772,8 +947,14 @@ def executable_argv(argv, project):
 
 
 def execution_context(project, policy, entries):
+    observer = progress_observation()
+    cache_key = ('execution', digest([str(project), policy, entries]))
+    if observer is not None and not observer.verifying and cache_key in observer.memo:
+        return observer.memo[cache_key]
     try:
         commands = []
+        executable_hashes = {}
+        executable_budget = Budget(total=MAX_TOTAL, per_file=128 * 1024 * 1024)
         for entry in entries:
             template_argv = command_args(entry["command"], project, "{temp}")
             try:
@@ -785,11 +966,33 @@ def execution_context(project, policy, entries):
                 # not block required checks; selecting it fails before launch.
                 commands.append([entry["id"], digest(template_argv), None])
                 continue
-            commands.append([entry["id"], digest(argv), digest(argv[0])])
+            executable = Path(argv[0]).resolve(strict=True)
+            binary_key = ('executable_hash', str(executable))
+            if str(executable) not in executable_hashes:
+                if observer is not None and observer.verifying and binary_key in observer.memo:
+                    # Transcript revalidation already re-read this exact binary.
+                    # The callback rebinds PATH resolution and environment only.
+                    binary_hash = observer.memo[binary_key]
+                else:
+                    with SafeRoot(executable.parent) as safe:
+                        raw, _ = safe.read(executable.name, executable_budget)
+                        safe.validate()
+                    binary_hash = hashlib.sha256(raw).hexdigest()
+                    if observer is not None:
+                        observer.memo[binary_key] = binary_hash
+                executable_hashes[str(executable)] = binary_hash
+            commands.append([entry["id"], digest(argv), digest(argv[0]), executable_hashes[str(executable)]])
         value = {"projectLocationDigest": digest(os.path.normcase(os.path.abspath(project))),
                  "commandsDigest": digest(commands),
                  "environmentDigest": digest({n: os.environ.get(n) for n in policy["environmentNames"]})}
-        return {"complete": True, "digest": digest(value), **value, "reasons": []}
+        result = {"complete": True, "digest": digest(value), **value, "reasons": []}
+        observer = progress_observation()
+        if observer is not None:
+            observer.fact('execution:' + digest([str(project), policy, entries]), result,
+                          lambda: execution_context(project, policy, entries))
+            if not observer.verifying:
+                observer.memo[cache_key] = result
+        return result
     except EvidenceError as exc:
         return {"complete": False, "digest": None, "reasons": [exc.code]}
     except (ValueError, TypeError, OSError):

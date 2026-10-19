@@ -25,6 +25,11 @@ def test_default_selection_covers_remediation_surfaces(source):
     budgets = {s["id"]: s["timeoutSeconds"] for s in selected}
     assert budgets.pop("cli-regression") == 390
     assert budgets.pop("core-governance-regression") == 420
+    assert budgets.pop("controlled-development-regression") == 750
+    assert budgets.pop("development-operations-regression") == 900
+    assert budgets.pop("product-evolution-regression") == 1200
+    assert budgets.pop("planning-depth-regression") == 900
+    assert budgets.pop("product-progress-regression") == 3000
     assert set(budgets.values()) == {300}
     # pytest owns an external, short fixture tree; receipts stay in the project.
     assert all("--basetemp" not in suite["command"] for suite in selected)
@@ -39,7 +44,52 @@ def test_default_selection_covers_remediation_surfaces(source):
         "tests/test_cc_contained_memory.py", "tests/test_cc_contained_migration.py",
         "tests/test_check_dangerous_commands.py", "tests/test_check_repo_boundaries.py",
         "tests/test_check_file_organization.py", "tests/test_cc_organize.py",
+        "tests/test_cc_development_core.py", "tests/test_cc_development_adapters.py",
+        "tests/test_cc_development_cli.py", "tests/test_cc_development_eval.py",
+        "tests/test_cc_development_execution.py", "tests/test_cc_development_gateway.py",
+        "tests/test_cc_development_codex.py",
+        "tests/test_cc_development_release.py", "tests/test_cc_development_github.py",
+        "tests/test_cc_development_release_jobs.py",
+        "tests/test_cc_development_operations.py", "tests/test_cc_development_diagnosis.py",
+        "tests/test_cc_development_operations_core.py",
+        "tests/test_cc_planning.py", "tests/test_cc_planning_upgrade.py",
+        "tests/test_cc_planning_transport.py", "tests/test_cc_planning_quality.py",
+        "tests/test_cc_planning_recovery.py",
+        "tests/test_cc_product_evolution.py", "tests/test_cc_product_evolution_upgrade.py",
+        "tests/test_cc_product_evolution_transport.py", "tests/test_cc_product_evolution_acceptance.py",
+        "tests/test_cc_product_adoption.py", "tests/test_cc_product_planning_execution.py",
+        "tests/test_cc_product_adoption_core.py", "tests/test_cc_product_planning_detail.py",
+        "tests/test_cc_product_planning_detail_core.py", "tests/test_cc_product_planning_upgrade.py",
+        "tests/test_cc_product_planning_discussion.py", "tests/test_cc_planning_detail_core.py",
+        "tests/test_cc_product_progress_core.py", "tests/test_cc_product_progress_acceptance.py",
+        "tests/test_cc_product_progress_transport.py", "tests/test_cc_product_progress_upgrade.py",
+        "tests/test_cc_project_map_model.py", "tests/test_cc_project_map_sources.py",
+        "tests/test_cc_project_map_definition.py", "tests/test_cc_project_map_controls.py",
+        "tests/test_cc_project_map_batches.py", "tests/test_cc_project_map_analysis.py",
+        "tests/test_cc_knowledge_work_schedule.py",
     } <= targets
+
+
+def test_progress_groups_keep_exact_targets_order_and_independent_reports():
+    expected = {
+        'product-progress-regression': ['test_cc_product_progress_core.py', 'test_cc_product_progress_acceptance.py',
+                                        'test_cc_product_progress_transport.py', 'test_cc_product_progress_upgrade.py'],
+        'product-progress-adapters-regression': ['test_cc_project_map_model.py', 'test_cc_project_map_sources.py',
+                                                'test_cc_project_map_definition.py', 'test_cc_project_map_controls.py',
+                                                'test_cc_project_map_batches.py', 'test_cc_project_map_analysis.py',
+                                                'test_cc_knowledge_work_schedule.py'],
+    }
+    for contract in (json.loads((ROOT / 'controlcoding.verification.json').read_text(encoding='utf-8')),
+                     cc._default_verification_contract(ROOT)):
+        suites = {suite['id']: suite for suite in contract['suites']}
+        for name, files in expected.items():
+            command = shlex.split(suites[name]['command'])
+            assert [token for token in command if token.startswith('tests/') and token.endswith('.py')] == ['tests/' + name for name in files]
+            assert suites[name]['required'] is True
+            assert '{project}/.controlcoding/verification_receipts/' + name + '.xml' in command
+        other_targets = {token for suite in contract['suites'] if suite['required'] and suite['id'] not in expected
+                         for token in shlex.split(suite['command']) if token.startswith('tests/') and token.endswith('.py')}
+        assert not ({'tests/' + name for files in expected.values() for name in files} & other_targets)
 
 
 def test_generated_optional_targets_exist_and_tracked_suites_agree(tmp_path):

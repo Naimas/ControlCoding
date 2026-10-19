@@ -61,9 +61,34 @@ def physical_source_path(root, relative, kind=''):
         return ''
 
 
-def capture(root, scopes, db=None, rich_paths=None, ocr_records=None):
+def project_selection(value):
+    """Validate explicit documents without granting recursive discovery."""
+    if value is None:
+        return None
+    if type(value) is not list or not 0 < len(value) <= 128:
+        raise KnowledgeError('invalid_project_paths')
+    excluded = {'runtime', 'node_modules', 'vendor', 'secrets', 'credentials',
+                'private', '__pycache__', 'memory', 'cache', 'logs'}
+    devices = {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(10)),
+               *(f'lpt{i}' for i in range(10))}
+    for name in value:
+        if type(name) is not str or not name or len(name) > 1024 or name != name.strip():
+            raise KnowledgeError('invalid_project_paths')
+        parts = name.split('/')
+        if (not name.lower().endswith(('.md', '.txt')) or parts[-1].lower() == 'agents.md'
+                or any(not p or p.startswith('.') or p.endswith(('.', ' '))
+                       or p.lower() in excluded or p.split('.')[0].lower() in devices
+                       or re.search(r'[\\:*?"<>|\x00-\x1f\x7f]', p) for p in parts)):
+            raise KnowledgeError('invalid_project_paths')
+    if len({p.casefold() for p in value}) != len(value):
+        raise KnowledgeError('invalid_project_paths')
+    return value
+
+
+def capture(root, scopes, db=None, rich_paths=None, ocr_records=None, project_paths=None):
     from .knowledge_scan import capture as acquire
-    return acquire(root, scopes, db, rich_paths=rich_paths, ocr_records=ocr_records)
+    return acquire(root, scopes, db, rich_paths=rich_paths, ocr_records=ocr_records,
+                   project_paths=project_paths)
 
 
 def passages(source):

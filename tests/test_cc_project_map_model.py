@@ -428,7 +428,11 @@ def test_aggregate_bytes_and_output_are_separately_bounded(bundle):
     bundle["coverage"]["state"] = "partial"
     fails(bundle, "limit")
     bundle["coverage"]["omissions"] = [str(i) + "x" * 4000 for i in range(200)]
-    fails(bundle, "limit")  # Below input ceiling, above public output ceiling.
+    fails(bundle, "limit", policy=replace(model.MapPolicy(), max_output_bytes=768 * 1024))
+    # Large map metadata now fits the public bound, while explicit tighter bounds hold.
+    model.build_map_projection(bundle)
+    with pytest.raises(model.MapValidationError, match='limit'):
+        model._bounded_copy(['x' * 4000] * 1100, model.MapPolicy(), model.MapPolicy().max_output_bytes)
 
 
 def test_deep_graph_without_python_recursion(bundle):

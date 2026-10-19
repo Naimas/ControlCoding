@@ -80,6 +80,33 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `cc_document_reader.py` | Hash-bound Markdown reader with bounded project-local images. |
 | `cc_documentation_observer.py` | Read-only Markdown inventory for the document map. |
 | `cc_feature.py` | Feature lifecycle commands. |
+| `cc_development.py` | Controlled development CLI, typed previews, current gate checks and explicit recovery. |
+| `cc_product.py` | Reviewed Project Document and selected feature planning through the Development transaction. |
+| `cc_product_evolution.py` | Immutable scope adoption, typed dependency gates, shared criterion integration and retained incident/retirement links. |
+| `cc_product_cli.py` | Core Product CLI for manual drafts, decisions, source review and readable exports. |
+| `cc_product_documents.py` | Bounded source observations, trusted Markdown roundtrip and reviewed file export receipts. |
+| `cc_product_adoption.py` | Bounded legacy Planner inventory, raw source observation and explicit reviewed adoption dispositions. |
+| `cc_product_planning.py` | Canonical detailed planning profiles, immutable companions, stable associations and current approved execution bindings. |
+| `cc_product_progress.py` | Bounded read-only Product progress, condition coverage, roadmap and plan task order using canonical owner assessments. |
+| `cc_product_progress_contract.py` | Strict versioned progress queries, rows, responses, navigation and cursor encoding. |
+| `cc_product_progress_observation.py` | Shared progress observation deadline, aggregate read accounting and consumed-input coherence. |
+| `cc_planning.py` | Durable scoped discussion, exact request bindings, bounded attempts and typed proposal review without provider calls. |
+| `cc_planning_cli.py` | Allowlisted local planning request transport; replies cannot approve development. |
+| `cc_development_archive.py` | Validated same-project registry backup and explicit restoration to absent state. |
+| `cc_development_store.py` | Compact control manifest, immutable bounded objects and isolated planning quota. |
+| `cc_development_history.py` | Checkpointed retained history, bounded cold replay lookup and revision-bound history pages. |
+| `cc_development_compatibility.py` | Read-only predecessor inspection and pinned compatibility rules. |
+| `cc_development_migration.py` | Explicit reviewed CD10 migration with exact archived bytes and preserved history. |
+| `cc_development_sessions.py` | Local conversation history with independent revisions and bounded retention. |
+| `cc_development_bundle.py` | Complete control/session backup closure and resumable interrupted restoration. |
+| `cc_development_adapters.py` | Read-only Planner, feature, canonical evidence, evaluation and release assessments. |
+| `cc_development_jobs.py` | Explicit pinned environment command previews and retained observation receipts. |
+| `cc_development_eval.py` | Versioned representative tasks, isolated worker directories, trusted file grading and usage budgets. |
+| `cc_development_execution.py` | Qualified proposal execution, pinned runtime identity, cancellation and retained attempt receipts. |
+| `cc_development_gateway.py` | Reviewed scoped file application, partial-write recovery and current applied-source proof. |
+| `cc_development_codex.py` | Standalone pinned Codex CLI proposal worker and explicit usage-based cost estimates. |
+| `cc_development_release.py` | Opt-in hosted PR policy, exact local Git scope and reviewed release packet assessment. |
+| `cc_development_github.py` | Standalone pinned GitHub CLI reader with bounded REST GET observations. |
 | `cc_init_module.py` | Module initialization commands. |
 | `cc_knowledge.py` | Embedded knowledge commands and opt-in maintenance worker. |
 | `cc_knowledge_adoption.py` | Read-only adoption observations; no automatic acceptance. |
@@ -97,6 +124,7 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `cc_project_map_analyzers.py` | Pure bounded Python syntax metrics and conservative local import candidate matching; no filesystem reads or project execution. |
 | `cc_project_map_analysis.py` | Retained-input quality/dependency projection, explicit coding-intent comparison and report links; no acceptance promotion or source writes. |
 | `cc_project_map_definition.py` | Reviewed map identities and bounded definition persistence; source-bound preview and exclusive Windows commit, no lifecycle or permission edits. |
+| `cc_project_map_snapshots.py` | Bounded map reads across descriptor windows with a final identity and content pass. |
 | `cc_project_map_sources.py` | Bounded read-only source inventory and static structural proposals for Project Map; no target execution or writes. |
 | `cc_review.py` | Review command helpers. |
 | `cc_setup.py` | Setup workflow helpers. |
@@ -106,6 +134,19 @@ The public source release excludes `dev/**`. Development workspaces that retain
 | `fitness_check.py` | Architectural fitness checks. |
 | `metrics_collector.py` | Local metrics collection. |
 | `phase0_discover.py` | Phase-zero codebase discovery. |
+
+### Controlled Development Service (`scripts/cc_development_lib/`)
+
+| File | Public role |
+|---|---|
+| `cc_development_lib/__init__.py` | Canonical controlled development reads, previews and revision-bound commits. |
+| `cc_development_lib/method.py` | Executable versioned method identity and stage field contract. |
+| `cc_development_lib/schema.py` | Strict bounded typed actions and artifact validation. |
+| `cc_development_lib/storage.py` | Confined atomic registry transactions, history validation and lock recovery. |
+| `cc_development_lib/evaluator.py` | Current candidate gates, artifact acceptance and downstream invalidation. |
+| `cc_development_lib/policy.py` | Critical role policy and canonical agent evaluation and monitoring assessments. |
+| `cc_development_operations.py` | Canonical operational captures, persistent incident revisions and bounded diagnosis requests. |
+| `cc_development_diagnosis.py` | Strict incident-bound diagnostic hypotheses and current canonical attempt assessments. |
 
 ### Project Memory Engine (`scripts/cc_memory_lib/`)
 

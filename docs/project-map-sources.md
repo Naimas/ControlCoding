@@ -37,7 +37,7 @@ The preview is pure: it validates the selection without opening files. It
 returns `schema_version`, `adapter`, `preview_id`, sorted `design_paths`,
 `code_extensions`, `manifests`, `excluded_names`, `hidden_paths_excluded`,
 `sensitive_override_supported`, `limits` and `detail_policy`. The current detail
-policy is `file-overview-with-bounded-symbols-v2`. Its digest binds normalized
+policy is `batched-file-overview-v3`. Its digest binds normalized
 request, policy, detail policy and adapter version. The observer's optional `expected_preview` rejects
 a different request/policy before reading. This is selection consistency, not
 an approval token or filesystem snapshot. UI selection/preview delivery belongs
@@ -51,25 +51,27 @@ policy accepts positive integers no greater than these defaults:
 | `max_entries` | 5,000 names encountered, including exclusions |
 | `max_depth` | 24 directory levels below the selected root |
 | `file_bytes` | 1,048,576 |
-| `target_bytes` | 33,554,432 aggregate retained content bytes |
-| `input_count` | 384 retained reader entries, including ancestors |
+| `target_bytes` | 33,554,432 unique content bytes across all read batches |
+| `input_count` | 384 simultaneously retained reader entries, including ancestors |
 | `max_ast_nodes` | 20,000 AST or manifest-container values per file |
 | `max_design_files` | 32 |
 | `seconds` | 10, cooperative monotonic budget |
 
 No dependencies are installed. Parser and model bounds are additional limits.
-The entire returned object must fit 768 KiB compact UTF-8 JSON, not just its
+The entire returned object must fit 4 MiB compact UTF-8 JSON, not just its
 inner map. The model also limits nodes to 2,000 and source references to 4,000.
 Per-file AST/manifest budget exhaustion keeps that file's retained identity and
 reports `parse_limit`, without publishing partial parser output. If optional
-symbol expansion exceeds node/output bounds, all symbol nodes are omitted with
+symbol expansion exceeds node bounds or its 768 KiB detail budget, all symbol nodes are omitted with
 `symbol_detail_omitted`, retaining the complete file inventory and available import
 declarations. One bounded projection retry uses the same retained source snapshot;
 it does not reread files or increase limits. The UI explicitly reports limited detail.
 If the file inventory itself exceeds a limit, a smaller selected root is still
 required. There is no pagination, automatic limit increase or silently truncated
-file inventory. The 384-entry retained-handle
-cap is deliberately lower than the enumeration ceiling to bound OS resources.
+file inventory. Reads rotate through batches to keep at most 384 reader entries
+open together, without limiting the complete inventory to 384 files. Identity and
+content hashes remain in a bounded ledger across batches. Aggregate byte and time
+budgets cover the whole operation; rotating a batch does not reset them.
 
 The time budget is checked during traversal, AST walking and before/after
 rechecks and projection. One OS I/O or parser call is not forcibly interrupted;
@@ -157,18 +159,23 @@ share IDs. Renames/root replacement change identity; no rename matching or
 persistent alias is inferred. Snapshot IDs also bind source observations and
 caller observation time. Repeating unchanged input/time returns the same data.
 
-The observer reuses the setup service's **private** `_Snapshots` read seam,
-without changing setup allowlists or APIs. The separate source policy supplies
-its bounded file/aggregate/handle allowances. Ancestors and traversed directories
-are retained, ordinary files are read through retained descriptors, and their
-identities/bytes are rechecked. Directory memberships and metadata-only file
-identities are rechecked separately. Windows retained handles deny write/delete
-sharing; POSIX uses descriptor-relative no-follow opens. Reparse points,
+The map's batch reader composes the setup service's **private** `_Snapshots` read
+seam without changing setup allowlists or APIs. The separate source policy supplies
+its bounded file/aggregate/handle allowances. Each active batch retains ancestors
+and directories and reads ordinary files through retained descriptors. Identities
+and bytes are rechecked before that batch closes. Reopened entries must match the
+ledger; after traversal a final read pass compares all recorded content hashes and
+identities. Directory memberships and metadata-only file identities are rechecked
+separately. Windows retained handles deny write/delete sharing only while their
+batch is open; POSIX uses descriptor-relative no-follow opens. Reparse points,
 symlinks, special files and multiply linked files are rejected before content
 reads. Unsupported entries are reported, never traversed.
 
 Rechecks detect observed races or fail closed. They do not make a transactional
-filesystem snapshot or promise immutability after handles close. Windows is the
+filesystem snapshot or promise immutability after handles close. Multi-batch maps
+assume an ordinary stable filesystem: they cannot promise that every file was
+locked at the same instant or prevent hostile concurrent changes between checks.
+Small maps retain the original simultaneous-pin behavior. Windows is the
 initial exercised host; POSIX execution needs its own actual test results.
 The private setup/model helper dependencies need coordinated regression tests
 if later refactored; they are not new public extension APIs.
@@ -185,8 +192,11 @@ The result has `schema_version: 1`, `adapter: cc-project-map-sources/v1`,
 `canonical`, `mode`, `root_identity`, `preview_id`, `projection`, `observations`,
 `findings`, `counts`. Projection follows the model contract. Each observation
 has `source` (source ID), `node` (file node ID), `adapter`, `details` as above.
-Counts are `enumerated_entries`, `content_bytes`, `retained_entries`; byte counts
-describe retained content once, excluding the repeated validation reads.
+Counts include `enumerated_entries`, `content_bytes`, `retained_entries` (peak
+simultaneous reader entries), `observed_entries` (unique ledger entries, including
+ancestors and the layout marker), and `read_batches` (opened reader windows,
+including validation). Byte counts describe unique content once, excluding the
+repeated validation reads.
 
 Findings have `code` and `source` (relative path or generic `scope`):
 `excluded_path`, `unsafe_name_omitted`, `unsupported_path`,

@@ -176,7 +176,13 @@ the installed distribution's explicit inventory, plus Python implementation and
 version, OS/architecture and installed distribution name/version fingerprints.
 Unknown layouts or failed measurements are incomplete. This is not a byte-level
 attestation of third-party wheels. Execution context binds the project location,
-expanded argv and executable resolution; `{temp}` is normalized for comparison.
+expanded argv, executable resolution and actual SHA-256 bytes of each resolved
+executable; `{temp}` is normalized for comparison. Executable observation has
+a finite 128 MiB per-binary and 256 MiB aggregate read budget, with repeated
+paths deduplicated within one owner call. An unreadable, replaced or oversized
+binary makes context incomplete. Replacing executable bytes invalidates proof
+even when project source is unchanged. These local measurements do not establish
+execution on another host or attest an unobserved runtime.
 Moving a checkout or changing measured runtime, modules, dependencies, declared
 environment or command expansion changes context. CI presence is unverified
 local metadata; no hosted result or server-side enforcement is inferred.

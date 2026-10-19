@@ -17,7 +17,7 @@ def check_snapshot(db, snapshot):
     from .knowledge_service import initialized, require
     initialized(db)
     require(not get(db, 'needs_reconcile', True) and
-            (get(db, 'generation', 0), get(db, 'policy'), get(db, 'embedding_identity'), work_snapshot(db)) == snapshot,
+            (get(db, 'generation', 0), get(db, 'policy'), get(db, 'embedding_identity'), work_snapshot(db), get(db, 'library_epoch', 0)) == snapshot,
             'query_context_changed')
 
 
@@ -34,7 +34,7 @@ def query(root, text, semantic=True, adapter=None, retrieval=None):
         pinned = get(db, 'embedding_identity')
         generation = get(db, 'generation', 0)
         observed_at = get(db, 'last_reconcile')
-        snapshot = generation, config, pinned, work_snapshot(db)
+        snapshot = generation, config, pinned, work_snapshot(db), get(db, 'library_epoch', 0)
         if routing['intent'] == 'history':
             citations, truncated = history(db, text, routing)
             return {'query': text, 'mode': 'recorded history', 'warning': 'Recorded versions only; current paths are locators, not proof of past project membership. Historical evidence is not current AI context.',
@@ -43,7 +43,7 @@ def query(root, text, semantic=True, adapter=None, retrieval=None):
                     'edges': [], 'historical': True, 'retrieval': {'intent': 'history', 'options': routing, 'truncated': truncated},
                     'abstained': not bool(citations), 'answerability': 'not_assessed',
                     'retrieval_status': 'candidates' if citations else 'no_matches', 'selection_policy': 'Latest retained version per available source before cutoff; ten original lines.'}
-        eligible = {r['id'] for r in db.execute('SELECT * FROM sources') if allowed(r, routing)}
+        eligible = {r['id'] for r in db.execute('SELECT id,path,kind,revision,deleted,body FROM sources') if allowed(r, routing, db)}
         # BM25 retains only query counts and length for matched passages.
         chunk_sources = dict(db.execute('SELECT c.id,c.source' + CURRENT))
         lexical = bm25_ranks((r for r in db.execute('SELECT c.id,c.text,s.title' + CURRENT)
@@ -124,6 +124,14 @@ def query(root, text, semantic=True, adapter=None, retrieval=None):
                 if len(edges) < 40:
                     edges.append({'source': row['source'], 'target': row['target'],
                                   'kind': 'human_reviewed:'+row['kind'], 'revision': row['source_revision']})
+        from .knowledge_document_lineage import edges_for
+        lineage_seen = set()
+        for identifier in sources:
+            for edge in edges_for(db, identifier):
+                key = edge['source'], edge['target']
+                if key not in lineage_seen and edge['source'] in eligible and edge['target'] in eligible and len(edges) < 40:
+                    lineage_seen.add(key)
+                    edges.append({k: edge[k] for k in ('source', 'target', 'kind', 'revision')})
 
     citations = [{'id': 'S' + str(i), 'source': r['source'], 'path': r['path'],
                   'physicalPath': physical_source_path(root, r['path'], r['kind']), 'title': r['title'],

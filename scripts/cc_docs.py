@@ -108,6 +108,9 @@ _REQUIRED_PUBLIC_CLI_ROUTES = frozenset({
     ("resume",),
 })
 _SAFE_ROUTED_CLI_EXTENSION_NAMES = frozenset({
+    "DEVELOPMENT_ROUTED_COMMANDS",
+    "PRODUCT_ROUTED_COMMANDS",
+    "PLANNING_ROUTED_COMMANDS",
     "DOCS_MAINTENANCE_ROUTED_COMMANDS",
     "FEATURE_ROUTED_COMMANDS",
     "INIT_MODULE_ROUTED_COMMANDS",
@@ -150,6 +153,11 @@ DOC_INDEX_REQUIRED_REFERENCES = [
 ]
 
 DOC_OWNER_RULES = [
+    {
+        "id": "controlled_development",
+        "prefixes": ["scripts/cc_development", "tests/test_cc_development"],
+        "docs": ["docs/controlled-development.md"],
+    },
     {
         "id": "cli_surface",
         "prefixes": ["scripts/cc.py", "scripts/cc_feature.py", "scripts/cc_docs.py"],

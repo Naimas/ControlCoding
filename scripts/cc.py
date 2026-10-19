@@ -172,6 +172,14 @@ from cc_feature import (
     dispatch_feature_command,
     feature_doctor_check,
 )
+from cc_development import (
+    DEVELOPMENT_CAPABILITY_REGISTRY_ITEM,
+    DEVELOPMENT_ROUTED_COMMANDS,
+    add_development_parser,
+    dispatch_development_command,
+)
+from cc_product_cli import PRODUCT_ROUTED_COMMANDS, PRODUCT_CAPABILITY_REGISTRY_ITEM, add_product_parser, dispatch_product_command
+from cc_planning_cli import PLANNING_ROUTED_COMMANDS, PLANNING_CAPABILITY_REGISTRY_ITEM, add_planning_parser, dispatch_planning_command
 from cc_docs import (
     DOCS_MAINTENANCE_CAPABILITY_REGISTRY_ITEM,
     DOCS_MAINTENANCE_ROUTED_COMMANDS,
@@ -995,6 +1003,9 @@ _ROUTED_CLI_COMMANDS = frozenset({
     ("invariants", "run"),
     ("invariants", "wire-ci"),
     *FEATURE_ROUTED_COMMANDS,
+    *DEVELOPMENT_ROUTED_COMMANDS,
+    *PRODUCT_ROUTED_COMMANDS,
+    *PLANNING_ROUTED_COMMANDS,
     ("promote",),
     ("promote", "plan"),
     ("promote", "check"),
@@ -1684,6 +1695,9 @@ _CORE_CAPABILITY_REGISTRY = [
         "evidence": ["controlcoding.invariants.json", "invariant receipts", "CI wiring detection", "doctor invariant_manifest"],
     },
     FEATURE_CAPABILITY_REGISTRY_ITEM,
+    DEVELOPMENT_CAPABILITY_REGISTRY_ITEM,
+    PRODUCT_CAPABILITY_REGISTRY_ITEM,
+    PLANNING_CAPABILITY_REGISTRY_ITEM,
     {
         "id": "promotion_path",
         "label": "Executable workspace to features to shared to stable promotion path",
@@ -2381,12 +2395,55 @@ def _default_verification_contract(project: Path) -> dict:
          "Verify read-only external sources, process refusal, provenance and evidence invalidation."),
         ("graph-wiki-regression", ("test_cc_graph_wiki.py", "test_cc_knowledge_ranking.py", "test_cc_knowledge_wiki_review.py"),
          "Verify graph retrieval, original citations, reviewed wiki findings and guarded revision recovery."),
+        ("document-classification-regression", ("test_cc_document_types.py", "test_cc_document_classification_review.py",
+                                                "test_cc_document_organization.py", "test_cc_document_tags.py",
+                                                "test_cc_document_codes.py", "test_cc_document_lineage.py"),
+         "Verify source-bound document roles, reviewed organization and tags, numbered plan references, succession and code-filtered retrieval."),
+        ("controlled-development-regression", ("test_cc_development_core.py", "test_cc_development_adapters.py",
+                                               "test_cc_development_cli.py", "test_cc_development_eval.py",
+                                               "test_cc_development_execution.py", "test_cc_development_gateway.py",
+                                               "test_cc_development_codex.py", "test_cc_development_release.py",
+                                               "test_cc_development_github.py", "test_cc_development_release_jobs.py"),
+         "Verify revision-bound development gates, approved adapter jobs and the isolated desktop transport."),
+        ("product-workflow-regression", ("test_cc_product_core.py", "test_cc_product_documents.py", "test_cc_product_migration.py"),
+         "Verify manual product decisions, selected-source review, trusted Markdown roundtrip and exact predecessor continuity."),
+        ("planning-discussion-regression", ("test_cc_planning.py", "test_cc_planning_upgrade.py", "test_cc_planning_recovery.py", "test_cc_planning_transport.py", "test_cc_planning_quality.py"),
+         "Verify durable scoped proposals, exact request bindings, bounded attempts, independent quality records and predecessor approval continuity."),
+        ("product-evolution-regression", ("test_cc_product_evolution.py", "test_cc_product_evolution_upgrade.py",
+                                          "test_cc_product_evolution_transport.py", "test_cc_product_evolution_acceptance.py"),
+         "Verify atomic scope adoption, typed dependency gates, current combined criteria and authentic predecessor continuity."),
+        ("planning-depth-regression", ("test_cc_product_adoption.py", "test_cc_product_adoption_core.py",
+                                      "test_cc_product_planning_detail.py", "test_cc_product_planning_detail_core.py",
+                                      "test_cc_product_planning_execution.py", "test_cc_product_planning_upgrade.py",
+                                      "test_cc_product_planning_discussion.py", "test_cc_planning_detail_core.py"),
+         "Verify reviewed source adoption, detailed planning, richer worker qualification and authentic predecessor continuity."),
+        ("product-progress-regression", ("test_cc_product_progress_core.py", "test_cc_product_progress_acceptance.py",
+                                        "test_cc_product_progress_transport.py", "test_cc_product_progress_upgrade.py"),
+         "Verify coherent read-only Product progress, exact condition coverage, bounded transport and authentic predecessor continuity."),
+        ("product-progress-adapters-regression", ("test_cc_project_map_model.py", "test_cc_project_map_sources.py",
+                                                 "test_cc_project_map_definition.py", "test_cc_project_map_controls.py",
+                                                 "test_cc_project_map_batches.py", "test_cc_project_map_analysis.py",
+                                                 "test_cc_knowledge_work_schedule.py"),
+         "Verify independent code-map and optional schedule owners beside canonical Product progress."),
+        ("development-storage-regression", ("test_cc_development_store.py", "test_cc_development_history.py",
+                                            "test_cc_development_compatibility.py", "test_cc_development_migration.py",
+                                            "test_cc_development_sessions.py", "test_cc_development_bundle.py",
+                                            "test_cc_development_migration_runtime.py"),
+         "Verify retained checkpoint history, bounded replay, explicit migration, session quotas and complete recoverable backups."),
+        ("development-operations-regression", ("test_cc_development_operations.py", "test_cc_development_diagnosis.py",
+                                               "test_cc_development_operations_core.py"),
+         "Verify canonical incident history, atomic linked intent drafts and bounded diagnosis with native local jobs."),
     ):
         targets = " ".join(f"tests/{name}" for name in candidates
                            if (project / "tests" / name).is_file())
         if targets:
             suites.append({
                 "id": suite_id, "kind": "regression", "required": True,
+                **({"timeoutSeconds": 750} if suite_id == "controlled-development-regression" else {}),
+                **({"timeoutSeconds": 900} if suite_id == "development-operations-regression" else {}),
+                **({"timeoutSeconds": 1200} if suite_id == "product-evolution-regression" else {}),
+                **({"timeoutSeconds": 900} if suite_id == "planning-depth-regression" else {}),
+                **({"timeoutSeconds": 3000} if suite_id == "product-progress-regression" else {}),
                 "command": pytest_command(targets, suite_id, f"pytest-{suite_id}"),
                 "description": description,
             })
@@ -19756,6 +19813,9 @@ def main():
     )
 
     p_feature = add_feature_parser(sub, Path)
+    p_development = add_development_parser(sub, Path)
+    p_product = add_product_parser(sub, Path)
+    p_planning = add_planning_parser(sub, Path)
 
     # cc promote
     p_promote = sub.add_parser(
@@ -22268,6 +22328,12 @@ def main():
         return 1
     elif args.command == "feature":
         return dispatch_feature_command(args, project, p_feature)
+    elif args.command == "development":
+        return dispatch_development_command(args, project, p_development)
+    elif args.command == "product":
+        return dispatch_product_command(args, project, p_product)
+    elif args.command == "planning":
+        return dispatch_planning_command(args, project, p_planning)
     elif args.command == "promote":
         promote_command = getattr(args, "promote_command", "")
         if promote_command == "plan":

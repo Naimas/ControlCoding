@@ -24,7 +24,9 @@ def require(condition, code='invalid_knowledge_request'):
 
 
 def policy(value):
-    require(type(value) is dict and set(DEFAULT) <= set(value) <= set(DEFAULT) | {'rich_paths'})
+    require(type(value) is dict and set(DEFAULT) <= set(value) <= set(DEFAULT) | {'rich_paths', 'project_paths'})
+    from .knowledge_sources import project_selection
+    project_selection(value.get('project_paths'))
     selected = value.get('rich_paths')
     if selected is not None:
         require(type(selected) is list and 0 < len(selected) <= 128)
@@ -59,7 +61,9 @@ def configure(root, value):
             if old != value:
                 staging.clear(db)
                 scan.clear(db)
-            if not old or old['scopes'] != value['scopes'] or old.get('rich_paths') != value.get('rich_paths'):
+            if (not old or old['scopes'] != value['scopes']
+                    or old.get('rich_paths') != value.get('rich_paths')
+                    or old.get('project_paths') != value.get('project_paths')):
                 put(db, 'needs_reconcile', True)
             if not old or old['embedding'] != value['embedding']:
                 db.execute('UPDATE chunks SET vector=NULL,model=NULL')
@@ -94,6 +98,8 @@ def reconcile(root, reason='manual'):
         try:
             config = get(db, 'policy')
             selection = {'rich_paths': config['rich_paths']} if config.get('rich_paths') is not None else {}
+            if config.get('project_paths') is not None:
+                selection['project_paths'] = config['project_paths']
             if get(db, 'reviewed_ocr_v1'):
                 selection['ocr_records'] = get(db, 'reviewed_ocr_v1')
             captured = capture(root, config['scopes'], db, **selection)
@@ -320,6 +326,8 @@ def page(root, identifier, revision=None):
         result['issues'] = wiki.freshness(db, result['dependencies'])
         result['stale'] = bool(result['issues']) or get(db, 'needs_reconcile', True)
         result['history'] = [dict(r) for r in db.execute('SELECT revision,updated FROM wiki_history WHERE id=? ORDER BY updated DESC LIMIT 30', (identifier,))]
+        from .knowledge_wiki_reading import presentation
+        result['reading'] = presentation(root, db, result)
         return result
 
 
@@ -394,6 +402,15 @@ def purge_conversation_projection(db, identifier):
     staging.clear(db)
     scan.clear(db)
     source = 'conversation:' + identifier
+    from .knowledge_tags import forget as forget_tags
+    forget_tags(db, identifier)
+    from .knowledge_document_codes import forget as forget_codes
+    forget_codes(db, source)
+    from .knowledge_organization import PREFIX as organization_prefix
+    db.execute('DELETE FROM meta WHERE key=?', (organization_prefix + source,))
+    for entry in db.execute('SELECT key,value FROM meta WHERE substr(key,1,?)=?', (len(organization_prefix), organization_prefix)).fetchall():
+        if source in json.loads(entry['value']).get('fields', {}).get('related', []):
+            db.execute('DELETE FROM meta WHERE key=?', (entry['key'],))
     from .knowledge_consolidation_privacy import purge
     purge(db, source)
     wiki.purge_dependents(db, source)
@@ -441,6 +458,28 @@ def dispatch(root, action, value=None):
     from .knowledge_consolidation import ACTIONS as CONSOLIDATION_ACTIONS, dispatch as consolidate
     if type(action) is str and action in CONSOLIDATION_ACTIONS:
         return consolidate(root, action, value)
+    if action in ('organization-view', 'organization-prepare', 'organization-save'):
+        from .knowledge_organization import dispatch as organize
+        reconcile(root)
+        return organize(root, action, value)
+    if action in ('code-settings', 'code-configure', 'code-view', 'code-next', 'code-prepare',
+                  'code-proposal-save', 'code-decide', 'code-fail'):
+        from .knowledge_document_codes import dispatch as codes_dispatch
+        if action not in ('code-settings', 'code-configure'):
+            reconcile(root)
+        return codes_dispatch(root, action, value)
+    if action in ('code-link-candidates', 'code-link-save', 'code-link-remove'):
+        from .knowledge_document_lineage import dispatch as lineage_dispatch
+        reconcile(root)
+        return lineage_dispatch(root, action, value)
+    if action in ('tag-view', 'tag-prepare', 'tag-save', 'tag-proposal-save', 'tag-proposal-decide',
+                  'tag-history', 'tag-manage-preview', 'tag-manage-apply', 'tag-undo'):
+        from .knowledge_tags import dispatch as tags_dispatch
+        reconcile(root)
+        return tags_dispatch(root, action, value)
+    if action == 'document-classify':
+        from .knowledge_document_review import save
+        return save(root, value)
     require(action in ('status', 'configure', 'sync', 'index', 'catalog', 'page', 'page-revision', 'notes', 'conversation',
                        'conversation-read', 'query', 'forget', 'wiki-lint', 'wiki-draft', 'library', 'catalog-window', 'graph-view', 'graph-source', 'source-retry', 'work-view', 'work-propose', 'work-review', 'work-schedule-view', 'work-schedule-save', 'ocr-preview', 'ocr-save', 'wiki-review-view', 'wiki-review-propose', 'wiki-review-decide'))
     if action in ('work-schedule-view', 'work-schedule-save'):
