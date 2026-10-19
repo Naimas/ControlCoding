@@ -40,7 +40,7 @@ The desktop preview has its own dated prerelease tag and downloads below.
 The verified Core update and its remaining limits are described under
 [Unreleased Development Work](#unreleased-development-work).
 
-## Current Development Source ? October 19, 2026
+## Current Development Source - October 19, 2026
 
 The current Core source connects product intent to reviewed development work:
 

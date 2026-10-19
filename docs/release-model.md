@@ -6,7 +6,8 @@ V1/Core release.
 ## Current Download and Tagged Releases
 
 The [current Core source ZIP](https://github.com/Naimas/ControlCoding/archive/refs/heads/master.zip) follows `master` and contains the
-September 2026 preservation, setup, verification, knowledge and work-planning updates. It is development
+October 19, 2026 Product workflow, controlled development and observed-progress
+updates, alongside setup, verification, knowledge and work planning. It is development
 source; [download status and the exact verified baseline](../README.md#download-current-core)
 are maintained in the README.
 

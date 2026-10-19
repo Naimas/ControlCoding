@@ -4,7 +4,7 @@ All notable changes to ControlCoding are documented in this file.
 
 ## Unreleased
 
-### Added ? Product workflow and observed progress, October 19, 2026
+### Added - Product workflow and observed progress, October 19, 2026
 
 - Product document revisions, source adoption, planning discussions, scoped
   evolution and detailed development plans linked to requirements and criteria.
